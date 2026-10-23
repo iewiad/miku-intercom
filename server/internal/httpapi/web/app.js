@@ -1,3 +1,4 @@
+import {AudioClient} from './audio.js';
 const API = '/api/v1';
 export const IDENTITY_KEY = 'shenglu.control.identity.v1';
 export const pendingKey = id => `shenglu.control.pending.v1.${id}`;
@@ -10,6 +11,22 @@ export function claimOwner(storage, id, tab, force = false) {
   if (owner && owner !== tab && !force) return false;
   storage.setItem(key, tab);
   return storage.getItem(key) === tab;
+}
+export function bindPTTPointer(button, client) {
+  let activePointer = null;
+  const endPress = () => {
+    activePointer = null;
+    if (client.pressed || client.floorRequest) client.cancelFloor();
+  };
+  button.addEventListener('pointerdown', event => {
+    if (activePointer !== null || event.button !== 0 || !client.canPress()) return;
+    event.preventDefault(); activePointer = event.pointerId;
+    button.setPointerCapture(event.pointerId); void client.pressFloor();
+  });
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) button.addEventListener(type, event => {
+    if (event.pointerId === activePointer) endPress();
+  });
+  return endPress;
 }
 export const validName = value => typeof value === 'string' && [...value.trim()].length >= 1 && [...value.trim()].length <= 32;
 export class APIError extends Error {
@@ -35,8 +52,8 @@ export const errorText = error => error.status === 401 ? '本机身份已失效�
 export class ControlClient {
   constructor({fetchImpl = globalThis.fetch.bind(globalThis), now = Date.now, random = randomID,
     schedule = (callback, delay) => globalThis.setTimeout(callback, delay), cancel = id => globalThis.clearTimeout(id), authorize = () => true,
-    onChange = () => {}, onIdentity = () => {}, onPending = () => {}, restorePending = null} = {}) {
-    Object.assign(this, {fetchImpl, now, random, schedule, cancel, authorize, onChange, onIdentity, onPending, restorePending});
+    onChange = () => {}, onIdentity = () => {}, onPending = () => {}, restorePending = null, audio = null} = {}) {
+    Object.assign(this, {fetchImpl, now, random, schedule, cancel, authorize, onChange, onIdentity, onPending, restorePending, audio});
     this.identity = null; this.state = null; this.stateAt = 0; this.epoch = 0;
     this.active = true; this.authInvalid = false; this.connected = false; this.mutationBusy = false; this.polling = false;
     this.pendingSwitch = null; this.confirming = false; this.retryTimer = null;
@@ -48,7 +65,7 @@ export class ControlClient {
   emit() { this.onChange(this); }
   inform(text, tone = 'info') { this.notice = text; this.noticeTone = tone; this.emit(); }
   allowed() { return !!this.identity && this.active && this.authorize(); }
-  load(identity, pending = null) { this.identity = identity; this.pendingSwitch = pending; this.emit(); }
+  load(identity, pending = null) { if (this.identity?.token !== identity?.token) { this.cancelFloor(); this.audio?.suspend(); } this.identity = identity; this.pendingSwitch = pending; this.emit(); }
   async request(path, method = 'GET', body, {token = this.identity?.token, keepalive = false} = {}) {
     const headers = {'Accept': 'application/json'};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -73,7 +90,7 @@ export class ControlClient {
     this.mutationBusy = true; this.emit();
     try {
       const result = await this.request('/devices', 'POST', {name}, {token: null});
-      this.identity = {device: result.device, token: result.token};
+      this.audio?.disable(); this.identity = {device: result.device, token: result.token};
       this.active = true; this.authInvalid = false; this.epoch++; this.onIdentity(this.identity); this.emit();
       this.mutationBusy = false; await this.refresh();
       this.inform('身份已建立。创建一个群，或用伙伴的口令加入。', 'success');
@@ -87,16 +104,16 @@ export class ControlClient {
       this.state.current_version !== next.current_version || this.state.current_group_id !== next.current_group_id);
     if (changed) {
       const restarted = this.state.server_epoch !== next.server_epoch;
-      this.cancelFloor();
+      this.cancelFloor(); this.audio?.suspend('群状态已变化，正在恢复音频。');
       if (restarted) this.notice = '服务已重新启动，麦权已清空；需要发言时请重新按下。';
     }
-    this.state = next; this.stateAt = this.now(); this.connected = true; this.emit(); return true;
+    this.state = next; this.stateAt = this.now(); this.connected = true; this.emit(); void this.audio?.sync(); return true;
   }
   async refresh() {
     if (!this.allowed() || this.polling || this.pendingSwitch || this.mutationBusy) return;
     const epoch = this.epoch; this.polling = true;
     try { const next = await this.request('/state'); this.applyState(next, epoch); }
-    catch (error) { if (epoch === this.epoch && this.active) { this.connected = false; this.cancelFloor(); this.inform(errorText(error), 'error'); } }
+    catch (error) { if (epoch === this.epoch && this.active) { this.connected = false; this.cancelFloor(); this.audio?.suspend('控制连接未确认，音频已停止。'); this.inform(errorText(error), 'error'); } }
     finally { this.polling = false; this.emit(); }
   }
   async mutate(path, body) {
@@ -120,7 +137,7 @@ export class ControlClient {
   joinGroup(code) { return this.mutate('/memberships', {code}); }
   async switchGroup(groupID) {
     if (!this.allowed() || this.mutationBusy || this.pendingSwitch || !this.state) return;
-    this.cancelFloor(); ++this.epoch;
+    this.cancelFloor(); this.audio?.suspend('正在确认切群结果。'); ++this.epoch;
     this.pendingSwitch = {operation_id: this.random(), group_id: groupID, expected_version: this.state.current_version};
     this.onPending(this.pendingSwitch); this.inform('正在确认切群结果；确认前暂停麦权操作。');
     return this.confirmSwitch(true);
@@ -144,7 +161,7 @@ export class ControlClient {
       const state = result.state || await this.request('/state');
       if (epoch !== this.epoch || !this.allowed()) return;
       this.pendingSwitch = null; this.onPending(null); this.applyState(state, epoch);
-      this.inform(result.operation.status === 'applied' ? '已确认当前群。此页面只演示控制授权，尚无音频。' :
+      this.inform(result.operation.status === 'applied' ? '当前群已确认，请查看音频连接状态后再按住说话。' :
         (messages[result.operation.error_code] || '切群被拒绝，已按服务端状态恢复。'), result.operation.status === 'applied' ? 'success' : 'error');
     } catch (error) {
       if (epoch === this.epoch && this.allowed()) {
@@ -155,11 +172,12 @@ export class ControlClient {
   }
   serverNow() { return Date.parse(this.state?.server_time || '') + Math.max(0, this.now() - this.stateAt); }
   canPress() {
-    return this.allowed() && this.connected && !!this.state?.current_group_id && !!this.state.server_epoch &&
+    return this.allowed() && this.connected && (!this.audio || this.audio.isReady()) && !!this.state?.current_group_id && !!this.state.server_epoch &&
       Number.isFinite(this.serverNow()) && !this.pendingSwitch && !this.mutationBusy && !this.acquiring && !this.releasing && !this.pressed;
   }
   stillPressed(generation, request) {
     return this.allowed() && this.pressed && generation === this.floorGeneration && !this.pendingSwitch &&
+      (!this.audio || (this.audio.isReady() && request.peer_id === this.audio.peerID)) &&
       this.state?.server_epoch === request.server_epoch && this.state.current_group_id === request.group_id && this.state.current_version === request.current_version;
   }
   async release(request) {
@@ -171,6 +189,7 @@ export class ControlClient {
     finally { this.releasing--; this.emit(); }
   }
   cancelFloor(message = '') {
+    this.audio?.setSending(false);
     const request = this.floorRequest;
     this.pressed = false; this.floorPhase = 'idle'; this.floorRequest = null; this.lease = null;
     ++this.floorGeneration; ++this.epoch;
@@ -182,15 +201,17 @@ export class ControlClient {
   async pressFloor() {
     if (!this.canPress()) return;
     const request = {group_id: this.state.current_group_id, current_version: this.state.current_version,
-      request_id: this.random(), server_epoch: this.state.server_epoch, valid_until: new Date(this.serverNow() + 5000).toISOString()};
+      request_id: this.random(), server_epoch: this.state.server_epoch, ...(this.audio ? {peer_id: this.audio.peerID} : {}), valid_until: new Date(this.serverNow() + 5000).toISOString()};
     const generation = ++this.floorGeneration; ++this.epoch;
     this.floorRequest = request; this.pressed = true; this.floorPhase = 'acquiring'; this.acquiring = true; this.emit();
     try {
       const result = await this.request('/floor/acquire', 'POST', request);
-      if (!this.stillPressed(generation, request)) { await this.release(request); return; }
-      if (result.floor?.device_id !== this.identity.device.id || result.floor?.request_id !== request.request_id || !result.floor?.lease_id)
+      if (!this.stillPressed(generation, request)) { if (generation === this.floorGeneration) this.cancelFloor(); await this.release(request); return; }
+      if (result.floor?.device_id !== this.identity.device.id || result.floor?.request_id !== request.request_id || !result.floor?.lease_id || (request.peer_id && result.floor.peer_id !== request.peer_id))
         throw new Error('invalid_floor');
-      this.lease = result.floor; this.floorPhase = 'held'; this.scheduleLease(generation, request); this.emit();
+      this.lease = result.floor; this.floorPhase = 'held';
+      if (this.audio && !this.audio.setSending(true)) { this.cancelFloor('音频尚未就绪，请重新启用音频后再按下。'); return; }
+      this.scheduleLease(generation, request); this.emit();
     } catch (error) {
       if (generation === this.floorGeneration) this.cancelFloor(errorText(error));
     } finally { this.acquiring = false; this.emit(); }
@@ -210,7 +231,7 @@ export class ControlClient {
     const leaseID = this.lease.lease_id;
     try {
       const result = await this.request('/floor/renew', 'POST', {...body, lease_id: leaseID});
-      if (!this.stillPressed(generation, request)) { await this.release(request); return; }
+      if (!this.stillPressed(generation, request)) { if (generation === this.floorGeneration) this.cancelFloor(); await this.release(request); return; }
       if (result.floor?.lease_id !== leaseID || result.floor?.request_id !== request.request_id) throw new Error('invalid_renew');
       this.lease = result.floor; this.scheduleLease(generation, request); this.emit();
     } catch (error) { if (generation === this.floorGeneration) this.cancelFloor(errorText(error)); }
@@ -222,13 +243,15 @@ export class ControlClient {
   }
   forgetIdentity() {
     this.suspend(''); this.identity = null; this.state = null; this.pendingSwitch = null; this.share = null;
+    this.audio?.disable();
     this.authInvalid = false; this.active = true; this.connected = false; this.notice = ''; this.emit();
   }
   suspend(message) {
     this.active = false; this.cancel(this.retryTimer); this.retryTimer = null;
-    this.cancelFloor(message); this.emit();
+    this.cancelFloor(message); this.audio?.suspend(message); this.emit();
   }
   async activate() {
+    this.cancelFloor(); this.audio?.suspend();
     if (this.restorePending && this.identity) this.pendingSwitch = this.restorePending(this.identity.device.id);
     this.active = true; ++this.epoch; this.state = null; this.connected = false; this.notice = ''; this.emit();
     if (this.pendingSwitch) await this.confirmSwitch(); else await this.refresh();
@@ -279,20 +302,39 @@ function boot() {
     }
     $('empty-groups').hidden = groups.length > 0;
     text('current-name', client.pendingSwitch ? '正在确认切群结果' : current?.name || (identity ? '还没有当前群' : '先建立你的身份'));
-    text('current-detail', client.pendingSwitch ? '操作终态确认前，麦权按钮暂停使用' : current ? `已加入成员 ${current.member_count} 人 · 可手动切换当前群` : '创建群或输入口令，开始控制流程演示');
+    text('current-detail', client.pendingSwitch ? '操作终态确认前，麦权按钮暂停使用' : current ? `已加入成员 ${current.member_count} 人 · 可手动切换当前群` : '创建群或输入口令，然后启用音频');
     text('sync-label', !identity ? '本机演示' : !client.active ? '此标签页已暂停' : !state ? '等待状态同步' : !client.connected ? '连接未确认' : '服务端状态已同步');
-    text('floor-label', client.floorPhase === 'held' ? '持有麦权' : client.floorPhase === 'acquiring' ? '正在申请麦权' : client.releasing || client.acquiring ? '正在结束上次申请' : '未按麦');
-    text('floor-description', client.floorPhase === 'held' ? '仅表示控制授权；没有采集或发送音频' : current?.floor && current.floor.device_id !== identity?.device.id ? `${current.floor.device_name} 持有麦权` : '松手、失焦或离开页面都会结束申请与持有');
-    text('ptt-title', client.floorPhase === 'held' ? '持有麦权' : client.floorPhase === 'acquiring' ? '申请中…' : '按住申请麦权');
+    text('floor-label', client.floorPhase === 'held' ? '你正在讲话' : client.floorPhase === 'acquiring' ? '正在申请麦权' : client.releasing || client.acquiring ? '正在结束上次申请' : '未按麦');
+    text('floor-description', client.floorPhase === 'held' ? '麦克风正在向当前群发送声音，松手立即停发' : current?.floor && current.floor.device_id !== identity?.device.id ? `${current.floor.device_name} 持有麦权` : '松手、失焦或离开页面都会结束申请与持有');
+    text('ptt-title', client.floorPhase === 'held' ? '你正在讲话' : client.floorPhase === 'acquiring' ? '申请中…' : '按住说话');
     $('ptt').dataset.phase = client.floorPhase;
     $('ptt').disabled = !client.pressed && !client.canPress();
     $('ptt').setAttribute('aria-pressed', String(client.pressed));
-    text('ptt-hint', client.pendingSwitch ? '等待切群终态' : !current ? '入群后可用' : client.floorPhase === 'held' ? '松手即释放' : '支持触屏、鼠标与空格键');
+    const audio = client.audio;
+    text('audio-status', ({disabled:'未启用音频',waiting:'等待群状态',connecting:'音频连接中',ready:audio?.listeningMuted ? '收听已静音' : '可收听',playback_blocked:'播放受阻',error:'音频连接失败'})[audio?.phase] || '未启用音频');
+    text('audio-message', audio?.message || '建议戴耳机，避免同机多端播放造成回声。');
+    $('audio-enable').hidden = !!audio?.desired && audio?.phase !== 'error';
+    text('audio-enable', audio?.phase === 'error' ? '重试音频' : '启用音频');
+    $('audio-enable').disabled = !operable || !current || !client.connected;
+    $('audio-disable').hidden = !audio?.desired;
+    $('audio-play').hidden = audio?.phase !== 'playback_blocked';
+    $('listen-muted').disabled = !audio?.desired; $('listen-muted').checked = !!audio?.listeningMuted;
+    text('ptt-hint', client.pendingSwitch ? '等待切群终态' : !current ? '入群后可用' : !client.audio?.isReady() ? '先启用并连接音频' : client.floorPhase === 'held' ? '松手即释放' : '支持触屏、鼠标与空格键');
   }
   client = new ControlClient({authorize: owns, onChange: render, restorePending: id => read(pendingKey(id)),
     onIdentity(identity) { localStorage.setItem(IDENTITY_KEY, JSON.stringify(identity)); claimOwner(localStorage, identity.device.id, tab, true); },
     onPending(pending) { if (!client.identity || !owns()) return; const key = pendingKey(client.identity.device.id); if (pending) localStorage.setItem(key, JSON.stringify(pending)); else localStorage.removeItem(key); },
   });
+  client.audio = new AudioClient({request: (...args) => client.request(...args),
+    scopeRequest: () => { const token = client.identity?.token; return (path, method, body, options) => client.request(path, method, body, {...options, token}); }, serverNow: () => client.serverNow(),
+    getContext: () => !document.hidden && client.allowed() && client.connected && !client.pendingSwitch && client.state?.current_group_id ?
+      {device_id: client.identity.device.id, group_id: client.state.current_group_id, current_version: client.state.current_version, server_epoch: client.state.server_epoch} : null,
+    output: $('remote-audio'), onChange: render, onFailure: message => client.cancelFloor(message),
+  });
+  $('audio-enable').addEventListener('click', () => { void client.audio.enable(); });
+  $('audio-disable').addEventListener('click', () => { client.cancelFloor(); client.audio.disable(); });
+  $('audio-play').addEventListener('click', () => { void client.audio.retryPlayback(); });
+  $('listen-muted').addEventListener('change', () => client.audio.setListeningMuted($('listen-muted').checked));
   for (const [id, label] of [['nickname', '昵称'], ['create-name', '群名']]) {
     $(id).addEventListener('input', () => $(id).setCustomValidity(validName($(id).value) ? '' : `${label}请输入 1–32 个字符。`));
   }
@@ -315,16 +357,15 @@ function boot() {
     if (identityChanged) { location.reload(); return; }
     if (claimOwner(localStorage, client.identity.device.id, tab, true)) void client.activate();
   });
-  const endPress = () => { if (client.pressed || client.floorRequest) client.cancelFloor(); };
-  $('ptt').addEventListener('pointerdown', event => { if (event.button !== 0 || !client.canPress()) return; event.preventDefault(); $('ptt').setPointerCapture(event.pointerId); void client.pressFloor(); });
-  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) $('ptt').addEventListener(type, endPress);
+  const endPress = bindPTTPointer($('ptt'), client);
   $('ptt').addEventListener('keydown', event => { if ([' ', 'Enter'].includes(event.key)) { event.preventDefault(); if (!event.repeat) void client.pressFloor(); } });
   $('ptt').addEventListener('keyup', event => { if ([' ', 'Enter'].includes(event.key)) { event.preventDefault(); endPress(); } });
   $('ptt').addEventListener('blur', endPress);
   window.addEventListener('blur', endPress);
-  window.addEventListener('offline', () => { client.connected = false; client.cancelFloor('浏览器已离线，麦权已在本地结束。'); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) endPress(); else if (client.allowed()) void client.refresh(); });
-  window.addEventListener('pagehide', () => { endPress(); if (client.identity && owns()) localStorage.removeItem(ownerKey(client.identity.device.id)); });
+  window.addEventListener('offline', () => { client.connected = false; client.cancelFloor('浏览器已离线，麦权已在本地结束。'); client.audio.suspend('浏览器已离线。'); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { endPress(); client.audio.suspend('页面隐藏，音频已停止。'); } else if (client.allowed()) void client.refresh(); });
+  window.addEventListener('online', () => { if (client.allowed()) void client.refresh(); });
+  window.addEventListener('pagehide', () => { endPress(); client.audio.suspend(); if (client.identity && owns()) localStorage.removeItem(ownerKey(client.identity.device.id)); });
   window.addEventListener('pageshow', () => { if (client.identity && !identityChanged && claimOwner(localStorage, client.identity.device.id, tab)) void client.activate(); });
   window.addEventListener('storage', event => {
     if (!client.identity) { if (event.key === IDENTITY_KEY) location.reload(); return; }
@@ -350,4 +391,4 @@ function boot() {
   } catch { client.inform('浏览器存储不可用；请允许本地存储后重新载入。', 'error'); }
   render();
 }
-if (typeof document !== 'undefined') boot();
+if (typeof document !== 'undefined' && document.getElementById('identity-form')) boot();

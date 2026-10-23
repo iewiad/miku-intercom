@@ -1,0 +1,116 @@
+{
+  "schema": "shenglu.browser-independent-pages-evidence.v1",
+  "date": "2026-10-24",
+  "mode": "two independent Chrome pages with separate identities",
+  "scope": "synthetic audio through real AudioClient, server Pion, browser Opus encode/decode and remote ontrack PCM; no physical microphone or speaker listening",
+  "assessment": "Derived from the two raw observations-only exports. Positive remote PCM has RMS > 0.015 and frequency within 20 Hz of the other page source. Original full exports remain in task outputs.",
+  "receivers": [
+    {
+      "receiver": "A",
+      "own_source_frequency_hz": 440,
+      "expected_remote_frequency_hz": 997,
+      "started_at": "2026-10-23T16:43:15.947Z",
+      "finished_at": "2026-10-23T16:44:34.199Z",
+      "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+      "source_report": {
+        "file": "browser-audio-independent-A.json",
+        "sha256": "d56e1721146134dcb618f86fb9f75bfcdd62d0f55e9df1a12e811e7cac2610df",
+        "status": "observations-only"
+      },
+      "exported_window": {
+        "from_ms": 18304,
+        "to_ms": 78204
+      },
+      "exported_pcm_samples": 600,
+      "remote_tone": {
+        "matching_samples": 31,
+        "from_ms": 57505,
+        "to_ms": 60505,
+        "peak_frequency_hz": 996.09375,
+        "rms_max": 0.07094,
+        "rms_mean": 0.06882
+      },
+      "observed_remote_tones": [
+        {
+          "frequency": 997,
+          "first_ms": 57505,
+          "matching_samples": 31,
+          "max_rms": 0.07094,
+          "last_ms": 60505
+        }
+      ],
+      "inbound": [
+        {
+          "packetsReceived": 3765,
+          "bytesReceived": 22383,
+          "totalAudioEnergy": 0,
+          "totalSamplesDuration": 77.83,
+          "codec": "audio/opus",
+          "clockRate": 48000
+        }
+      ],
+      "digital_audio_pass": true,
+      "resources_after_close": [
+        {
+          "terminal": "单端A",
+          "created_peers": 1,
+          "open_peers": 0
+        }
+      ]
+    },
+    {
+      "receiver": "B",
+      "own_source_frequency_hz": 997,
+      "expected_remote_frequency_hz": 440,
+      "started_at": "2026-10-23T16:43:49.059Z",
+      "finished_at": "2026-10-23T16:44:12.959Z",
+      "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+      "source_report": {
+        "file": "browser-audio-independent-B.json",
+        "sha256": "afd0f48ebf9d35a3273bccb6e284549847e3ef10175eb90fc0aa7a09b725738e",
+        "status": "observations-only"
+      },
+      "exported_window": {
+        "from_ms": 504,
+        "to_ms": 23903
+      },
+      "exported_pcm_samples": 235,
+      "remote_tone": {
+        "matching_samples": 31,
+        "from_ms": 4103,
+        "to_ms": 7103,
+        "peak_frequency_hz": 439.45313,
+        "rms_max": 0.07099,
+        "rms_mean": 0.06821
+      },
+      "observed_remote_tones": [
+        {
+          "frequency": 440,
+          "first_ms": 4103,
+          "matching_samples": 31,
+          "max_rms": 0.07099,
+          "last_ms": 7103
+        }
+      ],
+      "inbound": [
+        {
+          "packetsReceived": 1139,
+          "bytesReceived": 14736,
+          "totalAudioEnergy": 0,
+          "totalSamplesDuration": 23.51,
+          "codec": "audio/opus",
+          "clockRate": 48000
+        }
+      ],
+      "digital_audio_pass": true,
+      "resources_after_close": [
+        {
+          "terminal": "单端B",
+          "created_peers": 1,
+          "open_peers": 0
+        }
+      ]
+    }
+  ],
+  "bidirectional_digital_audio_pass": true
+}

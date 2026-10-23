@@ -11,6 +11,7 @@ type Device struct {
 	Name string `json:"name"`
 }
 type Floor struct {
+	PeerID     string    `json:"peer_id,omitempty"`
 	DeviceID   string    `json:"device_id"`
 	DeviceName string    `json:"device_name"`
 	RequestID  string    `json:"request_id"`
@@ -47,6 +48,7 @@ type SwitchRequest struct {
 	ExpectedVersion uint64 `json:"expected_version"`
 }
 type FloorRequest struct {
+	PeerID         string `json:"peer_id,omitempty"`
 	GroupID        string `json:"group_id"`
 	CurrentVersion uint64 `json:"current_version"`
 	RequestID      string `json:"request_id"`
@@ -106,6 +108,7 @@ type lease struct {
 	Version uint64
 }
 type requestRecord struct {
+	PeerID         string
 	Status         string
 	ValidUntil     time.Time
 	ProtectedUntil time.Time

@@ -12,15 +12,16 @@
 | 组件职责、状态与媒体边界 | [架构](docs/architecture.md) |
 | 本机启动、测试与开发顺序 | [开发指南](docs/development.md) |
 | 必交闭环与验收条件 | [MVP 规格](docs/specs/001-intercom-mvp.md) |
-| 第一切片的具体 API | [控制面契约 v1](docs/specs/002-control-api.md) |
+| 控制面 API | [控制面契约 v1](docs/specs/002-control-api.md) |
+| 浏览器群媒体、门控与诊断 | [媒体契约 v1](docs/specs/003-browser-media.md) |
 | 哪些已经通过、哪些仍待验证 | [验收记录](docs/acceptance.md) |
 
-无板软件首切片已实现并合并至 main：群服务与浏览器控制流程。该阶段不接 USB、不需要 RTA Key、不申请麦克风。原固件的键盘、RTA 语音与应用名已有真机验收；这不等于群对讲已完成。合并状态与验证提交以验收记录及对应 PR 为准。
+S1 群控制面已合入 main；S2 在此基础上实现浏览器 WebRTC 群音频。显式启用后才申请系统麦克风，独立开发诊断可使用明确标注的合成测试音。当前不接 USB、不需要 RTA Key。原固件的键盘、RTA 语音与应用名已有真机验收；这不等于群对讲已完成。合并状态与验证提交以验收记录及对应 PR 为准。
 
 ## 目录
 
 ```text
-server/                     独立 Go 对讲服务与同源浏览器（首个开发切片）
+server/                     独立 Go 对讲服务、群媒体与同源浏览器
 firmware/esp32-s31-rti/      复用板端工程；保留内部工程名与协议标识
 reference/rta-browser/      原 RTA 示例，仅作接口和生命周期参考
 docs/                      产品、架构、规格和实际验收证据

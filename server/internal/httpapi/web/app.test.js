@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {ControlClient, claimOwner, ownerKey} from './app.js';
+import {ControlClient, claimOwner, ownerKey, bindPTTPointer} from './app.js';
 
 const NOW = Date.parse('2026-10-23T10:00:00Z');
 const identity = {device: {id: 'device_1', name: '<成员>'}, token: 'synthetic-local-token'};
@@ -231,4 +231,80 @@ test('default timer adapters preserve the browser global receiver', () => {
     assert.equal(client.schedule(() => {}, 1), 123);
     client.cancelFloor();
   } finally { globalThis.setTimeout = originalSet; globalThis.clearTimeout = originalClear; }
+});
+
+function mediaMock(ready = true) {
+  return {ready, peerID: 'current_peer', sending: false, events: [],
+    isReady() { return this.ready; }, setSending(value) { this.events.push(`send:${value}`); this.sending = value && this.ready; return this.sending; },
+    suspend() { this.events.push('suspend'); this.ready = false; this.sending = false; },
+    sync() { this.events.push('sync'); }, disable() { this.suspend(); }};
+}
+
+test('S2 cannot acquire before local media is connected and playable', async () => {
+  const h = setup(); h.client.audio = mediaMock(false);
+  await h.client.pressFloor(); assert.equal(h.calls.length, 0); assert.equal(h.client.pressed, false);
+});
+
+test('S2 acquire/renew/release retain peer_id; cancel disables capture before release request', async () => {
+  const h = setup(call => {
+    if (call.url.endsWith('/floor/release')) h.client.audio.events.push('release-request');
+    return response(200, call.url.endsWith('/floor/release') ? {released: true} : {floor: {...grant(call.body).floor, peer_id: call.body.peer_id}});
+  });
+  h.client.audio = mediaMock(); await h.client.pressFloor();
+  assert.equal(h.client.audio.sending, true); assert.equal(h.calls[0].body.peer_id, 'current_peer');
+  await h.client.renewFloor(h.client.floorGeneration, h.client.floorRequest);
+  h.client.cancelFloor(); await flush();
+  assert.ok(h.calls.every(call => call.body.peer_id === 'current_peer'));
+  assert.deepEqual(h.client.audio.events.slice(-2), ['send:false', 'release-request']);
+  assert.equal(h.client.audio.sending, false);
+});
+
+test('S2 late acquire after media becomes unavailable never starts capture and ends local press', async () => {
+  const delayed = deferred(); const h = setup(call => call.url.endsWith('/floor/acquire') ? delayed.promise : response(200, {released: true}));
+  h.client.audio = mediaMock(); const acquiring = h.client.pressFloor(); const request = h.calls[0].body;
+  assert.equal(h.client.audio.sending, false); h.client.audio.ready = false;
+  delayed.resolve(response(200, {floor: {...grant(request).floor, peer_id: request.peer_id}})); await acquiring; await flush();
+  assert.equal(h.client.pressed, false); assert.equal(h.client.audio.sending, false);
+  assert.equal(h.client.audio.events.includes('send:true'), false);
+});
+
+test('S2 unknown switch closes media immediately and does not resume before terminal', async () => {
+  const h = setup(() => Promise.reject(new Error('response lost'))); h.client.audio = mediaMock();
+  await h.client.switchGroup('group_2');
+  assert.ok(h.client.pendingSwitch); assert.equal(h.client.audio.events.includes('suspend'), true);
+  assert.equal(h.client.audio.events.includes('sync'), false); assert.equal(h.client.canPress(), false);
+});
+
+test('S2 server epoch/group change closes old media and then synchronizes confirmed state', () => {
+  const h = setup(); h.client.audio = mediaMock();
+  h.client.applyState(state({server_epoch: 'restarted_epoch'}), h.client.epoch);
+  assert.deepEqual(h.client.audio.events, ['send:false', 'suspend', 'sync']);
+  assert.equal(h.client.pressed, false); assert.equal(h.client.state.server_epoch, 'restarted_epoch');
+});
+
+test('S2 identity replacement closes media while the original identity is still installed', () => {
+  const h = setup(); let stoppedIdentity;
+  h.client.audio = mediaMock(); h.client.audio.suspend = () => { stoppedIdentity = h.client.identity.device.id; };
+  h.client.load({device: {id: 'new_device', name: '新伙伴'}, token: 'new-synthetic-token'});
+  assert.equal(stoppedIdentity, 'device_1'); assert.equal(h.client.pressed, false);
+});
+
+
+test('PTT ignores another touch ending; active pointer cancellation and forced blur/hide still stop', () => {
+  const handlers = new Map();
+  const button = {addEventListener(type, callback) { handlers.set(type, callback); }, setPointerCapture() {}};
+  const client = {pressed: false, presses: 0, stops: 0, canPress() { return !this.pressed; },
+    pressFloor() { this.pressed = true; this.presses++; }, cancelFloor() { this.pressed = false; this.stops++; }};
+  const forceEnd = bindPTTPointer(button, client);
+  const event = pointerId => ({pointerId, button: 0, preventDefault() {}});
+  handlers.get('pointerdown')(event(1)); handlers.get('pointerdown')(event(2));
+  handlers.get('pointerup')(event(2)); assert.equal(client.pressed, true); assert.equal(client.presses, 1);
+  handlers.get('pointerup')(event(1)); assert.equal(client.pressed, false); assert.equal(client.stops, 1);
+  for (const type of ['pointercancel', 'lostpointercapture']) {
+    handlers.get('pointerdown')(event(3)); handlers.get(type)(event(8)); assert.equal(client.pressed, true);
+    handlers.get(type)(event(3)); assert.equal(client.pressed, false);
+  }
+  handlers.get('pointerdown')(event(4)); forceEnd(); assert.equal(client.pressed, false);
+  handlers.get('pointerdown')(event(5)); assert.equal(client.pressed, true); forceEnd();
+  assert.equal(client.stops, 5);
 });
