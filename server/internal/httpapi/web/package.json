@@ -1,5 +1,5 @@
 {
   "private": true,
   "type": "module",
-  "scripts": {"test": "node --test app.test.js"}
+  "scripts": {"test": "node --test *.test.js"}
 }

@@ -45,6 +45,9 @@ func (s *Service) validateFloor(id string, req FloorRequest) (*deviceRecord, err
 	if !validID(req.RequestID) || req.GroupID == "" || req.ServerEpoch == "" {
 		return nil, fail(400, "invalid_request", "group_id, request_id and server_epoch required")
 	}
+	if req.PeerID != "" && !validID(req.PeerID) {
+		return nil, fail(400, "invalid_request", "invalid peer_id")
+	}
 	if req.ServerEpoch != s.epoch {
 		return nil, fail(409, "epoch_conflict", "server restarted; refresh state before another press")
 	}
@@ -81,6 +84,9 @@ func (s *Service) Acquire(id string, req AcquireRequest) (Floor, error) {
 	if err != nil {
 		return Floor{}, err
 	}
+	if req.PeerID != "" && !s.mediaMatches(id, req.PeerID, true) {
+		return Floor{}, fail(409, "peer_not_ready", "connected current Peer required")
+	}
 	if req.ValidUntil.IsZero() || req.ValidUntil.After(now.Add(10*time.Second)) {
 		return Floor{}, fail(400, "invalid_deadline", "valid_until must be within ten seconds of server time")
 	}
@@ -89,6 +95,10 @@ func (s *Service) Acquire(id string, req AcquireRequest) (Floor, error) {
 	if err != nil {
 		return Floor{}, err
 	}
+	if r.Status != "" && r.PeerID != req.PeerID {
+		return Floor{}, fail(409, "request_conflict", "request_id belongs to a different Peer")
+	}
+	r.PeerID = req.PeerID
 	if !r.ValidUntil.IsZero() && !r.ValidUntil.Equal(req.ValidUntil) {
 		return Floor{}, fail(409, "request_conflict", "request_id was used with a different deadline")
 	}
@@ -119,7 +129,7 @@ func (s *Service) Acquire(id string, req AcquireRequest) (Floor, error) {
 		r.Status = "failed"
 		return Floor{}, err
 	}
-	f := Floor{DeviceID: id, DeviceName: d.Name, RequestID: req.RequestID, LeaseID: leaseID, ExpiresAt: now.Add(LeaseDuration)}
+	f := Floor{PeerID: req.PeerID, DeviceID: id, DeviceName: d.Name, RequestID: req.RequestID, LeaseID: leaseID, ExpiresAt: now.Add(LeaseDuration)}
 	s.floors[req.GroupID] = &lease{Floor: f, Version: req.CurrentVersion}
 	r.Status = "granted"
 	r.LeaseID = leaseID
@@ -134,7 +144,10 @@ func (s *Service) Renew(id string, req RenewRequest) (Floor, error) {
 		return Floor{}, err
 	}
 	l := s.floors[req.GroupID]
-	if req.LeaseID == "" || l == nil || l.DeviceID != id || l.Version != req.CurrentVersion || l.RequestID != req.RequestID || l.LeaseID != req.LeaseID {
+	if req.PeerID != "" && !s.mediaMatches(id, req.PeerID, true) {
+		return Floor{}, fail(409, "peer_not_ready", "connected current Peer required")
+	}
+	if req.LeaseID == "" || l == nil || l.PeerID != req.PeerID || l.DeviceID != id || l.Version != req.CurrentVersion || l.RequestID != req.RequestID || l.LeaseID != req.LeaseID {
 		return Floor{}, fail(409, "lease_not_held", "lease is no longer held; release and press again")
 	}
 	l.ExpiresAt = now.Add(LeaseDuration)
@@ -155,6 +168,10 @@ func (s *Service) Release(id string, req FloorRequest) error {
 	if err != nil {
 		return err
 	}
+	if r.Status != "" && r.PeerID != req.PeerID {
+		return fail(409, "request_conflict", "request_id belongs to a different Peer")
+	}
+	r.PeerID = req.PeerID
 	r.Status = "canceled"
 	r.ProtectedUntil = now.Add(RequestProtection)
 	if l := s.floors[req.GroupID]; l != nil && l.DeviceID == id && l.Version == req.CurrentVersion && l.RequestID == req.RequestID {

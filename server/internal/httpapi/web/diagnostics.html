@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>声路同行 · 本机音频诊断</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#172529;background:#f2f7f5}body{max-width:1120px;margin:auto;padding:28px}h1{font-size:28px}.warning{background:#fff4ce;border-left:5px solid #b78000;padding:16px;line-height:1.7}section,article{background:white;border:1px solid #d5e2dd;border-radius:12px;padding:18px;margin:16px 0}button,input,select{font:inherit;padding:10px;margin:5px;border-radius:7px;border:1px solid #a9beb4}button{background:#0b6855;color:white;cursor:pointer}button:disabled{opacity:.5;cursor:wait}label{display:inline-block}#terminals{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px}article{margin:0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}#status{font-weight:650}a{color:#075c4b}.pass{color:#087343}.fail{color:#b12626}table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:10px;border-bottom:1px solid #dde5e1}
+</style>
+<h1>声路同行 · 本机音频诊断</h1>
+<p class="warning">合成音源，真实 WebRTC 编解码；不代表系统麦克风 / 扬声器听测。只有点击下方按钮才创建声音。测试身份独立，不读取产品身份；不使用板子、RTA 或真实音频。自动矩阵是同页三个逻辑终端，不能称作三个独立浏览器。</p>
+<section>
+<h2>三终端自动矩阵</h2>
+<button id="run-matrix">显式启用合成音源并运行三终端矩阵</button>
+<button id="stop">停止并关闭全部测试音频</button>
+<button id="export" disabled>导出无凭据报告</button>
+<button id="show-report">更新屏幕报告（不下载）</button>
+<p id="status" role="status">尚未创建音源或测试身份。</p>
+<p>包含双向、一对多、跨群、释放、同时抢麦、故意持续上行后的租约到期、十次切群。并发和失联属于开发驱动器，不改变普通页面的松手 / 失焦规则。</p>
+</section>
+<section>
+<h2>独立标签页单端模式</h2>
+<p>在两个独立标签页打开本页，分别点击启用；每页身份只保存在自己的 sessionStorage。两端加入相同口令后，可经真实服务互发测试音。接收测量自动保留，发完后再切标签页查看。</p>
+<label>测试端代号 <input id="single-name" value="单端A" maxlength="24"></label>
+<label>测试音 <select id="single-frequency"><option value="440">440 Hz</option><option value="997">997 Hz</option><option value="1777">1777 Hz</option></select></label>
+<button id="enable-single">显式启用单端合成音源</button><br>
+<label>建群名称 <input id="group-name" value="跨标签诊断群" maxlength="32"></label><button id="create-group" disabled>建立测试群并显示口令</button>
+<label>群口令 <input id="group-code" autocomplete="off" maxlength="16"></label><button id="join-group" disabled>加入测试群</button>
+<button id="single-tone" disabled>申请并发送 3 秒测试音</button>
+<p id="single-status">单端尚未启用。</p>
+<p id="share-code"></p>
+</section>
+<div id="terminals"></div>
+<section><h2>结果</h2><table><thead><tr><th>项目</th><th>结果</th><th>证据</th></tr></thead><tbody id="results"></tbody></table><pre id="report-summary">尚无报告。</pre></section>
+<script type="module" src="/diagnostics.js"></script>
+</html>

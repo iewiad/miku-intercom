@@ -22,21 +22,22 @@ const LeaseDuration = 3 * time.Second
 const RequestProtection = 60 * time.Second
 
 type Service struct {
-	mu       sync.Mutex
-	disk     diskState
-	saver    Saver
-	opts     Options
-	epoch    string
-	tokens   map[string]string
-	codes    map[string]string
-	floors   map[string]*lease
-	requests map[string]map[string]*requestRecord
-	badCodes map[string][]time.Time
+	mediaPeers map[string]MediaBinding
+	mu         sync.Mutex
+	disk       diskState
+	saver      Saver
+	opts       Options
+	epoch      string
+	tokens     map[string]string
+	codes      map[string]string
+	floors     map[string]*lease
+	requests   map[string]map[string]*requestRecord
+	badCodes   map[string][]time.Time
 }
 
 func New(snapshot []byte, saver Saver, opts Options) (*Service, error) {
 	opts.defaults()
-	s := &Service{saver: saver, opts: opts, floors: map[string]*lease{}, requests: map[string]map[string]*requestRecord{}, badCodes: map[string][]time.Time{}}
+	s := &Service{mediaPeers: map[string]MediaBinding{}, saver: saver, opts: opts, floors: map[string]*lease{}, requests: map[string]map[string]*requestRecord{}, badCodes: map[string][]time.Time{}}
 	s.disk = diskState{FormatVersion: 1, Devices: map[string]*deviceRecord{}, Groups: map[string]*groupRecord{}}
 	if len(snapshot) > 0 {
 		s.disk = diskState{}
@@ -376,6 +377,7 @@ func (s *Service) Switch(id string, req SwitchRequest) (Operation, State, error)
 	}
 	if op.Status == "applied" && d.CurrentGroupID != nd.CurrentGroupID {
 		s.revokeOwned(id, d.CurrentGroupID, now)
+		delete(s.mediaPeers, id)
 	}
 	return op, s.state(id, now), nil
 }

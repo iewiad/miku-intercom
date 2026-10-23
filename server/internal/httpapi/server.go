@@ -12,14 +12,24 @@ import (
 	"strings"
 
 	"github.com/iewiad/miku-intercom/server/internal/control"
+	"github.com/iewiad/miku-intercom/server/internal/media"
 )
 
 //go:embed web/*
 var web embed.FS
 
-type Server struct{ service *control.Service }
+type Server struct {
+	service *control.Service
+	media   *media.Hub
+}
 
-func New(service *control.Service) http.Handler { return &Server{service: service} }
+func New(service *control.Service, hubs ...*media.Hub) http.Handler {
+	s := &Server{service: service}
+	if len(hubs) > 0 {
+		s.media = hubs[0]
+	}
+	return s
+}
 func send(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -67,24 +77,27 @@ func sameOrigin(r *http.Request) bool {
 	return u.Scheme == scheme && strings.EqualFold(u.Host, r.Host) && u.User == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == ""
 }
 func decode(w http.ResponseWriter, r *http.Request, dst any) error {
+	return decodeLimit(w, r, dst, 8*1024)
+}
+func decodeLimit(w http.ResponseWriter, r *http.Request, dst any, limitBytes int64) error {
 	typ, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || typ != "application/json" {
 		return invalid("unsupported_media_type", "Content-Type must be application/json", 415)
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, limitBytes)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err = dec.Decode(dst); err != nil {
 		var limit *http.MaxBytesError
 		if errors.As(err, &limit) {
-			return invalid("body_too_large", "request body exceeds 8 KiB", 413)
+			return invalid("body_too_large", "request body exceeds limit", 413)
 		}
 		return invalid("invalid_json", "valid JSON with only documented fields required", 400)
 	}
 	if err = dec.Decode(new(any)); err != io.EOF {
 		var limit *http.MaxBytesError
 		if errors.As(err, &limit) {
-			return invalid("body_too_large", "request body exceeds 8 KiB", 413)
+			return invalid("body_too_large", "request body exceeds limit", 413)
 		}
 		return invalid("invalid_json", "exactly one JSON value required", 400)
 	}
@@ -97,7 +110,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, invalid("host_forbidden", "localhost or loopback Host required", 403))
 		return
 	}
-	static := map[string]string{"/": "index.html", "/app.js": "app.js", "/style.css": "style.css"}
+	static := map[string]string{"/": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/audio.js": "audio.js"}
+	if s.media != nil && s.media.DiagnosticsEnabled() {
+		static["/diagnostics"] = "diagnostics.html"
+		static["/diagnostics.js"] = "diagnostics.js"
+	}
 	if file, ok := static[r.URL.Path]; ok {
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", "GET")
@@ -109,7 +126,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, err)
 			return
 		}
-		typ := map[string]string{"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8"}[file]
+		typ := map[string]string{"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8", "audio.js": "text/javascript; charset=utf-8", "diagnostics.html": "text/html; charset=utf-8", "diagnostics.js": "text/javascript; charset=utf-8"}[file]
 		w.Header().Set("Content-Type", typ)
 		_, _ = w.Write(b)
 		return
@@ -121,6 +138,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1")
 	methods := map[string]string{"/devices": "POST", "/state": "GET", "/groups": "POST", "/memberships": "POST", "/current-group": "PUT", "/floor/acquire": "POST", "/floor/renew": "POST", "/floor/release": "POST"}
 	method, ok := methods[path]
+	if s.media != nil {
+		if path == "/media" {
+			method = "GET"
+			ok = true
+		}
+		if path == "/media/peers" {
+			method = "POST"
+			ok = true
+		}
+		if strings.HasPrefix(path, "/media/peers/") && !strings.Contains(strings.TrimPrefix(path, "/media/peers/"), "/") {
+			method = "DELETE"
+			ok = true
+		}
+	}
 	if strings.HasPrefix(path, "/operations/") && !strings.Contains(strings.TrimPrefix(path, "/operations/"), "/") {
 		method = "GET"
 		ok = true
@@ -154,6 +185,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (s *Server) handle(w http.ResponseWriter, r *http.Request, path, id string) error {
+	if s.media != nil && (path == "/media" || path == "/media/peers" || strings.HasPrefix(path, "/media/peers/")) {
+		return s.handleMedia(w, r, path, id)
+	}
 	switch path {
 	case "/devices":
 		var req struct {
@@ -232,6 +266,7 @@ func (s *Server) handleFloor(w http.ResponseWriter, r *http.Request, path, id st
 	case "/floor/acquire":
 		var req struct {
 			GroupID        string          `json:"group_id"`
+			PeerID         string          `json:"peer_id"`
 			CurrentVersion *uint64         `json:"current_version"`
 			RequestID      string          `json:"request_id"`
 			ServerEpoch    string          `json:"server_epoch"`
@@ -243,7 +278,7 @@ func (s *Server) handleFloor(w http.ResponseWriter, r *http.Request, path, id st
 		if req.CurrentVersion == nil {
 			return invalid("invalid_request", "current_version required", 400)
 		}
-		parsed := control.AcquireRequest{FloorRequest: control.FloorRequest{GroupID: req.GroupID, CurrentVersion: *req.CurrentVersion, RequestID: req.RequestID, ServerEpoch: req.ServerEpoch}}
+		parsed := control.AcquireRequest{FloorRequest: control.FloorRequest{PeerID: req.PeerID, GroupID: req.GroupID, CurrentVersion: *req.CurrentVersion, RequestID: req.RequestID, ServerEpoch: req.ServerEpoch}}
 		if len(req.ValidUntil) == 0 || json.Unmarshal(req.ValidUntil, &parsed.ValidUntil) != nil {
 			return invalid("invalid_deadline", "valid_until must be RFC3339", 400)
 		}
@@ -255,6 +290,7 @@ func (s *Server) handleFloor(w http.ResponseWriter, r *http.Request, path, id st
 	case "/floor/renew":
 		var req struct {
 			GroupID        string  `json:"group_id"`
+			PeerID         string  `json:"peer_id"`
 			CurrentVersion *uint64 `json:"current_version"`
 			RequestID      string  `json:"request_id"`
 			ServerEpoch    string  `json:"server_epoch"`
@@ -266,7 +302,7 @@ func (s *Server) handleFloor(w http.ResponseWriter, r *http.Request, path, id st
 		if req.CurrentVersion == nil {
 			return invalid("invalid_request", "current_version required", 400)
 		}
-		base = control.FloorRequest{GroupID: req.GroupID, CurrentVersion: *req.CurrentVersion, RequestID: req.RequestID, ServerEpoch: req.ServerEpoch}
+		base = control.FloorRequest{PeerID: req.PeerID, GroupID: req.GroupID, CurrentVersion: *req.CurrentVersion, RequestID: req.RequestID, ServerEpoch: req.ServerEpoch}
 		floor, err := s.service.Renew(id, control.RenewRequest{FloorRequest: base, LeaseID: req.LeaseID})
 		if err != nil {
 			return err
@@ -275,6 +311,7 @@ func (s *Server) handleFloor(w http.ResponseWriter, r *http.Request, path, id st
 	case "/floor/release":
 		var req struct {
 			GroupID        string  `json:"group_id"`
+			PeerID         string  `json:"peer_id"`
 			CurrentVersion *uint64 `json:"current_version"`
 			RequestID      string  `json:"request_id"`
 			ServerEpoch    string  `json:"server_epoch"`
@@ -285,7 +322,7 @@ func (s *Server) handleFloor(w http.ResponseWriter, r *http.Request, path, id st
 		if req.CurrentVersion == nil {
 			return invalid("invalid_request", "current_version required", 400)
 		}
-		base = control.FloorRequest{GroupID: req.GroupID, CurrentVersion: *req.CurrentVersion, RequestID: req.RequestID, ServerEpoch: req.ServerEpoch}
+		base = control.FloorRequest{PeerID: req.PeerID, GroupID: req.GroupID, CurrentVersion: *req.CurrentVersion, RequestID: req.RequestID, ServerEpoch: req.ServerEpoch}
 		if err := s.service.Release(id, base); err != nil {
 			return err
 		}
