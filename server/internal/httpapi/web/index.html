@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>声路同行 · 小组语音协作</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <div class="demo-banner"><span class="demo-dot" aria-hidden="true"></span>控制流程演示，尚无音频</div>
+  <header class="page-header">
+    <a class="brand" href="/" aria-label="声路同行首页"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>声路同行<small>让协作，在同一个频道</small></span></a>
+    <div class="identity-chip" id="identity-chip" hidden><span class="avatar" aria-hidden="true">我</span><span id="identity-name"></span></div>
+  </header>
+  <main>
+    <section id="welcome" class="welcome-card">
+      <span class="eyebrow">小组即时协作</span>
+      <h1>先组个群，<br>一起走下一程。</h1>
+      <p class="intro">快速组队，按住申请麦权。先把协作流程走通，语音将在后续版本接入。</p>
+      <form id="identity-form" class="identity-form">
+        <label for="nickname">怎么称呼你</label>
+        <div class="input-row"><input id="nickname" name="nickname" placeholder="输入一个昵称" minlength="1" maxlength="64" required autocomplete="nickname"><button class="button primary" id="identity-submit" type="submit">建立本机身份 <span aria-hidden="true">↗</span></button></div>
+      </form>
+      <p class="fine-print">身份凭据仅保存在此浏览器的本机存储中。昵称用于展示，不是登录凭据。</p>
+      <div class="welcome-steps"><span><b>01</b> 建群或入群</span><span><b>02</b> 选择当前群</span><span><b>03</b> 按住申请麦权</span></div>
+    </section>
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+    <section id="lock-panel" class="lock-panel" hidden>
+      <div><strong id="lock-title">此标签页已暂停操作</strong><p id="lock-description"></p></div><button id="takeover" type="button" class="button secondary">改用当前标签页</button>
+    </section>
+    <section id="workspace" class="workspace" hidden>
+      <aside class="sidebar">
+        <section class="panel groups-panel">
+          <div class="section-heading"><h2>已加入的群</h2><span class="count" id="group-count">0 个</span></div>
+          <ul class="group-list" id="group-list" aria-label="已加入的群"></ul>
+          <div id="empty-groups" class="empty-state"><span aria-hidden="true">◎</span><p>第一段同行，从一个群开始。</p><small>创建群，或向伙伴要一个口令。</small></div>
+          <div class="panel-divider"></div>
+          <form id="create-form" class="compact-form">
+            <label for="create-name">创建新群</label><div class="input-row"><input id="create-name" placeholder="例如：全员群" maxlength="64" required autocomplete="off"><button id="create-group" class="button secondary" type="submit">创建</button></div>
+          </form>
+          <form id="join-form" class="compact-form">
+            <label for="join-code">用口令加入</label><div class="input-row"><input id="join-code" class="code-input" placeholder="8 位入群口令" maxlength="24" required autocomplete="off" autocapitalize="characters" spellcheck="false"><button id="join-group" class="button secondary" type="submit">加入</button></div>
+          </form>
+        </section>
+        <section class="share-card" id="share-card" hidden>
+          <span class="eyebrow">邀请伙伴同行</span><h3 id="share-name"></h3><div class="share-line"><code id="share-code"></code><button id="copy-code" class="copy-button" type="button">复制</button></div><p>请保存并私下分享此口令，刷新后不再展示。</p>
+        </section>
+      </aside>
+      <section class="panel channel-panel">
+        <div class="channel-top"><span class="eyebrow">当前频道</span><button class="text-button" type="button" id="refresh-state">刷新状态 <span aria-hidden="true">↻</span></button></div>
+        <h1 id="current-name">还没有当前群</h1><p id="current-detail" class="channel-detail">创建群或输入口令，开始控制流程演示</p>
+        <div class="floor-status"><span class="status-dot" aria-hidden="true"></span><strong id="floor-label">未按麦</strong><p id="floor-description">松手、失焦或离开页面都会结束申请与持有</p></div>
+        <div class="ptt-area"><button type="button" id="ptt" class="ptt-button" aria-pressed="false" disabled><span class="ptt-icon" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><strong id="ptt-title">按住申请麦权</strong><small id="ptt-hint">入群后可用</small></button></div>
+        <div class="control-note"><span aria-hidden="true">ⓘ</span><p>此按钮只申请控制授权，不会开启麦克风，也不会发送音频。</p></div>
+        <button type="button" class="button secondary retry-switch" id="retry-switch" hidden>继续确认同一次切群</button>
+        <div class="channel-bottom"><span><i class="sync-dot" aria-hidden="true"></i><span id="sync-label">本机演示</span></span><span>成员数为已加入人数</span></div>
+      </section>
+    </section>
+    <p class="browser-tip">两个成员测试，请使用两个独立浏览器配置或隐私窗口；同一浏览器的多个标签页会共享身份。</p>
+  </main>
+  <footer><span>声路同行 · Miku Intercom</span><span>先连接彼此，再出发。</span></footer>
+  <noscript><p>请启用 JavaScript 以使用本机控制流程演示。</p></noscript>
+</body>
+</html>
