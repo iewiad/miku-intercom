@@ -7,13 +7,13 @@
 /*******************************************************************************
  * Size: 24 px
  * Bpp: 4
- * Opts: --size 24 --bpp 4 --format lvgl --font managed_components/lvgl__lvgl/scripts/built_in_font/SourceHanSansSC-Normal.otf --symbols 声路同行 --no-kerning --lv-font-name shenglu_brand_24 -o main/shenglu_brand_24.c
+ * Opts: --size 24 --bpp 4 --format lvgl --lv-include lvgl.h --font managed_components/lvgl__lvgl/scripts/built_in_font/SourceHanSansSC-Normal.otf --symbols 声路同行 --no-kerning --lv-font-name shenglu_brand_24 -o main/shenglu_brand_24.c
  ******************************************************************************/
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE
 #include "lvgl.h"
 #else
-#include "lvgl/lvgl.h"
+#include "lvgl.h"
 #endif
 
 #ifndef SHENGLU_BRAND_24

@@ -1,4 +1,5 @@
 #include "board_display.h"
+#include "app_brand.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -22,10 +23,6 @@
 #define TRANSCRIPT_TIMELINE_MAX 6144
 #define UI_SETTINGS_NAMESPACE "rti_settings"
 #define UI_LANGUAGE_KEY "ui_lang"
-#define APP_DISPLAY_NAME "声路同行"
-#define APP_POWERED_BY "Powered by Miku RTA"
-#define APP_WELCOME_ZH "你好，这里是" APP_DISPLAY_NAME "。有什么想了解的，直接问我。"
-#define APP_WELCOME_EN "Welcome. Tap Start to begin a voice conversation."
 
 static const char *TAG = "board_display";
 static wifi_ap_record_t scan_results[WIFI_SCAN_LIMIT];
