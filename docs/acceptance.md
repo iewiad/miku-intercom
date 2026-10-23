@@ -10,8 +10,8 @@
 | 复用代码来源 | 通过 | docs/v0-manifest.json，37 个原文件 SHA-256 |
 | v0 基线 | 通过 | 远端 v0^{commit} = d713a5a9d32039cdeeacca90503ba184f865b6c3 |
 | 产品定位 | 已确认方向 | docs/product.md，小组即时协作；车队是用例之一 |
-| 独立 Go 群服务 | S1 开发中 | 本机控制面契约见 specs/002-control-api.md；控制状态与音频分别验收 |
-| 浏览器 PTT/群音频 | 未开始 | 本项目独立实现，不等同旧 RTA demo |
+| 独立 Go 群服务 | S1 控制面实现、测试通过 | [PR #5](https://github.com/iewiad/miku-intercom/pull/5)，b56cbfd：身份/群/成员/当前群/麦权；27 个 Go 顶层测试、race 与 vet 通过；契约见 specs/002-control-api.md |
+| 浏览器 PTT/群音频 | 控制流程通过；音频未实现 | 19 条浏览器状态测试；Chrome 两个隔离身份实测建群、口令入群、切群 ACK、持有/松手与标签页接管，320px 无横向溢出；不申请麦克风 |
 | 设备连接（此前） | 已确认 | ESP32-S31-Korvo-1；本轮按用户要求不连接板子 |
 | 复用固件编译与烧录 | 通过 | ESP-IDF v6.2.0；Token 修复 e5e4b87 后，当前品牌固件 9f1ca6d 已仅更新应用区并通过独立摘要校验，镜像 0x2a3500 字节，NVS 保留 |
 | 键盘感叹号 | 通过、已合并 | [PR #2](https://github.com/iewiad/miku-intercom/pull/2)：用户确认可见且可输入；main 合并提交 4f089b8b67ffcdcbb3d6864fd77f94046c30fb5c |
@@ -25,14 +25,22 @@
 | 原 RTA 语音回复 | 用户确认通过 | 用户确认“能听到回复，已停止”；仅原 RTA 交互，不等同板↔浏览器群音频 |
 | RTA 最终转写 | 通过 | 串口捕获 7 次 conversation.item.input_audio_transcription.completed、8 次 response.done；不保存转写正文 |
 | 本次 RTA 会话停止 | 通过 | 串口停止事件；同创建凭据只读查询最终为 HTTP 200 / ended，ended_at_ms 已存在；当次 USB 监听已结束 |
-| 语音切群与恢复 | 未开始 | 明确触发；服务端 ACK；单 Peer 待实测 |
+| 语音切群与恢复 | 未开始 | 手动控制切群已实现；RTA 指令接入、目标群媒体与单 Peer 恢复待实现 |
 | 产品流程草案 | 已记录 | docs/product.md，含页面、抢麦、语音切群与失败恢复 |
 | 按需求推荐小组 | 已纳入规划、未验证 | 只推荐已授权群；用户确认后复用切群；不属于基础闭环已通过能力 |
 | 轻量执行规格 | 已整理 | 001 为跨组件范围；002 为首切片具体 API；无需先初始化 spec-kit |
 | 板端交互草图 | 仅模拟检查 | 浏览器检查松手停麦反馈、未知群不误切、目标群确认反馈及 320px 布局；无真实服务/音频 |
-| 开发入口与架构 | 已整理，随实现核对 | README → development.md / architecture.md；S1 控制面、S2 媒体、S3 板端、S4 语音切群 |
+| 开发入口与架构 | 已整理，S1 命令与入口已核对 | README → development.md / architecture.md；S1 控制面、S2 媒体、S3 板端、S4 语音切群 |
 | demo 视频 | 未录制 | 真实闭环通过后录制 |
 | 公开准备 | 未开始 | 当前保持私有，公开前核验凭据、许可、内容 |
+
+## S1 无板软件验证
+
+首切片 [PR #5](https://github.com/iewiad/miku-intercom/pull/5)，提交 `b56cbfd`，分支 `feat/group-control`；已推送待合并。使用 Go 1.27.1、Node.js 26.3.1 / 24.19.0 验证；模块最低 Go 1.24，浏览器测试要求 Node 22+。从 `server/` 运行 `go test -race ./...`、`go vet ./...`、`node --test internal/httpapi/web/*.test.js` 均通过。
+
+另以临时服务和合成身份走真实 HTTP：建群、错口令/重复入群、第二群不打断、跨群拒绝、切群操作重放、抢麦冲突/忙后重试、先释放后到达、旧释放不清新租约、切群释放；重启后成员和终态保留、麦权清空、旧启动代次拒绝，快照权限 0600。Chrome 使用 127.0.0.1 与 localhost 两个独立存储验证页面流程、同身份标签接管及 320px 窄屏；更换合成数据后，401 提示与按钮重建身份通过，无需 DevTools；无音频权限请求。临时数据与日志不进入 Git。
+
+这些证据只覆盖控制状态；浏览器群媒体、板端群音频、语音切群和需求推荐不能据此标记通过。本轮没有连接板子、读取 RTA Key 或调用原网关。
 
 禁止将旧工程 README / 历史日志中的通过记录当作本项目的证据。
 

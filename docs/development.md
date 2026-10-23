@@ -1,10 +1,10 @@
 # 开发指南
 
-当前先做本机软件开发，不连接板子。实际证据见 [acceptance.md](acceptance.md)，首切片接口见 [002-control-api.md](specs/002-control-api.md)。以下命令在首切片分支 `feat/group-control` 运行；仅文档分支尚不包含 `server/`。切换前先保存自己的工作，或使用独立工作树。代码 PR 提供合并和验证入口。
+当前先做本机软件开发，不连接板子。实际证据见 [acceptance.md](acceptance.md)，首切片接口见 [002-control-api.md](specs/002-control-api.md)。以下命令在[首切片 PR #5](https://github.com/iewiad/miku-intercom/pull/5) 的分支 `feat/group-control` 运行；仅文档分支尚不包含 `server/`。切换前先保存自己的工作，或使用独立工作树。代码 PR 提供合并和验证入口。
 
 ## 启动控制流程演示
 
-需要 Go 和 Node.js（Node 仅用于浏览器状态测试）。服务端使用标准库，不需要七牛 Key、外部模型、数据库或 ESP-IDF。
+需要 Go 1.24+ 和 Node.js 22+（Node 仅用于浏览器状态测试）；本次实测 Go 1.27.1、Node 26.3.1。服务端使用标准库，不需要七牛 Key、外部模型、数据库或 ESP-IDF。
 
 从仓库根目录执行：
 
@@ -13,7 +13,7 @@ cd server
 go run ./cmd/intercom
 ```
 
-打开[本机页面](http://127.0.0.1:8080)。默认状态写在仓库 `work/intercom/state.json`，已忽略；Token、群口令不应贴进日志或 Git。可通过 `-addr` 和 `-data` 指定监听与数据文件。默认本机地址应保持到局域网部署切片补齐访问控制为止。
+打开[本机页面](http://127.0.0.1:8080)。默认状态写在仓库 `work/intercom/state.json`，已忽略；Token、群口令不应贴进日志或 Git。可通过 `-addr` 和 `-data` 指定监听与数据文件；现有数据父目录必须为私有目录（0700），程序不会修改其上级权限。默认本机地址应保持到局域网部署切片补齐访问控制为止。
 
 用两个独立浏览器配置或普通/隐私窗口分别创建身份：A 建立“全员群”并分享口令，B 加入；A 再建立“后勤组”，验证当前群仍为全员群。B 输错口令不加入；两端同时按住控制按钮仅一端获权。手动切群后原麦权释放，另一端留在原群。页面始终提示“尚无音频”；这里检查控制流程，不是听测。
 

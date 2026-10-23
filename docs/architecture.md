@@ -33,9 +33,13 @@ flowchart LR
 
 ```text
 server/cmd/intercom/             启动、监听地址、状态文件配置与退出
-server/internal/...             权威状态、持久化、HTTP 处理与测试
+server/internal/control/        权威状态、切群终态、麦权状态机与时钟注入
+server/internal/persist/        独占文件锁、原子快照
+server/internal/httpapi/        鉴权与边界校验、静态文件白名单、JSON API
 server/internal/httpapi/web/     同源页面与浏览器状态测试
 ```
+
+入口组装 persist → control → httpapi，状态层通过 Saver 接口写入快照，测试可注入保存失败与时钟。状态变更在同一互斥区内校验和提交，保存成功才发布新状态；HTTP 层不另存一份权限状态。
 
 Go 标准库单进程服务，默认只监听本机；浏览器和 API 同源。终端随机凭据用于鉴权，群短口令只用于取得成员资格。快照保存身份摘要、群、成员、当前群版本与切群操作结果，成功落盘后才 ACK；麦权与限流不跨服务重启。单实例使用同一数据目录，数据文件不进 Git。多实例、账号体系、撤权管理与公网部署另立切片。
 
