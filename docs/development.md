@@ -1,6 +1,6 @@
 # 开发指南
 
-当前先做本机软件开发，不连接板子。实际证据见 [acceptance.md](acceptance.md)，首切片接口见 [002-control-api.md](specs/002-control-api.md)。以下命令在[首切片 PR #5](https://github.com/iewiad/miku-intercom/pull/5) 的分支 `feat/group-control` 运行；仅文档分支尚不包含 `server/`。切换前先保存自己的工作，或使用独立工作树。代码 PR 提供合并和验证入口。
+当前先做本机软件开发，不连接板子。实际证据见 [acceptance.md](acceptance.md)，首切片接口见 [002-control-api.md](specs/002-control-api.md)。以下命令可在已合并的 `main` 分支运行；首切片实现与评审记录见 [PR #5](https://github.com/iewiad/miku-intercom/pull/5)。
 
 ## 启动控制流程演示
 

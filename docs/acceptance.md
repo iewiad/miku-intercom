@@ -15,11 +15,11 @@
 | 设备连接（此前） | 已确认 | ESP32-S31-Korvo-1；本轮按用户要求不连接板子 |
 | 复用固件编译与烧录 | 通过 | ESP-IDF v6.2.0；Token 修复 e5e4b87 后，当前品牌固件 9f1ca6d 已仅更新应用区并通过独立摘要校验，镜像 0x2a3500 字节，NVS 保留 |
 | 键盘感叹号 | 通过、已合并 | [PR #2](https://github.com/iewiad/miku-intercom/pull/2)：用户确认可见且可输入；main 合并提交 4f089b8b67ffcdcbb3d6864fd77f94046c30fb5c |
-| 板端应用名 | 用户确认通过 | [PR #4](https://github.com/iewiad/miku-intercom/pull/4)：开机页与主界面统一为「声路同行」，48 / 24 px 四字中文字库；欢迎语及助手署名同步，用户确认两处均显示正常；PR 待合并 |
+| 板端应用名 | 用户确认通过 | [PR #4](https://github.com/iewiad/miku-intercom/pull/4)：开机页与主界面统一为「声路同行」，48 / 24 px 四字中文字库；欢迎语及助手署名同步，用户确认两处均显示正常；PR #4 已合并至 main（e6f7c53） |
 | 品牌固件启动 | 通过 | 串口确认 9f1ca6d、品牌开机页初始化、自动连网、凭据仍存在，无 panic；当次烟测没有重新创建 RTA 会话 |
 | Wi-Fi 实际连接 | 通过 | 此前验收确认已连接并取得 IP，HTTPS 请求得到应用层响应；不记录 SSID 或密码 |
 | RTA 新凭据配置 | 通过 | 用户确认后，从七牛凭据中心创建 7 天开发 Key（有效至 2026-10-30），新 Key 查询原网关 Profile / quota 均为 HTTP 200；使用 quota 返回的默认 App，通过 USB 保存到 NVS，重启并自动联网；未修改服务端权限或配额 |
-| 原 RTA 创建会话 | 真机通过 | 原凭据 HTTP 403 已通过新 Key 恢复；换 Key 后暴露 Token 860 字节超过旧固件 767 字节上限的问题。[PR #3](https://github.com/iewiad/miku-intercom/pull/3) 扩大为 2048 并补解析失败清理，e5e4b87 编译、独立 flash 校验和真机复验通过；PR 待合并 |
+| 原 RTA 创建会话 | 真机通过 | 原凭据 HTTP 403 已通过新 Key 恢复；换 Key 后暴露 Token 860 字节超过旧固件 767 字节上限的问题。[PR #3](https://github.com/iewiad/miku-intercom/pull/3) 扩大为 2048 并补解析失败清理，e5e4b87 编译、独立 flash 校验和真机复验通过；PR #3 已合并至 main（8de3ebc） |
 | 群对讲固件 | 未实现 | 键盘修复通过不等于对讲闭环通过 |
 | 板↔浏览器实音频 | 未验证 | 必须真机听测 |
 | 原 RTA 语音回复 | 用户确认通过 | 用户确认“能听到回复，已停止”；仅原 RTA 交互，不等同板↔浏览器群音频 |
@@ -36,7 +36,7 @@
 
 ## S1 无板软件验证
 
-首切片 [PR #5](https://github.com/iewiad/miku-intercom/pull/5)，提交 `b56cbfd`，分支 `feat/group-control`；已推送待合并。使用 Go 1.27.1、Node.js 26.3.1 / 24.19.0 验证；模块最低 Go 1.24，浏览器测试要求 Node 22+。从 `server/` 运行 `go test -race ./...`、`go vet ./...`、`node --test internal/httpapi/web/*.test.js` 均通过。
+首切片 [PR #5](https://github.com/iewiad/miku-intercom/pull/5)，原实现提交 `b56cbfd`；PR #5 已合并至 main（de0f864），可直接按开发指南运行。使用 Go 1.27.1、Node.js 26.3.1 / 24.19.0 验证；模块最低 Go 1.24，浏览器测试要求 Node 22+。从 `server/` 运行 `go test -race ./...`、`go vet ./...`、`node --test internal/httpapi/web/*.test.js` 均通过。
 
 另以临时服务和合成身份走真实 HTTP：建群、错口令/重复入群、第二群不打断、跨群拒绝、切群操作重放、抢麦冲突/忙后重试、先释放后到达、旧释放不清新租约、切群释放；重启后成员和终态保留、麦权清空、旧启动代次拒绝，快照权限 0600。Chrome 使用 127.0.0.1 与 localhost 两个独立存储验证页面流程、同身份标签接管及 320px 窄屏；更换合成数据后，401 提示与按钮重建身份通过，无需 DevTools；无音频权限请求。临时数据与日志不进入 Git。
 
