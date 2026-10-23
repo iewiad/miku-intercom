@@ -58,6 +58,8 @@ Go 1.27.1 下 47 个顶层测试、`go test -race ./...` 与 `go vet ./...` 通�
 
 ## 真实系统麦克风采集与传输
 
+实现及证据见 [PR #7](https://github.com/iewiad/miku-intercom/pull/7)（待合并），实现提交 `68e8efe`。
+
 2026-10-24 01:19–01:21（Asia/Shanghai），同机两个可见 Chrome 窗口、独立测试身份使用真实内建麦克风，沿用普通 AudioClient 默认 getUserMedia、正常麦权与 PTT。没有使用合成源或录音，接收播放保持静音。机器证据见 [system-microphone.json](evidence/2026-10-24-system-microphone.json)，包含原始任务输出 SHA-256、按次窗口、采集设置与远端统计。
 
 两端均为 live、48000 Hz、单声道，启用 AEC / 降噪 / 自动增益。B→A 获权约 3009ms，30 个启用采集样本，源峰值 RMS 0.01612，A 远端峰值 0.01400；A→B 约 3010ms，30 个启用采集样本，源峰值 0.04286，B 远端峰值 0.04666。两方向接收 codec 均为 Opus/48000，解码时长增长；停止后的远端最新 RMS 为 0。立即取消的 283ms 窗口也观察到源 track 从 enabled=true 同步变成 false。全部测试 Peer 已关闭。
