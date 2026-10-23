@@ -1,0 +1,17 @@
+/work/
+/outputs/
+.DS_Store
+.env
+.env.*
+!.env.example
+*.log
+*.bin
+*.elf
+*.map
+**/build/
+**/managed_components/
+**/sdkconfig
+**/sdkconfig.old
+**/__pycache__/
+/node_modules/
+/server/intercom

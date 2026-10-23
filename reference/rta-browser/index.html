@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>灵矽实时语音 · WSS / RTC</title>
+<style>
+body{font:15px/1.5 system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;color:#243047}fieldset,section{border:1px solid #ccd4df;border-radius:12px;padding:1rem;margin:1rem 0}label{display:inline-block;margin:.4rem}button,input,select{font:inherit;padding:.5rem;border:1px solid #aab6c7;border-radius:6px}button{cursor:pointer;margin:.25rem}button:disabled{cursor:default;opacity:.5}output{display:block;padding:.5rem}pre{background:#eef2f7;padding:1rem;max-height:200px;overflow:auto;white-space:pre-wrap}#subtitles{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.subtitle{min-height:100px;white-space:pre-wrap;overflow-wrap:anywhere}audio{width:100%}small{color:#5c6880}
+</style>
+<style>output[hidden]{display:none}</style>
+</head>
+<body>
+<h1>灵矽实时语音</h1>
+<p>浏览器只使用 RTID 短期会话令牌。音色来自当前 app 授权 Profile，不包含音色克隆。</p>
+<fieldset><legend>RTIC 配置</legend>
+<label>RTIC 地址 <input id="rticBaseURL" type="url" placeholder="http://127.0.0.1:19190" required></label>
+<label>RTIC API Token <input id="rticToken" type="password" autocomplete="off" required></label>
+<label>RTI App ID <input id="appID" required></label>
+<label>自定义 header Key <input id="customHeaderKey" maxlength="128" placeholder="X-Custom-Header"></label>
+<label>Value <input id="customHeaderValue" maxlength="4096" autocomplete="off"></label>
+</fieldset>
+<fieldset><legend>会话</legend>
+<label>传输 <select id="transport"><option value="wss">WSS · PCM16</option><option value="rtc">RTC · WebRTC / Opus</option></select></label>
+<label>音色 <select id="voice"><option value="default_voice">default_voice</option></select></label><button id="refresh">刷新音色</button>
+<label>轮次 <select id="turn"><option value="auto">自动（Profile 默认 / RTC server_vad）</option><option value="manual">手动提交</option></select></label>
+<div><label><input id="interruptResponse" type="checkbox" checked> 检测到新语音时打断当前响应（interrupt_response）</label>
+<label><input id="inputTranscription" type="checkbox" checked> 发送输入语音转写事件</label></div>
+<div><button id="connect" disabled>连接</button><button id="disconnect" disabled>断开</button><button id="mic" disabled>开启麦克风</button><button id="commit" disabled>结束本轮并回复</button><button id="interrupt" disabled>打断回复</button></div>
+<output id="status" role="status">加载授权音色…</output><small>自动模式支持连续对话；手动模式点击「结束本轮并回复」。连接后才可开启麦克风。HTTPS 或 localhost 才可使用麦克风。</small>
+<output id="sessionError" role="alert" hidden></output>
+</fieldset>
+<details><summary>RTIC 返回的 Profiles</summary><pre id="profiles"></pre></details>
+<section><form id="textForm"><label>文本消息 <input id="text" maxlength="2000" placeholder="输入文字与助手对话"></label><button id="sendText" disabled>发送</button></form></section>
+<section id="subtitles"><div><h2>用户字幕</h2><div id="userSubtitle" class="subtitle" aria-live="polite"></div></div><div><h2>助手字幕</h2><div id="assistantSubtitle" class="subtitle" aria-live="polite"></div></div></section>
+<audio id="remote" autoplay controls></audio>
+<small>字幕取决于 Provider 是否发送转写事件；不在浏览器额外录制或调用 ASR。RTC 使用原生远端音轨，WSS 按配置采样率播放 PCM。</small>
+<details><summary>事件日志（不记录令牌、音频或字幕内容）</summary><pre id="events"></pre></details>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const ui = Object.fromEntries(['rticBaseURL','rticToken','appID','customHeaderKey','customHeaderValue','transport','voice','turn','interruptResponse','inputTranscription','refresh','connect','disconnect','mic','commit','interrupt','status','sessionError','profiles','text','sendText','userSubtitle','assistantSubtitle','remote','events'].map(id => [id,$(id)]));
+let call = null, generation = 0, voicesLoading = false, voiceGeneration = 0;
+const logLines = [];
+function log(type) {
+  const line = `${new Date().toLocaleTimeString()} ${type}`;
+  logLines.push(line); if (logLines.length > 100) logLines.shift(); ui.events.textContent = logLines.join('\n');
+  console.info(`[lingxi-rtc] ${line}`);
+}
+function logError(type,error) {
+  const name = error?.name || 'Error';
+  const message = typeof error?.message === 'string' ? error.message.slice(0,160) : 'unknown';
+  log(`${type} name=${name} message=${message}`);
+  console.error(`[lingxi-rtc] ${type}`,error);
+}
+function status(text) { ui.status.textContent = text; }
+function showSessionError(message) { ui.sessionError.textContent = message; ui.sessionError.hidden = !message; }
+function eventSummary(event) {
+  const error = event?.error;
+  if (!error || typeof error !== 'object') return 'error_shape=missing';
+  const codeType = error.code === null ? 'null' : typeof error.code;
+  const code = ['string','number'].includes(codeType) ? String(error.code).slice(0,80) : 'missing';
+  const errorType = typeof error.type === 'string' ? error.type.slice(0,80) : 'missing';
+  return `error_code=${code} error_code_type=${codeType} error_type=${errorType} has_message=${typeof error.message === 'string'}`;
+}
+function providerError(c,event) {
+  const error = event.error || event;
+  const codeValue = typeof error.code === 'number' ? String(error.code) : error.code;
+  const code = typeof codeValue === 'string' && /^[a-zA-Z0-9_.-]{1,80}$/.test(codeValue) ? codeValue : 'unknown_error';
+  const terminal = error.terminal === true || event.terminal === true;
+  log(`provider.error code=${code} terminal=${terminal} ${eventSummary(event)}`);
+  const message = `Provider / RTID 错误：${code}`;
+  showSessionError(message);
+  if (terminal) fail(c,message,4001);
+}
+function configHeaders() {
+  return {'X-RTIC-Base-URL':ui.rticBaseURL.value.trim(),'X-RTIC-API-Token':ui.rticToken.value.trim(),'X-RTI-App-ID':ui.appID.value.trim()};
+}
+function configReady() { return ui.rticBaseURL.value.trim() && ui.rticToken.value.trim() && ui.appID.value.trim(); }
+function showProfiles(profiles) { ui.profiles.textContent = JSON.stringify(profiles || [], null, 2); }
+function controls() {
+  const ready = !!call?.ready, active = !!call;
+  for (const el of [ui.rticBaseURL,ui.rticToken,ui.appID,ui.customHeaderKey,ui.customHeaderValue,ui.transport,ui.voice,ui.turn,ui.refresh]) el.disabled = active || voicesLoading;
+  for (const el of [ui.interruptResponse,ui.inputTranscription]) {
+    el.disabled = active || (el === ui.interruptResponse && ui.turn.value === 'manual');
+    el.title = '';
+  }
+  ui.connect.disabled = active || voicesLoading || !configReady();
+  ui.disconnect.disabled = !active;
+  ui.mic.disabled = !ready || call.micBusy;
+  ui.mic.textContent = call?.stream ? '关闭麦克风' : '开启麦克风';
+  ui.commit.disabled = !ready || call.mode !== 'manual' || call.responseActive || call.cancelPending || !call.hasInput;
+  ui.interrupt.disabled = !ready || (!call.responseID && !call.sources.size) || call.cancelPending;
+  ui.sendText.disabled = !ready || call.responseActive || call.cancelPending;
+}
+async function loadVoices() {
+  const serial = ++voiceGeneration;
+  ui.profiles.textContent = '';
+  ui.voice.replaceChildren();
+  ui.voice.add(new Option('default_voice', 'default_voice'));
+  if (!configReady()) { status('请填写 RTIC 地址、API Token 和 App ID'); controls(); return; }
+  voicesLoading = true; controls();
+  try {
+    const response = await fetch(`/api/voices?transport=${encodeURIComponent(ui.transport.value)}`, {headers:configHeaders(),cache:'no-store'});
+    if (!response.ok) {
+      const message = await responseError(response, '加载音色失败', () => serial === voiceGeneration);
+      throw new Error(message);
+    }
+    const data = await response.json(); if (serial !== voiceGeneration) return;
+    showProfiles(data.profiles);
+    for (const voice of data.voices) {
+      if (voice.id !== 'default_voice') ui.voice.add(new Option(voice.name,voice.id));
+    }
+    ui.turn.options[1].disabled = !data.turn_modes?.includes('manual');
+    if (ui.turn.options[1].disabled) ui.turn.value = 'auto';
+    status('就绪 · 可连接');
+  } catch (error) { if (serial === voiceGeneration) status(error.message); }
+  finally { if (serial === voiceGeneration) { voicesLoading = false; controls(); } }
+}
+function current(c) { return call === c && c.generation === generation; }
+async function stopRTICSession(c, reason) {
+  if (!c.sessionID || c.stopRequested) return;
+  c.stopRequested = true;
+  try {
+    await fetch(`/api/session/${encodeURIComponent(c.sessionID)}/stop`, {
+      method:'POST', headers:{'Content-Type':'application/json',...configHeaders()},
+      body:JSON.stringify({reason}), keepalive:true
+    });
+  } catch {}
+}
+async function responseError(response, fallback, isCurrent = () => true) {
+  const body = await response.text();
+  if (!body.trim()) return `${fallback} (${response.status})`;
+  try {
+    const data = JSON.parse(body);
+    if (Object.prototype.hasOwnProperty.call(data, 'profiles') && isCurrent()) showProfiles(data.profiles);
+    const details = [data.error_code, data.message, data.cause, data.request_id, data.request_url, data.response_body].filter(Boolean).join(' · ');
+    return `${fallback} (${response.status})${details ? ` · ${details}` : ` · ${body}`}`;
+  } catch {
+    return `${fallback} (${response.status}) · ${body}`;
+  }
+}
+function diagnoseWSS(c) {
+  if (!c.socketURL || !c.sessionID) return Promise.resolve('');
+  if (c.diagnosisPromise) return c.diagnosisPromise;
+  c.diagnosisPromise = (async () => {
+  try {
+    const response = await fetch('/api/wss-diagnose', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:c.sessionID,endpoint:c.socketURL.split('?')[0],access_token:c.accessToken}),cache:'no-store'});
+    const data = await response.json();
+    if (data.http_status) return `服务端 HTTP ${data.http_status}${data.http_status_text ? `（${data.http_status_text}）` : ''}${data.body ? `：${data.body}` : ''}`;
+    if (data.phase === 'network') return `网络/TLS 阶段失败：${data.error || '未提供错误详情'}`;
+    return data.error ? `诊断失败：${data.error}` : '';
+  } catch (error) {
+    return `无法获取服务端握手详情：${error?.message || '诊断请求失败'}`;
+  }
+  })();
+  return c.diagnosisPromise;
+}
+async function websocketFailure(c, event, source) {
+  const endpoint = c.socketEndpoint || '';
+  let host = '';
+  try { host = new URL(endpoint).host; } catch {}
+  const code = Number.isInteger(event?.code) ? event.code : 0;
+  const reason = typeof event?.reason === 'string' ? event.reason.trim() : '';
+  const detail = reason ? `，服务端原因：${reason}` : '';
+  const serverDetail = await diagnoseWSS(c);
+  if (serverDetail) return `WSS 连接失败${host ? `（${host}）` : ''}：${serverDetail}${code ? `；close code ${code}` : ''}${detail}`;
+  if (source === 'error') return `WSS 连接失败${host ? `（${host}）` : ''}：浏览器未暴露 HTTP 响应；连接在 TLS/网络或 HTTP Upgrade 阶段失败${code ? `（close code ${code}）` : ''}${detail}`;
+  if (code === 1000) return 'WSS 会话已正常关闭';
+  const diagnosis = {
+    1002: '协议错误', 1003: '服务端不接受该数据类型', 1008: '服务端策略拒绝',
+    1011: '服务端内部错误', 1012: '服务端重启', 1013: '服务端暂时不可用',
+    1015: 'TLS 握手失败'
+  }[code];
+  if (code === 1006 || code === 0) {
+    return `WSS 连接异常关闭${host ? `（${host}）` : ''}（close code ${code || '未知'}）：可能是 TLS 握手失败、证书不受信任、DNS/网络不可达或服务端未完成握手${detail}`;
+  }
+  return `WSS 连接关闭（close code ${code}${diagnosis ? `：${diagnosis}` : ''}）${detail}`;
+}
+function send(c,event) {
+  if (!current(c)) return false;
+  const channel = c.socket || c.channel;
+  if (channel?.readyState !== (c.socket ? WebSocket.OPEN : 'open')) return false;
+  if (channel.bufferedAmount > 1024 * 1024) { fail(c,'发送缓冲区拥塞，已断开',4002); return false; }
+  try { channel.send(JSON.stringify(event)); return true; }
+  catch { fail(c,'发送失败',4003); return false; }
+}
+function stopPlayback(c) {
+  for (const source of c.sources) { try { source.stop(); } catch {} }
+  c.sources.clear(); c.nextPlay = 0; ui.remote.muted = true;
+}
+function interrupt(c) {
+  if (!current(c) || !c.ready || c.cancelPending) return;
+  stopPlayback(c); c.suppressPlayback = true;
+  if (!c.responseID) { status('已停止本地播放'); controls(); return; }
+  log('response.cancel.requested');
+  if (send(c,{type:'response.cancel',response_id:c.responseID})) {
+    c.cancelPending = true; status('已停止本地播放 · 等待 Provider 确认');
+    const responseID = c.responseID;
+    c.cancelTimer = setTimeout(() => {
+      if (!current(c) || !c.cancelPending || c.responseID !== responseID) return;
+      log('response.cancel.timeout');
+      showSessionError('Provider 尚未确认打断，连接保留；等待回复结束或手动断开');
+    },10000);
+  }
+  controls();
+}
+function transcript(target,value,delta) {
+  const el = target === 'user' ? ui.userSubtitle : ui.assistantSubtitle;
+  if (typeof value === 'string') el.textContent = value;
+  else if (typeof delta === 'string') el.textContent = (el.textContent + delta).slice(-12000);
+}
+function receive(c,raw) {
+  if (!current(c)) return;
+  let event; try { event = JSON.parse(raw); } catch { fail(c,'无效的 Provider JSON',4004); return; }
+  const type = event.type;
+  if (!['response.audio.delta','response.output_audio.delta'].includes(type)) log(`event.received type=${type || 'event.invalid'} ready=${c.ready} updated=${c.updated}`);
+  if (type === 'session.created' && !c.updated) {
+    c.updated = true;
+    log(`init.provider_session_created session_id=${typeof event.session?.id === 'string' ? 'present' : 'missing'} model=${typeof event.session?.model === 'string' ? event.session.model.slice(0,80) : 'missing'}`);
+    log(`init.session_update.sent mode=${c.mode} transport=${c.transport} transcription=${c.inputTranscription}`);
+    send(c,{type:'session.update',session:{type:'realtime',output_modalities:['audio'],audio:{input:{
+      transcription:c.inputTranscription ? {} : null,
+      turn_detection:c.mode === 'manual' ? null : {type:'server_vad',create_response:true,interrupt_response:c.interruptResponse}
+    }}}});
+  }
+  if (type === 'session.updated') { c.ready = true; clearTimeout(c.setupTimer); log('init.session_updated.ready=true'); status('已连接 · 可开启麦克风或发送文本'); }
+  if (type === 'input_audio_buffer.speech_started') {
+    ui.userSubtitle.textContent = '';
+    if (c.interruptResponse) {
+      stopPlayback(c);
+      c.suppressPlayback = true;
+    }
+    status('正在聆听…');
+  }
+  if (type === 'input_audio_buffer.speech_stopped') status('等待助手回复…');
+  if (type === 'conversation.item.input_audio_transcription.delta') transcript('user',null,event.delta);
+  if (['conversation.item.input_audio_transcription.completed','conversation.item.input_audio_transcription.done'].includes(type)) transcript('user',event.transcript,null);
+  if (['conversation.item.added','conversation.item.done','conversation.item.created'].includes(type) && event.item?.role === 'user') {
+    const text = (event.item.content || []).map(part => part.transcript || part.text || '').join('');
+    if (text) transcript('user',text,null);
+  }
+  if (type === 'response.created') {
+    c.responseID = event.response?.id || event.response_id; c.responseActive = true;
+    c.suppressPlayback = false; c.assistantText = ''; c.assistantTranscript = ''; ui.remote.muted = false; ui.assistantSubtitle.textContent = ''; status('助手回复中…');
+  }
+  const responseID = event.response_id || event.response?.id;
+  const stale = responseID && c.responseID && responseID !== c.responseID;
+  if (!stale && !c.suppressPlayback) {
+    if (['response.output_audio_transcript.delta','response.audio_transcript.delta'].includes(type) && typeof event.delta === 'string') c.assistantTranscript = ((c.assistantTranscript || '') + event.delta).slice(-12000);
+    if (['response.output_text.delta','response.text.delta'].includes(type) && typeof event.delta === 'string') c.assistantText = ((c.assistantText || '') + event.delta).slice(-12000);
+    if (['response.output_audio_transcript.done','response.audio_transcript.done'].includes(type) && typeof event.transcript === 'string') c.assistantTranscript = event.transcript;
+    if (['response.output_text.done','response.text.done'].includes(type) && typeof event.text === 'string') c.assistantText = event.text;
+    if (type.startsWith('response.')) transcript('assistant',c.assistantTranscript || c.assistantText || '',null);
+    if (c.transport === 'wss' && ['response.audio.delta','response.output_audio.delta'].includes(type)) {
+      try { playPCM(c,event.delta); } catch (error) {
+        stopPlayback(c); c.suppressPlayback = true;
+        const reason = error.message === 'playback overflow' ? 'queue_overflow' : 'invalid_audio_or_device';
+        log(`playback.error reason=${reason}`);
+        showSessionError(reason === 'queue_overflow' ? '音频播放积压超过 5 分钟，已清空本轮播放，连接保留' : '本轮音频无法播放，已停止播放，连接保留');
+        controls(); return;
+      }
+    }
+  }
+  if (type === 'response.done' && !stale) {
+    clearTimeout(c.cancelTimer); c.cancelPending = false; c.responseActive = false; c.responseID = null;
+    if (c.transport === 'rtc' && c.stream) c.hasInput = true;
+    status('已连接 · 等待下一轮');
+  }
+  if (type === 'error') { providerError(c,event); return; }
+  if (type === 'session.closed') { void disconnect('会话已关闭'); return; }
+  controls();
+}
+function playPCM(c,encoded) {
+  if (typeof encoded !== 'string') throw new Error('missing audio');
+  const bytes = atob(encoded); if (bytes.length % 2) throw new Error('invalid pcm16');
+  const samples = bytes.length / 2; if (!samples) return;
+  const buffer = c.audio.createBuffer(1,samples,c.outputRate), channel = buffer.getChannelData(0);
+  for (let i=0;i<samples;i++) { let n = bytes.charCodeAt(i*2) | bytes.charCodeAt(i*2+1)<<8; if (n >= 32768) n -= 65536; channel[i] = n/32768; }
+  const start = Math.max(c.audio.currentTime + .02,c.nextPlay);
+  if (start + buffer.duration - c.audio.currentTime > 300) throw new Error('playback overflow');
+  const source = c.audio.createBufferSource(); source.buffer = buffer; source.connect(c.audio.destination);
+  c.sources.add(source); source.onended = () => { c.sources.delete(source); if (current(c)) controls(); }; source.start(start); c.nextPlay = start + buffer.duration;
+}
+// Keep fractional resampling state across capture blocks; encode mono signed little-endian PCM16.
+function capturePCM(c,input,rate) {
+  const data = new Float32Array(c.tail.length + input.length); data.set(c.tail); data.set(input,c.tail.length);
+  const step = rate/c.inputRate, samples = [];
+  let pos = c.position;
+  while (pos + 1 < data.length) {
+    const index = Math.floor(pos), fraction = pos-index;
+    samples.push(data[index]*(1-fraction)+data[index+1]*fraction); pos += step;
+  }
+  const consumed = Math.min(Math.floor(pos),data.length);
+  c.tail = data.slice(consumed); c.position = pos-consumed;
+  if (!samples.length) return;
+  const bytes = new Uint8Array(samples.length*2), view = new DataView(bytes.buffer);
+  samples.forEach((v,i) => { v = Math.max(-1,Math.min(1,v)); view.setInt16(i*2,Math.round(v*(v<0?32768:32767)),true); });
+  let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte);
+  if (send(c,{type:'input_audio_buffer.append',audio:btoa(binary)})) c.hasInput = true;
+}
+async function startMic(c) {
+  if (!current(c)||!c.ready||c.micBusy) return;
+  c.micBusy = true; controls();
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    if (!current(c)) { stream.getTracks().forEach(track=>track.stop()); return; }
+    c.stream = stream;
+    if (c.transport === 'rtc') { await c.sender.replaceTrack(stream.getAudioTracks()[0]); c.hasInput = true; }
+    else {
+      await c.audio.resume(); c.tail = new Float32Array(); c.position = 0;
+      c.source = c.audio.createMediaStreamSource(stream);
+      c.processor = c.audio.createScriptProcessor(2048,1,1); c.silent = c.audio.createGain(); c.silent.gain.value = 0;
+      c.processor.onaudioprocess = event => { if (current(c) && c.ready && c.stream) capturePCM(c,event.inputBuffer.getChannelData(0),c.audio.sampleRate); };
+      c.source.connect(c.processor); c.processor.connect(c.silent); c.silent.connect(c.audio.destination);
+    }
+    if (!current(c)) { await stopMic(c,false); return; }
+    status('麦克风已开启');
+  } catch { await stopMic(c,false); if (current(c)) status('无法开启麦克风 · 检查权限 / HTTPS'); }
+  finally { c.micBusy = false; controls(); }
+}
+async function stopMic(c,finish) {
+  const wasOpen = !!c.stream;
+  c.stream?.getTracks().forEach(track=>track.stop()); c.stream = null;
+  if (c.processor) c.processor.onaudioprocess = null;
+  for (const node of [c.source,c.processor,c.silent]) node?.disconnect();
+  c.source = c.processor = c.silent = null;
+  if (c.sender) { try { await c.sender.replaceTrack(null); } catch {} }
+  if (finish && wasOpen && current(c) && c.ready) {
+    if (c.mode === 'manual') commit(c);
+    else if (c.transport === 'wss') {
+      // Server VAD needs a silence tail when capture stops mid-utterance.
+      const silence = btoa('\0'.repeat(Math.round(c.inputRate*.1)*2));
+      for (let i=0;i<10;i++) send(c,{type:'input_audio_buffer.append',audio:silence});
+    }
+    status('麦克风已关闭');
+  }
+  controls();
+}
+function requestResponse(c) {
+  if (send(c,{type:'response.create',response:{modalities:['text','audio']}})) { c.responseActive = true; controls(); }
+}
+function commit(c) {
+  if (!c.ready||c.mode!=='manual'||!c.hasInput||c.responseActive||c.cancelPending) return;
+  if (send(c,{type:'input_audio_buffer.commit'})) { c.hasInput = false; requestResponse(c); }
+}
+async function gatherICE(c) {
+  log(`rtc.ice.gather.start state=${c.peer.iceGatheringState}`);
+  if (c.peer.iceGatheringState === 'complete') return;
+  await new Promise((resolve,reject) => {
+    const timer = setTimeout(()=>done(new Error('ICE gathering timeout')),10000);
+    function done(error) { clearTimeout(timer); c.peer.removeEventListener('icegatheringstatechange',change); c.abort.signal.removeEventListener('abort',cancel); if (error) logError('rtc.ice.gather.failed',error); else log(`rtc.ice.gather.complete candidates=${c.peer.localDescription?.sdp?.match(/^a=candidate:/gm)?.length || 0}`); error ? reject(error) : resolve(); }
+    function change() { log(`rtc.ice.gather.state=${c.peer.iceGatheringState}`); if(c.peer.iceGatheringState==='complete') done(); }
+    function cancel() { done(new Error('cancelled')); }
+    c.peer.addEventListener('icegatheringstatechange',change); c.abort.signal.addEventListener('abort',cancel,{once:true});
+    if (c.abort.signal.aborted) cancel(); else change();
+  });
+}
+async function connectRTC(c,session) {
+  c.peer = new RTCPeerConnection({iceServers:[]});
+  log(`rtc.peer.created signaling=${c.peer.signalingState} ice=${c.peer.iceConnectionState}`);
+  const transceiver = c.peer.addTransceiver('audio',{direction:'sendrecv'}); c.sender = transceiver.sender;
+  const opus = RTCRtpReceiver.getCapabilities('audio')?.codecs.filter(codec=>codec.mimeType.toLowerCase()==='audio/opus');
+  if (opus?.length && transceiver.setCodecPreferences) transceiver.setCodecPreferences(opus);
+  c.peer.ontrack = event => { if (!current(c)) return; ui.remote.srcObject = new MediaStream([event.track]); void ui.remote.play().catch(()=>status('请点击音频播放控件以允许播放')); };
+  c.peer.onsignalingstatechange = () => { if (current(c)) log(`rtc.signaling.state=${c.peer.signalingState}`); };
+  c.peer.oniceconnectionstatechange = () => { if (current(c)) log(`rtc.ice.connection.state=${c.peer.iceConnectionState}`); };
+  c.peer.onicegatheringstatechange = () => { if (current(c)) log(`rtc.ice.gathering.state=${c.peer.iceGatheringState}`); };
+  c.peer.onconnectionstatechange = () => {
+    if (!current(c)) return;
+    const state = c.peer.connectionState; log(`rtc.${state}`);
+    clearTimeout(c.networkTimer);
+    log(`rtc.connection.state=${state} ice=${c.peer.iceConnectionState} signaling=${c.peer.signalingState}`);
+    if (['failed','closed'].includes(state)) fail(c,`RTC 连接已关闭或失败（state=${state} ice=${c.peer.iceConnectionState}）`);
+    if (state==='disconnected') c.networkTimer = setTimeout(()=>fail(c,'RTC 网络连接丢失'),10000);
+  };
+  c.channel = c.peer.createDataChannel('oai-events',{ordered:true});
+  c.channel.onmessage = event => receive(c,event.data);
+  c.channel.onerror = event => { log(`rtc.datachannel.error state=${c.channel.readyState} type=${event?.type || 'error'}`); fail(c,'RTC 数据通道错误'); };
+  c.channel.onclose = () => { log(`rtc.datachannel.close state=${c.channel.readyState}`); if(current(c)) fail(c,'RTC 数据通道已关闭'); };
+  c.channel.onopen = () => { if(current(c)) { log('rtc.datachannel.open'); status('等待 Provider 会话初始化…'); } };
+  const offer = await c.peer.createOffer();
+  log(`rtc.offer.created type=${offer.type}`);
+  await c.peer.setLocalDescription(offer); log(`rtc.local_description.set type=${c.peer.localDescription?.type}`); await gatherICE(c);
+  log(`rtc.sdp.post.start endpoint=${new URL(session.endpoint_url,location.href).pathname}`);
+  const response = await fetch(session.endpoint_url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`},body:JSON.stringify({type:'offer',sdp:c.peer.localDescription.sdp}),signal:c.abort.signal});
+  log(`rtc.sdp.post.response status=${response.status}`);
+  if (!response.ok) throw new Error(await responseError(response,'RTC SDP 交换失败'));
+  const answer = await response.json();
+  if (answer.type!=='answer'||typeof answer.sdp!=='string'||!answer.sdp||answer.session_id!==session.session_id) throw new Error('无效 RTC answer');
+  if (current(c)) { await c.peer.setRemoteDescription({type:'answer',sdp:answer.sdp}); log(`rtc.remote_description.set type=${answer.type} signaling=${c.peer.signalingState}`); }
+}
+async function connect() {
+  if (call) return;
+  log('browser.build lingxi-session-options-v6');
+  showSessionError('');
+  const c = {generation:++generation,transport:ui.transport.value,mode:ui.turn.value==='manual'?'manual':'auto',interruptResponse:ui.interruptResponse.checked,inputTranscription:ui.inputTranscription.checked,ready:false,abort:new AbortController(),sources:new Set(),tail:new Float32Array(),position:0,hasInput:false};
+  call = c; ui.userSubtitle.textContent = ui.assistantSubtitle.textContent = ''; status('创建会话…'); controls();
+  c.setupTimer = setTimeout(()=>fail(c,'连接初始化超时',4006),45000);
+  try {
+    c.audio = new AudioContext(); await c.audio.resume();
+    const response = await fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json',...configHeaders()},body:JSON.stringify({model:'lingxi-realtime',voice:ui.voice.value,transport:c.transport,custom_header_key:ui.customHeaderKey.value.trim(),custom_header_value:ui.customHeaderValue.value}),signal:c.abort.signal});
+    if (!response.ok) throw new Error(await responseError(response,'创建会话失败'));
+    const session = await response.json(); c.sessionID = session.session_id;
+    if (!current(c)) { await stopRTICSession(c,'连接已取消'); return; }
+    c.inputRate = session.input_sample_rate; c.outputRate = session.output_sample_rate;
+    if (c.mode==='manual'&&!session.turn_modes?.includes('manual')) throw new Error('Profile 不允许手动轮次');
+    if (c.transport==='rtc') await connectRTC(c,session);
+    else {
+      const endpoint = new URL(session.endpoint_url); endpoint.searchParams.set('access_token',session.access_token);
+      c.socketURL = endpoint.toString(); c.accessToken = session.access_token;
+      c.socketEndpoint = endpoint.origin + endpoint.pathname;
+      c.socket = new WebSocket(endpoint);
+      c.socket.onopen = () => { if(current(c)) status('等待 Provider 会话初始化…'); };
+      c.socket.onmessage = event => receive(c,event.data);
+      c.socket.onerror = event => { if(current(c)) void websocketFailure(c,event,'error').then(message => { if(current(c)) fail(c,message,4007); }); };
+      c.socket.onclose = event => { if(current(c)) void websocketFailure(c,event,'close').then(message => { if(current(c)) fail(c,message); }); };
+    }
+  } catch (error) { if(current(c)) { logError('rtc.connect.failed',error); fail(c,error.message); } }
+}
+async function disconnect(message='已断开',closeCode=1000) {
+  const c = call; if (!c) return;
+  call = null; ++generation; c.abort.abort();
+  for (const timer of [c.setupTimer,c.cancelTimer,c.networkTimer]) clearTimeout(timer);
+  log(`browser.disconnect code=${closeCode} reason=${message} peer=${c.peer?.connectionState || 'none'} ice=${c.peer?.iceConnectionState || 'none'} channel=${c.channel?.readyState || 'none'}`);
+  if(c.socket) { c.socket.onclose = c.socket.onerror = c.socket.onmessage = null; c.socket.close(closeCode,'browser_disconnect'); }
+  if(c.channel) { c.channel.onclose = c.channel.onerror = c.channel.onmessage = null; c.channel.close(); }
+  if(c.peer) { c.peer.ontrack = c.peer.onconnectionstatechange = null; c.peer.close(); }
+  stopPlayback(c); ui.remote.pause(); ui.remote.srcObject = null;
+  await stopMic(c,false); if(c.audio?.state!=='closed') await c.audio?.close();
+  await stopRTICSession(c, message);
+  if(!call) { status(message); controls(); }
+}
+function fail(c,message,closeCode=4000) { if(current(c)) { log(`session.error code=${closeCode}`); showSessionError(message); void disconnect(message,closeCode); } }
+ui.connect.onclick = connect;
+ui.disconnect.onclick = () => void disconnect();
+ui.transport.onchange = loadVoices; ui.refresh.onclick = loadVoices;
+ui.turn.onchange = controls;
+for (const input of [ui.rticBaseURL,ui.rticToken,ui.appID]) input.oninput = () => { controls(); };
+
+ui.mic.onclick = () => { const c=call; if(c?.stream) void stopMic(c,true); else if(c) void startMic(c); };
+ui.commit.onclick = () => { if(call) commit(call); };
+ui.interrupt.onclick = () => { if(call) interrupt(call); };
+$('textForm').onsubmit = event => {
+  event.preventDefault(); const c=call,text=ui.text.value.trim();
+  if(!c?.ready||c.responseActive||c.cancelPending||!text) return;
+  if(send(c,{type:'conversation.item.create',item:{type:'message',role:'user',content:[{type:'input_text',text}]}})) {
+    transcript('user',text,null); ui.text.value=''; requestResponse(c);
+  }
+};
+window.addEventListener('pagehide',()=>void disconnect());
+void loadVoices();
+</script>
+</body>
+</html>

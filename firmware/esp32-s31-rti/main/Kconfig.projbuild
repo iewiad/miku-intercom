@@ -1,0 +1,73 @@
+menu "Miku RTI device"
+
+config MIKU_RTI_DEVICE_API_BASE_URL
+    string "RTI device API base URL"
+    default "https://miku-rtic.qiniuapi.com"
+
+config MIKU_RTI_DEVICE_ID
+    string "Device ID used during development"
+    default "s31-korvo-dev"
+
+config MIKU_RTI_MODEL_PROFILE
+    string "RTI model profile"
+    default "qwen3.5-omni-plus-realtime"
+
+config MIKU_RTI_ROLE_PROFILE
+    string "RTI role profile"
+    default "default_assistant"
+
+config MIKU_RTI_VOICE_PROFILE
+    string "RTI voice profile"
+    default "Tina"
+
+config MIKU_RTI_REGION
+    string "RTI region"
+    default "cn-east"
+
+config MIKU_RTI_ENABLE_WEB_SEARCH
+    bool "Enable model web search for RTI sessions"
+    default y
+
+config MIKU_RTI_CAPTURE_DIAGNOSTIC
+    bool "Measure raw S31 capture channels against speaker playback"
+    default n
+    help
+        Temporarily bypass AEC, keep uplink muted during playback, and report
+        the two raw ES8389 ADC channels plus their correlation with the exact
+        speaker PCM at several candidate delays. Disable after validating the
+        S31 capture/reference channel mapping.
+
+config MIKU_RTI_AEC_BOOT_SELF_TEST
+    bool "Run an ESP-SR AEC smoke test during boot"
+    depends on !MIKU_RTI_OFFICIAL_CAPTURE_AEC && !MIKU_RTI_CAPTURE_DIAGNOSTIC
+    default y
+    help
+        Create the full-duplex AEC, process zero PCM frames, report memory and
+        timing, then release it. Keep enabled during the S31 AEC PoC.
+
+config MIKU_RTI_AEC_RUNTIME
+    bool "Enable ESP-SR AEC during RTI sessions"
+    depends on !MIKU_RTI_OFFICIAL_CAPTURE_AEC && !MIKU_RTI_CAPTURE_DIAGNOSTIC
+    default y
+    help
+        Run full-duplex acoustic echo cancellation while an RTI session is
+        active. Disable this temporarily to isolate AEC CPU scheduling from
+        WebRTC receive and playback behavior. With AEC disabled, microphone
+        uplink is muted while the agent is speaking.
+
+config MIKU_RTI_OFFICIAL_CAPTURE_AEC
+    bool "Use Espressif esp_capture hardware-reference AEC (unsupported on Korvo-1)"
+    depends on !MIKU_RTI_CAPTURE_DIAGNOSTIC
+    default n
+    help
+        Experimental only. ESP32-S31-Korvo-1 exposes two ES8389 microphone ADC
+        channels, not a microphone/reference pair. Do not enable this S3-style
+        path unless the board wiring or codec routing provides a real playback
+        reference.
+
+config MIKU_RTI_WEB_SEARCH_PROVIDER
+    string "RTI web search provider"
+    depends on MIKU_RTI_ENABLE_WEB_SEARCH
+    default "aliyun"
+
+endmenu

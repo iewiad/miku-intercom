@@ -1,0 +1,166 @@
+{
+  "device_source_head": "02b8433407911c7673187665861af5e4bebe7dde",
+  "device_source_status": [
+    " M devices/esp32-s31-rti/README.md",
+    " M devices/esp32-s31-rti/dependencies.lock",
+    " M devices/esp32-s31-rti/docs/memory-architecture.md",
+    " M devices/esp32-s31-rti/main/CMakeLists.txt",
+    " M devices/esp32-s31-rti/main/Kconfig.projbuild",
+    " M devices/esp32-s31-rti/main/board_display.c",
+    " M devices/esp32-s31-rti/main/idf_component.yml",
+    " M devices/esp32-s31-rti/main/webrtc_peer.c",
+    " M devices/esp32-s31-rti/main/wifi_manager.c",
+    "?? devices/esp32-s31-rti/docs/development-debugging-guide.zh-CN.md"
+  ],
+  "rta_source_head": "f1c3722daacbab03b4d923d7e0ee6562020c893d",
+  "files": [
+    {
+      "path": "firmware/esp32-s31-rti/CMakeLists.txt",
+      "sha256": "9d2e28e2177b618697e76ba8152da6360f825ec7273d50bd87c72bdc26cb2623"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/README.md",
+      "sha256": "dc8628f11afd5a72d57b542ee0611cf7753dadddfce3cc3150deee3efbecdfd9"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/dependencies.lock",
+      "sha256": "e6779fd4bbd512aee877afe26f55fb5266f18f7b2692edd42962a1425dca463f"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/docs/development-debugging-guide.zh-CN.md",
+      "sha256": "a64e6e67b7367df94446ebdb0f4a0891501f43bb5de2b081108342414c3cc790"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/docs/memory-architecture.md",
+      "sha256": "7c5dbb34bf15bdd0f836bb947f20af81ef9b6fa7c2409c5ff50dd3905423626e"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/CMakeLists.txt",
+      "sha256": "8dfb1f008e9c7dc8a7f350dcf509fc0429fa152bfcd8a28a34403a7573df7e2b"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/Kconfig.projbuild",
+      "sha256": "ef4d8fb0913bc681eeaf92d836d15a3476add3629d77bbd514cd1b125d888c25"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/app_main.c",
+      "sha256": "256b47bc6492416193ba959ad61638f9a31c8409800e2080f7f9588456106fa0"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/app_state.c",
+      "sha256": "2595e64302455724cdcd80ffe14ee6c66bb9cbe1fd022ede9ed262796377723e"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/app_state.h",
+      "sha256": "a06360966325af2a19574200541c4135dae4092cfdea27a45f801041b2208f1a"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/board_audio.c",
+      "sha256": "c68c3ef7328ff2aa7a1f9d7467633c412ba38cf85f35d077d330f26c3a030106"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/board_audio.h",
+      "sha256": "c5f125b6df0b93e4ca4f87b7cbe9d171d5e5d7d530695f2ca4289e312c12cfd8"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/board_display.c",
+      "sha256": "de59ae5bff91baf662d2654e017244d245c31d0dd4af104f3fad9de95ceb4a7d"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/board_display.h",
+      "sha256": "e25d7d5d245910ae2232990c29f447603c58d8c104b0c90c470af52594e1752d"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/idf_component.yml",
+      "sha256": "a51f1dea04cfcf24ff00df511a6113e3eb8e947fc09733cb5282291a8f0d95bf"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/rti_controller.c",
+      "sha256": "179cd3a4fb740459c101d27f9296420d4dec5f8fd69d125a36cea6e0998ce3dd"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/rti_controller.h",
+      "sha256": "b870f2f2296e9bb0fade4b4621257bb1efe5674842503935717707d351b406a8"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/rti_credentials.c",
+      "sha256": "17adf9071e3032d86b87b474f4874756b22d798196ae162907618bb64906a9f5"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/rti_credentials.h",
+      "sha256": "fb496e2902f1204153d9f821afdf6b2207ce5a7cea76f7ca7f760e6ba4cb82ca"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/rti_font_source_han_sans_sc_16_gb2312.c",
+      "sha256": "db2a763f03fe27978d5f0c29d2bd3c55a8da8820ac88de9586eeb7e43c7f5b32"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/rti_session.c",
+      "sha256": "20983556323b9a72a040327e1874377f33708e91e240cfaf1d7dab697dbb2286"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/rti_session.h",
+      "sha256": "491dafd6795299c0937dd66ca858d4da11935657253f3f6ce673a42c4d284a0f"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/webrtc_peer.c",
+      "sha256": "b316edce1b7395fad26b1f9212aeabf65483711d262f3cf9715f7c8ea583ca9b"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/webrtc_peer.h",
+      "sha256": "6bc6b247a74a1fa6d7c9648e43a2b8b04ccf6d08a2e1546657cd55881a8623c8"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/wifi_manager.c",
+      "sha256": "b0fff424db7a79f728ce9c45cf03a87f3fdfb4a69dc835fe4b0cfc6d4c72d123"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/wifi_manager.h",
+      "sha256": "febf4480c2377e7ce1e11198174b948d4f52f0d74e588dddaa22e9e9e60fe2e6"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/wifi_serial_cli.c",
+      "sha256": "5bd638e6eac03abca7ee8e8d0589e24b275fcdb8f155ac07b18ffd7acaba78fd"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/main/wifi_serial_cli.h",
+      "sha256": "9aa56a265d3669953bed397cc889251338e50c0f858073a06133525fe70963a8"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/partitions.csv",
+      "sha256": "4670bc4d5d3d5bdde4dc9e10f1e94ed3c75a97107e0bc861ca57ca825e5de5dd"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/sdkconfig.defaults",
+      "sha256": "301a58b86b252025f7da140685311f69411f93ff1c354c14ac43e08d3f84c48a"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/tools/rti_config.py",
+      "sha256": "bf3a4ba6bf59c71a325bcb549ea4f3da24768d574b8df559adb0d648b504327f"
+    },
+    {
+      "path": "firmware/esp32-s31-rti/tools/wifi_config.py",
+      "sha256": "6a9b8980d296749a4664b9a4a9d1a8c5c421400c14d5bc97d86ae625bf92d0fa"
+    },
+    {
+      "path": "reference/rta-browser/README.md",
+      "sha256": "e2d05c764f6e624f0d3bf107c0ceec6aaf18b0506175de8257f27d302d409cad"
+    },
+    {
+      "path": "reference/rta-browser/main.go",
+      "sha256": "9045ea303c21f1d7842c3fb5f84860b567b04a402d2dd735ce951a02be4810bb"
+    },
+    {
+      "path": "reference/rta-browser/main_test.go",
+      "sha256": "31acec07bfd590e305671fa8c1ddd72f5752943214765fd63f79544fd0e7307c"
+    },
+    {
+      "path": "reference/rta-browser/index.html",
+      "sha256": "a11bc7bc1bd3209b1cabd266682ad7722384b1acb70f4d82f21001d1ac26cc2e"
+    },
+    {
+      "path": "reference/rta-browser/browser_test.js",
+      "sha256": "4e9094bda2abd00fbf0e8c58214cc7e3ef94d339d229a80cf2a327b1bac9de0b"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+idf_component_register(
+    SRCS
+        "app_main.c"
+        "app_state.c"
+        "board_audio.c"
+        "board_display.c"
+        "rti_credentials.c"
+        "rti_controller.c"
+        "rti_font_source_han_sans_sc_16_gb2312.c"
+        "wifi_manager.c"
+        "wifi_serial_cli.c"
+        "rti_session.c"
+        "webrtc_peer.c"
+    INCLUDE_DIRS "."
+    REQUIRES
+        esp32_s31_korvo_1
+        esp_event
+        esp_driver_uart
+        esp_http_client
+        esp_netif
+        esp_wifi
+        cjson
+        mbedtls
+        nvs_flash
+        esp_peer
+        esp_audio_codec
+        esp-sr
+        esp_capture
+        esp_timer
+)
