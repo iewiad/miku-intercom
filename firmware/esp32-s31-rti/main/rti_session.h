@@ -9,7 +9,7 @@ typedef struct {
     char session_id[96];
     char trace_id[96];
     char rtc_url[384];
-    char access_token[768];
+    char access_token[2048];
     int64_t expires_at_ms;
 } rti_session_t;
 

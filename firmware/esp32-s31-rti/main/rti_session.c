@@ -160,7 +160,13 @@ static cJSON *build_create_request(const rti_credentials_t *credentials)
 static bool copy_json_string(const cJSON *object, const char *name, char *destination, size_t destination_size)
 {
     const cJSON *value = cJSON_GetObjectItemCaseSensitive(object, name);
-    if (!cJSON_IsString(value) || value->valuestring == NULL || strlen(value->valuestring) >= destination_size) {
+    if (!cJSON_IsString(value) || value->valuestring == NULL) {
+        return false;
+    }
+    const size_t length = strlen(value->valuestring);
+    if (length >= destination_size) {
+        ESP_LOGE(TAG, "session response field too long: %s bytes=%u capacity=%u",
+                 name, (unsigned)length, (unsigned)destination_size);
         return false;
     }
     strlcpy(destination, value->valuestring, destination_size);
@@ -363,6 +369,7 @@ esp_err_t rti_session_create(rti_session_t *session)
         return ESP_ERR_INVALID_ARG;
     }
     memset(session, 0, sizeof(*session));
+    bool stop_invalid_session = false;
 
     rti_credentials_t credentials;
     esp_err_t err = rti_credentials_load(&credentials);
@@ -442,6 +449,10 @@ esp_err_t rti_session_create(rti_session_t *session)
         rti_app_set_state(RTI_APP_STATE_READY);
     } else {
         ESP_LOGE(TAG, "invalid create-session response");
+        const size_t session_id_length = strlen(session->session_id);
+        stop_invalid_session = session_id_length > 0 &&
+            strspn(session->session_id,
+                   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-") == session_id_length;
     }
 
 cleanup:
@@ -452,6 +463,13 @@ cleanup:
     mbedtls_platform_zeroize(&credentials, sizeof(credentials));
     free(response.data);
     free(request_body);
+    if (stop_invalid_session) {
+        const esp_err_t stop_err = rti_session_stop(session, "invalid_client_endpoint");
+        if (stop_err != ESP_OK) {
+            ESP_LOGW(TAG, "could not stop session with invalid endpoint: %s",
+                     esp_err_to_name(stop_err));
+        }
+    }
     if (err != ESP_OK) {
         memset(session, 0, sizeof(*session));
         rti_app_set_state(RTI_APP_STATE_ERROR);
