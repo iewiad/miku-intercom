@@ -83,7 +83,7 @@ static const char *const rti_keyboard_lower_map[] = {
     "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "\n",
     "a", "s", "d", "f", "g", "h", "j", "k", "l", "\n",
     "ABC", "z", "x", "c", "v", "b", "n", "m", LV_SYMBOL_BACKSPACE, "\n",
-    "_", "-", ".", "@", "$", "/", LV_SYMBOL_CLOSE, " ", LV_SYMBOL_OK, ""
+    "!", "_", "-", ".", "@", "$", "/", LV_SYMBOL_CLOSE, " ", LV_SYMBOL_OK, ""
 };
 
 static const char *const rti_keyboard_upper_map[] = {
@@ -91,7 +91,7 @@ static const char *const rti_keyboard_upper_map[] = {
     "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "\n",
     "A", "S", "D", "F", "G", "H", "J", "K", "L", "\n",
     "abc", "Z", "X", "C", "V", "B", "N", "M", LV_SYMBOL_BACKSPACE, "\n",
-    "_", "-", ".", "@", "$", "/", LV_SYMBOL_CLOSE, " ", LV_SYMBOL_OK, ""
+    "!", "_", "-", ".", "@", "$", "/", LV_SYMBOL_CLOSE, " ", LV_SYMBOL_OK, ""
 };
 
 #define KEY_CTRL (LV_KEYBOARD_CTRL_BUTTON_FLAGS | LV_BUTTONMATRIX_CTRL_WIDTH_2)
@@ -100,7 +100,7 @@ static const lv_buttonmatrix_ctrl_t rti_keyboard_ctrl_map[] = {
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
     1, 1, 1, 1, 1, 1, 1, 1, 1,
     KEY_CTRL, 1, 1, 1, 1, 1, 1, 1, KEY_CTRL,
-    1, 1, 1, 1, 1, 1, KEY_CTRL, LV_BUTTONMATRIX_CTRL_WIDTH_6, KEY_CTRL,
+    1, 1, 1, 1, 1, 1, 1, KEY_CTRL, LV_BUTTONMATRIX_CTRL_WIDTH_6, KEY_CTRL,
 };
 #undef KEY_CTRL
 
