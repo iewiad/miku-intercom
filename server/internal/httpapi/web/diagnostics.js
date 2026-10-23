@@ -1,10 +1,13 @@
-import {ControlClient} from './app.js';
+import {ControlClient, bindPTTPointer} from './app.js';
 import {AudioClient} from './audio.js';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const uid = () => crypto.randomUUID();
 const SINGLE_KEY = 'shenglu.diagnostics.single.v1';
 const FREQUENCIES = [440, 997, 1777];
+const SAMPLE_LIMIT = 3000;
+const sampleWindow = (samples, origin) => ({from_ms: samples.length ? Math.round(samples[0].at - origin) : null,
+  to_ms: samples.length ? Math.round(samples.at(-1).at - origin) : null, sample_limit: SAMPLE_LIMIT});
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 const round = value => Number.isFinite(value) ? Math.round(value * 100000) / 100000 : null;
 
@@ -37,39 +40,108 @@ export function summarizeRTP(reports) {
     codec: reports.get(stat.codecId)?.mimeType || '', clockRate: reports.get(stat.codecId)?.clockRate || 0,
   }));
 }
+export function captureStatus(stream) {
+  const track = stream?.getAudioTracks?.()[0];
+  if (!track) return {track_state: 'none', enabled: false, muted: false, settings: {}};
+  const input = track.getSettings?.() || {}, settings = {};
+  for (const key of ['sampleRate', 'channelCount', 'latency']) if (Number.isFinite(input[key])) settings[key] = input[key];
+  for (const key of ['echoCancellation', 'noiseSuppression', 'autoGainControl']) if (typeof input[key] === 'boolean') settings[key] = input[key];
+  return {track_state: track.readyState || 'unknown', enabled: !!track.enabled, muted: !!track.muted, settings};
+}
+export function remoteObservation(samples) {
+  const valid = samples.filter(sample => sample.valid && Number.isFinite(sample.rms));
+  return {total_samples: samples.length, valid_samples: valid.length,
+    rms_peak: valid.length ? round(Math.max(...valid.map(sample => sample.rms))) : null,
+    rms_mean: valid.length ? round(valid.reduce((sum, sample) => sum + sample.rms, 0) / valid.length) : null,
+    rms_latest: valid.length ? round(valid.at(-1).rms) : null};
+}
+export function sourceObservation(samples) {
+  return {...remoteObservation(samples), enabled_samples: samples.filter(sample => sample.enabled).length,
+    live_samples: samples.filter(sample => sample.track_state === 'live').length};
+}
+export function rtpDelta(before, after) {
+  const total = (list, key) => list.reduce((sum, value) => sum + (Number.isFinite(value[key]) ? value[key] : 0), 0);
+  return {packets: Math.max(0, total(after, 'packetsReceived') - total(before, 'packetsReceived')),
+    decoded_seconds: round(Math.max(0, total(after, 'totalSamplesDuration') - total(before, 'totalSamplesDuration')))};
+}
+// The explicit developer driver uses the same ControlClient acquire/cancel path as normal PTT.
+export class DiagnosticPTTDriver {
+  constructor(client, {schedule = (callback, delay) => globalThis.setTimeout(callback, delay), cancel = id => globalThis.clearTimeout(id), duration = 3000} = {}) {
+    Object.assign(this, {client, schedule, cancel, duration}); this.generation = 0; this.active = false; this.timer = null;
+  }
+  async start() {
+    this.stop(); const generation = ++this.generation; this.active = true;
+    try { await this.client.pressFloor(); } catch (error) { if (generation === this.generation) this.stop(); throw error; }
+    if (generation !== this.generation) return;
+    if (!this.client.pressed || this.client.floorPhase !== 'held') { this.active = false; return; }
+    this.timer = this.schedule(() => this.stop(), this.duration);
+  }
+  stop() {
+    ++this.generation; this.active = false; if (this.timer !== null) this.cancel(this.timer); this.timer = null;
+    if (this.client.pressed || this.client.floorRequest) this.client.cancelFloor();
+  }
+}
+export class SingleInitialization {
+  constructor(onChange = () => {}) { this.onChange = onChange; this.busy = false; this.generation = 0; }
+  cancel() { ++this.generation; }
+  async run(create, ready) {
+    if (this.busy) return false;
+    this.busy = true; const generation = ++this.generation, current = () => generation === this.generation;
+    let terminal; this.onChange();
+    try {
+      terminal = await create(current); if (!terminal) return false;
+      await terminal.identify();
+      if (!current() || terminal.closed) return false;
+      await ready(terminal, current); return current() && !terminal.closed;
+    } finally {
+      if (terminal && !current()) await terminal.close();
+      this.busy = false; this.onChange();
+    }
+  }
+}
+export function diagnosticSourceOptions(kind, context, frequency) {
+  if (kind === 'system_microphone') return {}; // AudioClient's default is real getUserMedia.
+  assert(kind === 'synthetic', '未知诊断音源');
+  return {sourceFactory: async () => {
+    const source = context.createOscillator(), gain = context.createGain(), destination = context.createMediaStreamDestination();
+    source.type = 'sine'; source.frequency.value = frequency; gain.gain.value = 0.1;
+    source.connect(gain).connect(destination); source.start();
+    return {stream: destination.stream, close: () => { source.stop(); source.disconnect(); gain.disconnect(); }};
+  }};
+}
 export function safeReport(report) {
   // Export an explicit diagnostic schema; never serialize a client/Peer/identity or arbitrary errors.
+  const microphone = report.source_kind === 'system_microphone';
   return {schema: 'shenglu.browser-audio-diagnostic.v1', started_at: report.started_at,
-    finished_at: report.finished_at, mode: report.mode, scope: 'synthetic audio; real browser WebRTC; no microphone/speaker listening',
-    user_agent: report.user_agent, status: report.status, results: report.results,
+    finished_at: report.finished_at, mode: report.mode, source_kind: microphone ? 'system_microphone' : 'synthetic',
+    scope: microphone ? 'real system microphone and browser WebRTC; remote PCM observations; human listening not performed' : 'synthetic audio; real browser WebRTC; no microphone/speaker listening',
+    human_listening: 'not_performed', user_agent: report.user_agent,
+    status: microphone && report.status === 'passed' ? 'observations-only' : report.status, results: report.results,
     resources: report.resources || [], resources_after_close: report.resources_after_close || [], measurements: report.measurements || []};
 }
 
-class Terminal {
-  constructor(label, frequency, context, changed, identity = null) {
-    Object.assign(this, {label, frequency, context, changed});
+export class Terminal {
+  constructor(label, frequency, context, changed, identity = null, sourceKind = 'synthetic') {
+    Object.assign(this, {label, frequency, context, changed, sourceKind});
+    this.history = []; this.segmentSamples = []; this.lastCapture = null; this.sourceSamples = []; this.windows = []; this.activeWindow = null; this.sourceStream = null;
     this.samples = []; this.peers = new Set(); this.analyser = null; this.receiver = null;
     this.observed = new Map(); this.rtpLatest = []; this.startedAt = performance.now();
     this.binding = null; this.closed = false; this.pollTimer = null;
     this.output = document.createElement('audio'); this.output.muted = true; this.output.autoplay = true;
     this.output.hidden = true; document.body.append(this.output);
-    this.control = new ControlClient({onChange: () => changed(), onIdentity: () => changed()});
+    this.control = new ControlClient({onChange: () => { this.observePTT(); changed(); }, onIdentity: () => changed()});
     if (identity) this.control.load(identity);
     this.audio = new AudioClient({
-      request: (...args) => this.control.request(...args), serverNow: () => this.control.serverNow(),
-      getContext: () => this.control.state && !this.control.pendingSwitch && this.control.connected ? {
+      request: (...args) => this.control.request(...args),
+      scopeRequest: () => { const token = this.control.identity?.token; return (path, method, body, options) => this.control.request(path, method, body, {...options, token}); }, serverNow: () => this.control.serverNow(),
+      getContext: () => this.control.state?.current_group_id && this.control.allowed() && !this.control.pendingSwitch && this.control.connected && (this.sourceKind !== 'system_microphone' || !document.hidden) ? {
         device_id: this.control.identity.device.id, group_id: this.control.state.current_group_id,
         current_version: this.control.state.current_version, server_epoch: this.control.state.server_epoch,
       } : null,
-      sourceFactory: async () => {
-        const source = context.createOscillator(), gain = context.createGain(), destination = context.createMediaStreamDestination();
-        source.type = 'sine'; source.frequency.value = frequency; gain.gain.value = 0.1;
-        source.connect(gain).connect(destination); source.start();
-        return {stream: destination.stream, close: () => { source.stop(); source.disconnect(); gain.disconnect(); }};
-      },
+      ...diagnosticSourceOptions(sourceKind, context, frequency),
       output: this.output,
       onRemoteStream: (stream, binding) => this.attachRemote(stream, binding),
-      onChange: () => { if (this.audio?.peer) this.peers.add(this.audio.peer); changed(); },
+      onChange: () => { if (this.audio?.peer) this.peers.add(this.audio.peer); if (this.audio?.localStream) this.lastCapture = captureStatus(this.audio.localStream); changed(); },
       onFailure: () => this.control.cancelFloor('媒体连接失败'),
     });
     this.audio.setListeningMuted(true);
@@ -77,28 +149,88 @@ class Terminal {
     this.sampler = setInterval(() => this.sample(), 100);
   }
   attachRemote(stream, binding) {
+    if (this.analyser && this.binding) {
+      this.history.push({group_id: this.binding.group_id, current_version: this.binding.current_version, server_epoch: this.binding.server_epoch,
+        ended_ms: Math.round(performance.now() - this.startedAt), remote_pcm: remoteObservation(this.segmentSamples), inbound: this.rtpLatest});
+      if (this.history.length > 30) this.history.shift();
+    }
+    this.segmentSamples = [];
     this.receiver?.disconnect(); this.analyser?.disconnect(); this.sink?.disconnect();
     this.receiver = this.analyser = this.sink = null; this.binding = binding;
     if (!stream) return;
+    this.rtpLatest = [];
     this.receiver = this.context.createMediaStreamSource(stream);
     this.analyser = this.context.createAnalyser(); this.analyser.fftSize = 8192; this.analyser.smoothingTimeConstant = 0;
     this.sink = this.context.createGain(); this.sink.gain.value = 0;
     this.receiver.connect(this.analyser).connect(this.sink).connect(this.context.destination);
     this.pcm = new Float32Array(this.analyser.fftSize); this.bins = new Float32Array(this.analyser.frequencyBinCount);
   }
-  sample() {
-    if (!this.analyser || this.closed || this.context.state !== 'running') return;
-    this.analyser.getFloatTimeDomainData(this.pcm); this.analyser.getFloatFrequencyData(this.bins);
-    const peak = spectrumPeak(this.bins, this.context.sampleRate, this.analyser.fftSize);
-    const sample = {at: performance.now(), valid: this.audio.isReady(), rms: pcmRMS(this.pcm), frequency: peak.frequency};
-    this.samples.push(sample); if (this.samples.length > 3000) this.samples.shift();
-    const frequency = FREQUENCIES.find(value => Math.abs(value - sample.frequency) < 20);
-    if (sample.valid && sample.rms > 0.015 && frequency) {
-      const observed = this.observed.get(frequency) || {frequency, first_ms: Math.round(sample.at - this.startedAt), matching_samples: 0, max_rms: 0};
-      observed.last_ms = Math.round(sample.at - this.startedAt); observed.matching_samples++;
-      observed.max_rms = round(Math.max(observed.max_rms, sample.rms)); this.observed.set(frequency, observed);
+  attachLocal(stream) {
+    this.sourceReceiver?.disconnect(); this.sourceAnalyser?.disconnect(); this.sourceSink?.disconnect();
+    this.sourceStream = stream; this.sourceReceiver = this.sourceAnalyser = this.sourceSink = null;
+    if (!stream || this.sourceKind !== 'system_microphone') return;
+    this.sourceReceiver = this.context.createMediaStreamSource(stream); this.sourceAnalyser = this.context.createAnalyser(); this.sourceAnalyser.fftSize = 2048;
+    this.sourceSink = this.context.createGain(); this.sourceSink.gain.value = 0;
+    this.sourceReceiver.connect(this.sourceAnalyser).connect(this.sourceSink).connect(this.context.destination);
+    this.sourcePCM = new Float32Array(this.sourceAnalyser.fftSize);
+  }
+  observePTT() {
+    if (this.sourceKind !== 'system_microphone' || !this.control) return;
+    if (this.control.pressed && !this.activeWindow) this.activeWindow = {started: performance.now(),
+      started_at: new Date().toISOString(), group_id: this.control.state?.current_group_id,
+      current_version: this.control.state?.current_version, capture_at_start: captureStatus(this.audio?.localStream), inbound_before: this.rtpLatest};
+    if (this.control.floorPhase === 'held' && this.activeWindow && !this.activeWindow.granted_at) { this.activeWindow.granted_at = new Date().toISOString(); this.activeWindow.capture_at_grant = captureStatus(this.audio?.localStream); }
+    if (!this.control.pressed && this.activeWindow) {
+      const window = this.activeWindow; this.activeWindow = null;
+      window.ended = performance.now(); window.ended_at = new Date().toISOString(); window.capture_at_end = captureStatus(this.audio?.localStream);
+      window.inbound_after = this.rtpLatest;
+      window.source_pcm = sourceObservation(this.sourceSamples.filter(sample => sample.at >= window.started && sample.at <= window.ended));
+      window.remote_pcm = remoteObservation(this.samples.filter(sample => sample.at >= window.started && sample.at <= window.ended));
+      this.windows.push(window); if (this.windows.length > 30) this.windows.shift();
+      // Capture final decoder counters from this Peer only; a later group cannot overwrite this window.
+      const peer = this.audio?.peer;
+      if (peer) void peer.getStats().then(stats => { window.inbound_after = summarizeRTP(stats); this.changed(); }).catch(() => {});
     }
-    if (this.samples.length % 10 === 0) void this.metrics().then(value => { this.rtpLatest = value; }).catch(() => {});
+  }
+  observation() {
+    const windows = [...this.windows, ...(this.activeWindow ? [{...this.activeWindow, ended: performance.now(), ended_at: null, capture_at_end: captureStatus(this.audio.localStream), inbound_after: this.rtpLatest}] : [])];
+    return {terminal: this.label, source_kind: 'system_microphone', current_version: this.control.state?.current_version,
+      capture: captureStatus(this.audio.localStream), last_capture: this.lastCapture,
+      source_pcm: {...sourceObservation(this.sourceSamples), rolling_window: sampleWindow(this.sourceSamples, this.startedAt)},
+      remote_pcm: {...remoteObservation(this.samples), rolling_window: sampleWindow(this.samples, this.startedAt)},
+      inbound: this.rtpLatest, receive_history: this.history,
+      ptt_windows: windows.map(window => ({started_at: window.started_at, ended_at: window.ended_at,
+        from_ms: Math.round(window.started - this.startedAt), to_ms: Math.round(window.ended - this.startedAt),
+        duration_ms: Math.round(window.ended - window.started), group_id: window.group_id, current_version: window.current_version,
+        granted_at: window.granted_at || null, capture_at_start: window.capture_at_start, capture_at_grant: window.capture_at_grant || null, capture_at_end: window.capture_at_end,
+        source_pcm: window.ended_at ? window.source_pcm : sourceObservation(this.sourceSamples.filter(sample => sample.at >= window.started && sample.at <= window.ended)),
+        remote_pcm: window.ended_at ? window.remote_pcm : remoteObservation(this.samples.filter(sample => sample.at >= window.started && sample.at <= window.ended)),
+        inbound_before: window.inbound_before, inbound_after: window.inbound_after, inbound_delta: rtpDelta(window.inbound_before, window.inbound_after)})),
+      note: '仅采集与传输数值观察；远端可来自其他持麦者；RMS=0可为安静环境，RTP增长不代表真实有声；未做人工听测。'};
+  }
+  sample() {
+    if (this.sourceKind === 'system_microphone') {
+      if (this.sourceStream !== this.audio.localStream) this.attachLocal(this.audio.localStream);
+      if (this.sourceAnalyser && !this.closed && this.context.state === 'running') {
+        this.sourceAnalyser.getFloatTimeDomainData(this.sourcePCM); const capture = captureStatus(this.audio.localStream);
+        this.sourceSamples.push({at: performance.now(), valid: capture.track_state === 'live', rms: pcmRMS(this.sourcePCM), enabled: capture.enabled, track_state: capture.track_state});
+        if (this.sourceSamples.length > SAMPLE_LIMIT) this.sourceSamples.shift(); this.lastCapture = capture;
+      }
+    }
+    if (!this.analyser || this.closed || this.context.state !== 'running') return;
+    this.analyser.getFloatTimeDomainData(this.pcm);
+    let frequency = null;
+    if (this.sourceKind === 'synthetic') { this.analyser.getFloatFrequencyData(this.bins); frequency = spectrumPeak(this.bins, this.context.sampleRate, this.analyser.fftSize).frequency; }
+    const sample = {at: performance.now(), valid: this.audio.isReady(), rms: pcmRMS(this.pcm), frequency};
+    this.samples.push(sample); if (this.samples.length > SAMPLE_LIMIT) this.samples.shift();
+    this.segmentSamples.push(sample); if (this.segmentSamples.length > SAMPLE_LIMIT) this.segmentSamples.shift();
+    const tone = this.sourceKind === 'synthetic' && FREQUENCIES.find(value => Math.abs(value - sample.frequency) < 20);
+    if (sample.valid && sample.rms > 0.015 && tone) {
+      const observed = this.observed.get(tone) || {frequency: tone, first_ms: Math.round(sample.at - this.startedAt), matching_samples: 0, max_rms: 0};
+      observed.last_ms = Math.round(sample.at - this.startedAt); observed.matching_samples++;
+      observed.max_rms = round(Math.max(observed.max_rms, sample.rms)); this.observed.set(tone, observed);
+    }
+    if (this.samples.length % 10 === 0) { const peer = this.audio.peer; void this.metrics().then(value => { if (peer === this.audio.peer) this.rtpLatest = value; }).catch(() => {}); }
     this.last = sample; this.changed();
   }
   async identify() {
@@ -106,8 +238,8 @@ class Terminal {
     else await this.control.refresh();
     assert(this.control.identity && this.control.state && this.control.connected, `${this.label} 身份未建立`);
   }
-  async connect() {
-    await this.audio.enable();
+  async connect(explicit = true) {
+    if (explicit) await this.audio.enable(); else await this.audio.sync();
     const until = Date.now() + 10000;
     while (!this.audio.isReady() && Date.now() < until) await sleep(100);
     assert(this.audio.isReady(), `${this.label} 音频未就绪：${this.audio.phase}`);
@@ -118,13 +250,14 @@ class Terminal {
     this.audio.suspend('diagnostic-switch');
     await this.control.switchGroup(group);
     assert(!this.control.pendingSwitch && this.control.state.current_group_id === group, `${this.label} 切群未确认`);
-    await this.connect();
+    await this.connect(this.sourceKind !== 'system_microphone');
   }
   async metrics() {
     const stats = await this.audio.peer?.getStats();
     return stats ? summarizeRTP(stats) : [];
   }
   async measure(duration, expectedFrequency, check = () => {}) {
+    assert(this.sourceKind === 'synthetic', '真实麦克风不使用固定频率自动判定');
     const start = performance.now(), before = await this.metrics();
     await sleep(duration); check();
     const samples = this.samples.filter(sample => sample.at >= start), after = await this.metrics();
@@ -142,25 +275,49 @@ class Terminal {
   }
   async close() {
     this.closed = true; clearInterval(this.sampler); clearInterval(this.pollTimer);
-    this.control.cancelFloor(); await this.audio.disable(); this.attachRemote(null, null); this.output.remove();
+    this.control.cancelFloor(); await this.audio.disable(); this.attachRemote(null, null); this.attachLocal(null); this.output.remove();
   }
 }
 
 function bootDiagnostics() {
   const $ = id => document.getElementById(id);
-  let context = null, terminals = [], single = null, running = false, cancelled = false, report = null;
+  let context = null, terminals = [], single = null, running = false, cancelled = false, report = null, driver = null, initialization = null;
   const check = () => { if (cancelled) throw new Error('测试已停止'); };
   const status = message => { $('status').textContent = message; };
   const render = () => {
+    $('enable-single').disabled = running || !!initialization?.busy; $('run-matrix').disabled = running || !!initialization?.busy;
     const container = $('terminals'); container.replaceChildren();
     for (const terminal of terminals) {
       const tile = document.createElement('article'), title = document.createElement('h3'), summary = document.createElement('pre');
-      title.textContent = `${terminal.label} · ${terminal.frequency} Hz`;
+      title.textContent = terminal.sourceKind === 'system_microphone' ? `${terminal.label} · 真实系统麦克风` : `${terminal.label} · ${terminal.frequency} Hz`;
       summary.textContent = `媒体：${terminal.audio.phase}\n群版本：${terminal.control.state?.current_version ?? '—'}\n麦权：${terminal.control.floorPhase}\n远端 RMS：${round(terminal.last?.rms) ?? '—'}\n远端峰值：${Math.round(terminal.last?.frequency || 0)} Hz\n接收样本：${terminal.samples.length}\n本次启用以来的有效远端频率：${JSON.stringify([...terminal.observed.values()])}\n接收 RTP：${JSON.stringify(terminal.rtpLatest)}`;
+      if (terminal.sourceKind === 'system_microphone') summary.textContent = `媒体：${terminal.audio.phase} · 麦权：${terminal.control.floorPhase}\n${JSON.stringify(terminal.observation(), null, 2)}`;
       tile.append(title, summary); container.append(tile);
     }
     if (single?.samples.length >= 3) $('export').disabled = false;
+    $('single-source').disabled = !!single || running;
+    $('single-frequency').disabled = !!single || $('single-source').value === 'system_microphone';
+    $('single-tone').hidden = single?.sourceKind === 'system_microphone' || $('single-source').value === 'system_microphone';
+    $('single-ptt').disabled = !single || (!single.control.pressed && !single.control.canPress());
+    $('single-ptt').setAttribute('aria-pressed', String(!!single?.control.pressed));
+    $('single-ptt').textContent = single?.control.floorPhase === 'held' ? '正在发送，松手停发' : '按住发送当前音源';
+    $('single-play').disabled = !single?.audio.peer;
+    $('single-timed').hidden = (single?.sourceKind || $('single-source').value) !== 'system_microphone';
+    $('single-timed').disabled = !single || !!driver?.active || !single.control.canPress();
+    $('single-cancel').disabled = !single?.control.pressed && !single?.control.floorRequest && !driver?.active;
+    $('single-retry').disabled = !single?.control.connected || !single?.control.state?.current_group_id || running;
+    $('single-retry').hidden = !single || single.audio.phase !== 'error';
+    $('single-muted').disabled = !single;
+    $('single-muted').checked = single ? single.audio.listeningMuted : true;
+    const selector = $('single-groups'), selected = selector.value;
+    selector.replaceChildren();
+    for (const group of single?.control.state?.groups || []) { const option = document.createElement('option'); option.value = group.id; option.textContent = `${group.name}${group.id === single.control.state.current_group_id ? '（当前群）' : ''}`; selector.append(option); }
+    if ([...selector.options].some(option => option.value === selected)) selector.value = selected;
+    selector.disabled = !single || !!single.control.pendingSwitch;
+    $('single-switch').disabled = !single || !selector.value || !!single.control.pendingSwitch;
+    $('single-media-state').textContent = single ? `音频：${single.audio.phase}；${single.audio.message || (single.audio.listeningMuted ? '收听静音；远端PCM仍测量，未做人工听测。' : '已允许播放；仍未记录人工听测结论。')}` : '尚未采集麦克风。';
   };
+  initialization = new SingleInitialization(render);
   async function ensureContext() {
     if (!context || context.state === 'closed') context = new AudioContext({sampleRate: 48000});
     await context.resume(); assert(context.state === 'running', '请点击启用以允许 WebAudio 运行');
@@ -174,11 +331,13 @@ function bootDiagnostics() {
     $('report-summary').textContent = JSON.stringify(safeReport(report), null, 2); $('export').disabled = false;
     return pass;
   }
-  async function closeAll() {
-    const closing = terminals;
+  async function closeAll(invalidateInitialization = true) {
+    if (invalidateInitialization) initialization.cancel();
+    const closing = terminals; driver?.stop(); driver = null;
     await Promise.allSettled(closing.map(t => t.close()));
     if (report && closing.length) report.resources_after_close = closing.map(t => ({terminal: t.label,
       created_peers: t.peers.size, open_peers: [...t.peers].filter(p => p.connectionState !== 'closed').length}));
+    if (report && closing.some(t => t.sourceKind === 'system_microphone')) { report.measurements = closing.map(t => t.observation()); report.status = 'observations-only'; report.finished_at = new Date().toISOString(); $('report-summary').textContent = JSON.stringify(safeReport(report), null, 2); $('export').disabled = false; }
     terminals = []; single = null; render();
   }
   async function acquire(terminal) {
@@ -190,12 +349,12 @@ function bootDiagnostics() {
     try { return addResult(name, await Promise.all(expected.map(([receiver, hz]) => receiver.measure(1500, hz, check)))); }
     finally { await sender.release(); }
   }
-  function newReport(mode) {
-    report = {started_at: new Date().toISOString(), mode, user_agent: navigator.userAgent, status: 'running', results: []};
+  function newReport(mode, sourceKind = 'synthetic') {
+    report = {started_at: new Date().toISOString(), mode, source_kind: sourceKind, user_agent: navigator.userAgent, status: 'running', results: []};
     $('results').replaceChildren(); $('report-summary').textContent = '运行中';
   }
   $('run-matrix').addEventListener('click', async () => {
-    if (running) return; running = true; cancelled = false; $('run-matrix').disabled = true; $('enable-single').disabled = true;
+    if (running || initialization.busy) return; running = true; cancelled = false; $('run-matrix').disabled = true; $('enable-single').disabled = true;
     try {
       await ensureContext(); await closeAll(); newReport('three-logical-terminals-in-one-page');
       terminals = ['A', 'B', 'C'].map((label, i) => new Terminal(label, FREQUENCIES[i], context, render)); render();
@@ -276,33 +435,40 @@ function bootDiagnostics() {
     }
   });
   $('enable-single').addEventListener('click', async () => {
-    if (running) return;
+    if (running || initialization.busy) return;
     try {
-      await ensureContext(); await closeAll(); cancelled = false;
-      // A duplicated browser tab can inherit sessionStorage. Each explicit enable creates
-      // its own identity rather than trusting a copied token as a distinct terminal.
-      single = new Terminal($('single-name').value.trim() || '单端', Number($('single-frequency').value), context, render);
-      terminals = [single]; await single.identify(); sessionStorage.setItem(SINGLE_KEY, JSON.stringify(single.control.identity));
-      single.pollTimer = setInterval(async () => { if (!single || single.control.pressed) return; await single.control.refresh(); }, 1200);
-      newReport('single-independent-tab');
-      for (const id of ['create-group', 'join-group']) $(id).disabled = false;
-      if (single.control.state.current_group_id) { await single.connect(); $('single-tone').disabled = false; }
-      $('single-status').textContent = '本标签独立测试身份已启用；建立或加入同一测试群。'; render();
+      await initialization.run(async current => {
+        await ensureContext(); if (!current()) return null;
+        await closeAll(false); if (!current()) return null;
+        cancelled = false;
+        // Duplicated tabs never reuse a copied diagnostic identity.
+        const terminal = new Terminal($('single-name').value.trim() || '单端', Number($('single-frequency').value), context, render, null, $('single-source').value);
+        single = terminal; terminals = [terminal]; driver = new DiagnosticPTTDriver(terminal.control); return terminal;
+      }, async (terminal, current) => {
+        sessionStorage.setItem(SINGLE_KEY, JSON.stringify(terminal.control.identity));
+        terminal.pollTimer = setInterval(async () => { if (single !== terminal || terminal.closed || terminal.control.pressed) return; await terminal.control.refresh(); }, 1200);
+        newReport('single-independent-window', terminal.sourceKind);
+        await terminal.audio.enable(); if (!current() || single !== terminal || terminal.closed) return;
+        for (const id of ['create-group', 'join-group']) $(id).disabled = false;
+        if (terminal.control.state.current_group_id) { await terminal.connect(false); if (!current() || single !== terminal || terminal.closed) return; $('single-tone').disabled = false; }
+        $('single-status').textContent = terminal.sourceKind === 'system_microphone' ? '真实麦克风模式已准备；建群或入群后请求系统权限，默认收听静音。' : '本窗口独立测试身份已启用；建立或加入同一测试群。'; render();
+      });
     } catch (error) { $('single-status').textContent = `单端初始化失败：${String(error.message).slice(0, 120)}`; }
   });
   async function groupAction(create) {
-    if (!single) return;
+    const terminal = single; if (!terminal) return;
     try {
-      const result = create ? await single.control.createGroup($('group-name').value.trim()) : await single.control.joinGroup($('group-code').value.trim());
+      const result = create ? await terminal.control.createGroup($('group-name').value.trim()) : await terminal.control.joinGroup($('group-code').value.trim());
+      if (single !== terminal || terminal.closed) return;
       assert(result, '建群 / 入群失败');
       if (create) $('share-code').textContent = `仅分享本机测试群口令：${result.code}`;
-      await single.connect(); $('single-tone').disabled = false; $('single-status').textContent = '真实 Opus Peer 已连接，可互发测试音。';
-    } catch (error) { $('single-status').textContent = `连接失败：${String(error.message).slice(0, 120)}`; }
+      await terminal.connect(false); if (single !== terminal || terminal.closed) return; $('single-tone').disabled = false; $('single-status').textContent = terminal.sourceKind === 'system_microphone' ? '真实系统麦克风已连接。按住正常PTT验采集传输；本轮未做人工听测。' : '真实 Opus Peer 已连接，可互发测试音。';
+    } catch (error) { if (single !== terminal || terminal.closed) return; $('single-status').textContent = `连接失败：${String(error.message).slice(0, 120)}`; }
   }
   $('create-group').addEventListener('click', () => void groupAction(true));
   $('join-group').addEventListener('click', () => void groupAction(false));
   $('single-tone').addEventListener('click', async () => {
-    if (!single) return; $('single-tone').disabled = true;
+    if (!single || single.sourceKind !== 'synthetic') return; $('single-tone').disabled = true;
     try { await acquire(single); $('single-status').textContent = '获权后发送合成测试音，3 秒后释放。'; await sleep(3000); }
     catch (error) { $('single-status').textContent = `测试失败：${String(error.message).slice(0, 120)}`; }
     finally { await single?.release(); $('single-tone').disabled = false; $('single-status').textContent = '测试音已停止；远端记录自动保留在报告中。'; }
@@ -322,6 +488,7 @@ function bootDiagnostics() {
         remote_pcm: single.samples.slice(-600).map(s => ({elapsed_ms: Math.round(s.at - single.startedAt),
           valid: s.valid, rms: round(s.rms), frequency: round(s.frequency)})), inbound: await single.metrics()}];
     }
+    if (single?.sourceKind === 'system_microphone') { single.rtpLatest = await single.metrics(); report.measurements = [single.observation()]; }
     $('report-summary').textContent = JSON.stringify(safeReport(report), null, 2);
   }
   $('show-report').addEventListener('click', () => { void updateReport(); });
@@ -331,9 +498,44 @@ function bootDiagnostics() {
     const link = document.createElement('a'), url = URL.createObjectURL(blob);
     link.href = url; link.download = `shenglu-audio-${Date.now()}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
-  // These affect only standalone manual test operation; the same-page automatic driver is explicit.
-  window.addEventListener('blur', () => { if (!running) single?.control.cancelFloor(); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden && !running) single?.control.cancelFloor(); });
+  // Standalone capture follows the ordinary product's pointer and lifecycle rules.
+  const endPress = bindPTTPointer($('single-ptt'), {
+    get pressed() { return !!single?.control.pressed; }, get floorRequest() { return single?.control.floorRequest; },
+    canPress: () => !running && !driver?.active && !!single?.control.canPress(), pressFloor: () => single?.control.pressFloor(), cancelFloor: () => { driver?.stop(); single?.control.cancelFloor(); },
+  });
+  $('single-ptt').addEventListener('keydown', event => { if ([' ', 'Enter'].includes(event.key)) { event.preventDefault(); if (!event.repeat && !running && !driver?.active) void single?.control.pressFloor(); } });
+  $('single-ptt').addEventListener('keyup', event => { if ([' ', 'Enter'].includes(event.key)) { event.preventDefault(); endPress(); } });
+  $('single-ptt').addEventListener('blur', endPress);
+  $('single-timed').addEventListener('click', async () => {
+    if (!single || single.sourceKind !== 'system_microphone' || !single.control.canPress() || driver?.active) return;
+    $('single-status').textContent = '显式诊断驱动：正常获权后最多发送3秒，可立即停止；失焦/隐藏立即取消。未做人工听测。';
+    try { await driver.start(); } catch { $('single-status').textContent = '诊断申请未完成，请确认状态后重试。'; } render();
+  });
+  $('single-cancel').addEventListener('click', () => { driver?.stop(); endPress(); render(); });
+  $('single-play').addEventListener('click', async () => {
+    if (!single) return;
+    await ensureContext(); single.audio.setListeningMuted(false); await single.audio.retryPlayback(); render();
+  });
+  $('single-muted').addEventListener('change', () => single?.audio.setListeningMuted($('single-muted').checked));
+  $('single-retry').addEventListener('click', async () => {
+    if (!single) return;
+    try { await ensureContext(); await single.connect(); } catch (error) { $('single-status').textContent = `重试失败：${String(error.message).slice(0, 120)}`; }
+  });
+  $('single-switch').addEventListener('click', async () => {
+    if (!single || !$('single-groups').value) return;
+    try { endPress(); await single.switchTo($('single-groups').value); $('single-status').textContent = '当前群已确认；恢复后未按麦。'; }
+    catch (error) { $('single-status').textContent = `切群未完成：${String(error.message).slice(0, 120)}`; }
+  });
+  $('single-source').addEventListener('change', render);
+  window.addEventListener('blur', () => { if (!running) endPress(); });
+  document.addEventListener('visibilitychange', () => {
+    if (running || !single) return;
+    if (document.hidden) { endPress(); single.audio.suspend('页面隐藏，采集与旧Peer已关闭。'); }
+    else void single.control.refresh();
+  });
+  window.addEventListener('offline', () => { if (!running && single) { endPress(); single.control.connected = false; single.audio.suspend('离线，采集与旧Peer已关闭。'); } });
+  window.addEventListener('online', () => { if (!running && single && !document.hidden) void single.control.refresh(); });
   window.addEventListener('pagehide', () => { void closeAll(); });
+  render();
 }
 if (typeof document !== 'undefined' && document.getElementById('run-matrix')) bootDiagnostics();

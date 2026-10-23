@@ -3,10 +3,10 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>声路同行 · 本机音频诊断</title>
 <style>
-:root{font-family:system-ui,sans-serif;color:#172529;background:#f2f7f5}body{max-width:1120px;margin:auto;padding:28px}h1{font-size:28px}.warning{background:#fff4ce;border-left:5px solid #b78000;padding:16px;line-height:1.7}section,article{background:white;border:1px solid #d5e2dd;border-radius:12px;padding:18px;margin:16px 0}button,input,select{font:inherit;padding:10px;margin:5px;border-radius:7px;border:1px solid #a9beb4}button{background:#0b6855;color:white;cursor:pointer}button:disabled{opacity:.5;cursor:wait}label{display:inline-block}#terminals{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px}article{margin:0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}#status{font-weight:650}a{color:#075c4b}.pass{color:#087343}.fail{color:#b12626}table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:10px;border-bottom:1px solid #dde5e1}
+:root{font-family:system-ui,sans-serif;color:#172529;background:#f2f7f5}body{max-width:1120px;margin:auto;padding:28px}h1{font-size:28px}.warning{background:#fff4ce;border-left:5px solid #b78000;padding:16px;line-height:1.7}section,article{background:white;border:1px solid #d5e2dd;border-radius:12px;padding:18px;margin:16px 0}button,input,select{font:inherit;padding:10px;margin:5px;border-radius:7px;border:1px solid #a9beb4}button{background:#0b6855;color:white;cursor:pointer}button:disabled{opacity:.5;cursor:not-allowed}button[aria-pressed="true"]{background:#a83a27}#single-ptt{touch-action:none;user-select:none;min-height:64px;font-weight:700}[hidden]{display:none!important}label{display:inline-block}#terminals{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px}article{margin:0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}#status{font-weight:650}a{color:#075c4b}.pass{color:#087343}.fail{color:#b12626}table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:10px;border-bottom:1px solid #dde5e1}
 </style>
 <h1>声路同行 · 本机音频诊断</h1>
-<p class="warning">合成音源，真实 WebRTC 编解码；不代表系统麦克风 / 扬声器听测。只有点击下方按钮才创建声音。测试身份独立，不读取产品身份；不使用板子、RTA 或真实音频。自动矩阵是同页三个逻辑终端，不能称作三个独立浏览器。</p>
+<p class="warning">开发诊断，使用真实 WebRTC 编解码。自动矩阵仅使用合成音源；独立单端可显式选择系统麦克风。默认收听静音，避免同机回授；不录音，只保存聚合数值，本轮不作人工听测结论。测试身份独立，不读取产品身份；不使用板子或 RTA。自动矩阵是同页三个逻辑终端，不能称作三个独立浏览器。</p>
 <section>
 <h2>三终端自动矩阵</h2>
 <button id="run-matrix">显式启用合成音源并运行三终端矩阵</button>
@@ -18,13 +18,24 @@
 </section>
 <section>
 <h2>独立标签页单端模式</h2>
-<p>在两个独立标签页打开本页，分别点击启用；每页身份只保存在自己的 sessionStorage。两端加入相同口令后，可经真实服务互发测试音。接收测量自动保留，发完后再切标签页查看。</p>
+<p>在两个可见窗口分别打开本页并点击启用；每次启用建立独立测试身份，不共享产品凭据。两端加入相同口令。真实麦克风模式会请求系统权限，使用正常 PTT；页面隐藏、离线或切群会关闭旧采集与 Peer，状态重新确认后保持未按麦。接收数值与按次时间窗保留在报告中。</p>
 <label>测试端代号 <input id="single-name" value="单端A" maxlength="24"></label>
-<label>测试音 <select id="single-frequency"><option value="440">440 Hz</option><option value="997">997 Hz</option><option value="1777">1777 Hz</option></select></label>
-<button id="enable-single">显式启用单端合成音源</button><br>
+<label>音源 <select id="single-source"><option value="synthetic">合成测试音（默认）</option><option value="system_microphone">真实系统麦克风</option></select></label>
+<label>合成频率 <select id="single-frequency"><option value="440">440 Hz</option><option value="997">997 Hz</option><option value="1777">1777 Hz</option></select></label>
+<button id="enable-single">显式启用所选单端音源</button><br>
 <label>建群名称 <input id="group-name" value="跨标签诊断群" maxlength="32"></label><button id="create-group" disabled>建立测试群并显示口令</button>
 <label>群口令 <input id="group-code" autocomplete="off" maxlength="16"></label><button id="join-group" disabled>加入测试群</button>
-<button id="single-tone" disabled>申请并发送 3 秒测试音</button>
+<p><label>已加入群 <select id="single-groups" disabled></select></label><button id="single-switch" disabled>手动切换当前群</button></p>
+<p id="single-media-state" role="status">尚未采集麦克风。</p>
+<button id="single-retry" hidden>显式重试采集与连接</button>
+<button id="single-play" disabled>开始收听 / 重试播放</button>
+<label><input id="single-muted" type="checkbox" checked disabled> 收听静音</label>
+<p>真实采集默认静音接收。仅采集传输验证无需开启扬声器；如需稍后听测，请使用耳机并显式开始收听。播放被浏览器阻止时可再次点击重试。</p>
+<button id="single-ptt" type="button" disabled aria-pressed="false">按住发送当前音源</button>
+<button id="single-tone" disabled>申请并发送 3 秒合成测试音</button>
+<button id="single-timed" hidden disabled>诊断驱动：正常获权后最多发送 3 秒</button>
+<button id="single-cancel" disabled>立即停止发送 / 取消申请</button>
+<p>正常 PTT 松手、取消、失焦立即停发。3 秒按钮是显式开发驱动器，同样通过正常麦权申请；可立即停止，失焦或页面隐藏仍取消。安静环境的 RMS 可为 0，RTP 增长本身不代表真实有声。</p>
 <p id="single-status">单端尚未启用。</p>
 <p id="share-code"></p>
 </section>

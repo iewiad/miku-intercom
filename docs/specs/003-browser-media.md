@@ -58,6 +58,8 @@ Go 测试使用真实 Pion Peer 与 RTP，验证无麦权/无 peer_id 零转发�
 
 最低矩阵：A→B/C 与 B→A/C；C 切第二群后双向隔离；释放后观察尾音排空并连续 2 秒无测试频率；同时抢麦仅获权频率可收听；停止续租但故意持续发包后，到期无声音且可再获权；至少十次切群/重连检查旧声音和 Peer 残留。报告只保存代号、测试时间窗、群版本、获权、远端频率/RMS、Opus 与 RTP 统计，不保存 Token、SDP 或真实音频。
 
-自动数字诊断与真实麦克风/扬声器听测分别记录。只有前者通过时就如实报告，不把按钮变化、包计数或宿主合成 RTP 当成完整听测。
+独立单端模式可显式选择真实系统麦克风，直接复用 AudioClient 默认 getUserMedia 与正常麦权/PTT，不创建合成源；三端自动矩阵始终使用合成音。真实模式使用普通页面的隐藏/离线/失焦停发和关闭规则，默认收听静音，人工听测时显式开启或重试播放。报告必须标明真实或合成音源，并记录按麦窗口、采集 track 的 live/enabled、采样率/通道等非标识设置以及远端 ontrack PCM/Opus 指标；禁止导出设备 ID、track label、Token、SDP 或录音。真实输入不使用固定频率判定。
+
+自动数字诊断、系统麦克风采集与传输、人工听测分别记录。没有人说话时可能只有静音，不能把包计数或有效解码时长当作有声/语音清晰度证据；有声检查要有实际远端非零 PCM，最终听清仍由真人确认。只有前者通过时就如实报告，不把按钮变化或宿主合成 RTP 当成完整听测。
 
 参考：[Pion 固定版本](https://github.com/pion/webrtc/releases/tag/v4.2.23)、[Pion GatheringCompletePromise](https://pkg.go.dev/github.com/pion/webrtc/v4#GatheringCompletePromise)、[TrackLocalStaticRTP](https://github.com/pion/webrtc/blob/v4.2.23/track_local_static.go)、[浏览器静音语义](https://developer.mozilla.org/en-US/docs/Web/API/MediaStreamTrack/enabled)、[远端音频能量统计](https://www.w3.org/TR/webrtc-stats/#dom-rtcinboundrtpstreamstats-totalaudioenergy)。

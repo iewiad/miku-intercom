@@ -1,0 +1,472 @@
+{
+  "schema": "shenglu.system-microphone-evidence.v1",
+  "date": "2026-10-24",
+  "scope": "Two visible Chrome windows on one Mac; real built-in system microphone via default AudioClient getUserMedia; normal ControlClient PTT; localhost Pion Opus forwarding; receiver output muted.",
+  "human_listening": "not_performed",
+  "participants": [
+    {
+      "terminal": "A",
+      "raw_report_sha256": "460730762c4bfa2e9815376f5de0673ededa2cb7ec679837872dbdddaf151c98",
+      "raw_report_file": "browser-real-microphone-final-A.json",
+      "started_at": "2026-10-23T17:19:14.799Z",
+      "finished_at": "2026-10-23T17:21:10.681Z",
+      "capture": {
+        "track_state": "live",
+        "enabled": false,
+        "muted": false,
+        "settings": {
+          "sampleRate": 48000,
+          "channelCount": 1,
+          "latency": 0.01,
+          "echoCancellation": true,
+          "noiseSuppression": true,
+          "autoGainControl": true
+        }
+      },
+      "source_pcm": {
+        "total_samples": 1154,
+        "valid_samples": 1154,
+        "rms_peak": 0.04286,
+        "rms_mean": 0.00025,
+        "rms_latest": 0,
+        "enabled_samples": 30,
+        "live_samples": 1154,
+        "rolling_window": {
+          "from_ms": 502,
+          "to_ms": 115802,
+          "sample_limit": 3000
+        }
+      },
+      "remote_pcm": {
+        "total_samples": 1153,
+        "valid_samples": 1153,
+        "rms_peak": 0.014,
+        "rms_mean": 0.00016,
+        "rms_latest": 0,
+        "rolling_window": {
+          "from_ms": 602,
+          "to_ms": 115802,
+          "sample_limit": 3000
+        }
+      },
+      "inbound": [
+        {
+          "packetsReceived": 5628,
+          "bytesReceived": 27675,
+          "totalAudioEnergy": 0,
+          "totalSamplesDuration": 115.33,
+          "codec": "audio/opus",
+          "clockRate": 48000
+        }
+      ],
+      "ptt_windows": [
+        {
+          "started_at": "2026-10-23T17:20:29.531Z",
+          "ended_at": "2026-10-23T17:20:32.541Z",
+          "from_ms": 74745,
+          "to_ms": 77755,
+          "duration_ms": 3010,
+          "group_id": "grp_Os1P2opMeO4Eouq13P9L4A",
+          "current_version": 1,
+          "granted_at": "2026-10-23T17:20:29.539Z",
+          "capture_at_start": {
+            "track_state": "live",
+            "enabled": false,
+            "muted": false,
+            "settings": {
+              "sampleRate": 48000,
+              "channelCount": 1,
+              "latency": 0.01,
+              "echoCancellation": true,
+              "noiseSuppression": true,
+              "autoGainControl": true
+            }
+          },
+          "capture_at_grant": {
+            "track_state": "live",
+            "enabled": true,
+            "muted": false,
+            "settings": {
+              "sampleRate": 48000,
+              "channelCount": 1,
+              "latency": 0.01,
+              "echoCancellation": true,
+              "noiseSuppression": true,
+              "autoGainControl": true
+            }
+          },
+          "capture_at_end": {
+            "track_state": "live",
+            "enabled": false,
+            "muted": false,
+            "settings": {
+              "sampleRate": 48000,
+              "channelCount": 1,
+              "latency": 0.01,
+              "echoCancellation": true,
+              "noiseSuppression": true,
+              "autoGainControl": true
+            }
+          },
+          "source_pcm": {
+            "total_samples": 30,
+            "valid_samples": 30,
+            "rms_peak": 0.04286,
+            "rms_mean": 0.00952,
+            "rms_latest": 0.00877,
+            "enabled_samples": 30,
+            "live_samples": 30
+          },
+          "remote_pcm": {
+            "total_samples": 30,
+            "valid_samples": 30,
+            "rms_peak": 0,
+            "rms_mean": 0,
+            "rms_latest": 0
+          },
+          "inbound_before": [
+            {
+              "packetsReceived": 3607,
+              "bytesReceived": 21612,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 73.94,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "inbound_after": [
+            {
+              "packetsReceived": 3766,
+              "bytesReceived": 22089,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 77.19,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "inbound_delta": {
+            "packets": 159,
+            "decoded_seconds": 3.25
+          }
+        }
+      ],
+      "resources_after_close": [
+        {
+          "terminal": "真实麦克风A",
+          "created_peers": 1,
+          "open_peers": 0
+        }
+      ],
+      "close_report_file": "browser-real-microphone-final-closed-A.json",
+      "close_report_sha256": "c45c575f18e636023b21a85e99f34551b8b8050284ee8da1298f01a9b38da4d7"
+    },
+    {
+      "terminal": "B",
+      "raw_report_sha256": "e8cce644869fb9cab96fa59bd05a4431780efd2005b5f8587f0ab438f1672321",
+      "raw_report_file": "browser-real-microphone-final-B.json",
+      "started_at": "2026-10-23T17:19:20.907Z",
+      "finished_at": "2026-10-23T17:21:11.008Z",
+      "capture": {
+        "track_state": "live",
+        "enabled": false,
+        "muted": false,
+        "settings": {
+          "sampleRate": 48000,
+          "channelCount": 1,
+          "latency": 0.01,
+          "echoCancellation": true,
+          "noiseSuppression": true,
+          "autoGainControl": true
+        }
+      },
+      "source_pcm": {
+        "total_samples": 1097,
+        "valid_samples": 1097,
+        "rms_peak": 0.01612,
+        "rms_mean": 0.00015,
+        "rms_latest": 0,
+        "enabled_samples": 30,
+        "live_samples": 1097,
+        "rolling_window": {
+          "from_ms": 502,
+          "to_ms": 110101,
+          "sample_limit": 3000
+        }
+      },
+      "remote_pcm": {
+        "total_samples": 1095,
+        "valid_samples": 1095,
+        "rms_peak": 0.04666,
+        "rms_mean": 0.00028,
+        "rms_latest": 0,
+        "rolling_window": {
+          "from_ms": 702,
+          "to_ms": 110101,
+          "sample_limit": 3000
+        }
+      },
+      "inbound": [
+        {
+          "packetsReceived": 5346,
+          "bytesReceived": 27180,
+          "totalAudioEnergy": 0,
+          "totalSamplesDuration": 109.5,
+          "codec": "audio/opus",
+          "clockRate": 48000
+        }
+      ],
+      "ptt_windows": [
+        {
+          "started_at": "2026-10-23T17:19:29.240Z",
+          "ended_at": "2026-10-23T17:19:32.249Z",
+          "from_ms": 8345,
+          "to_ms": 11354,
+          "duration_ms": 3009,
+          "group_id": "grp_Os1P2opMeO4Eouq13P9L4A",
+          "current_version": 1,
+          "granted_at": "2026-10-23T17:19:29.247Z",
+          "capture_at_start": {
+            "track_state": "live",
+            "enabled": false,
+            "muted": false,
+            "settings": {
+              "sampleRate": 48000,
+              "channelCount": 1,
+              "latency": 0.01,
+              "echoCancellation": true,
+              "noiseSuppression": true,
+              "autoGainControl": true
+            }
+          },
+          "capture_at_grant": {
+            "track_state": "live",
+            "enabled": true,
+            "muted": false,
+            "settings": {
+              "sampleRate": 48000,
+              "channelCount": 1,
+              "latency": 0.01,
+              "echoCancellation": true,
+              "noiseSuppression": true,
+              "autoGainControl": true
+            }
+          },
+          "capture_at_end": {
+            "track_state": "live",
+            "enabled": false,
+            "muted": false,
+            "settings": {
+              "sampleRate": 48000,
+              "channelCount": 1,
+              "latency": 0.01,
+              "echoCancellation": true,
+              "noiseSuppression": true,
+              "autoGainControl": true
+            }
+          },
+          "source_pcm": {
+            "total_samples": 30,
+            "valid_samples": 30,
+            "rms_peak": 0.01612,
+            "rms_mean": 0.00548,
+            "rms_latest": 0.00227,
+            "enabled_samples": 30,
+            "live_samples": 30
+          },
+          "remote_pcm": {
+            "total_samples": 30,
+            "valid_samples": 30,
+            "rms_peak": 0,
+            "rms_mean": 0,
+            "rms_latest": 0
+          },
+          "inbound_before": [
+            {
+              "packetsReceived": 341,
+              "bytesReceived": 1023,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 6.99,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "inbound_after": [
+            {
+              "packetsReceived": 525,
+              "bytesReceived": 1575,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 10.74,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "inbound_delta": {
+            "packets": 184,
+            "decoded_seconds": 3.75
+          }
+        }
+      ],
+      "resources_after_close": [
+        {
+          "terminal": "真实麦克风B",
+          "created_peers": 1,
+          "open_peers": 0
+        }
+      ],
+      "close_report_file": "browser-real-microphone-final-closed-B.json",
+      "close_report_sha256": "a2d25216f474440a76a85f8d16fe19bf7b4a1ddecd20e0b1dd889b87d81ddd5f"
+    }
+  ],
+  "immediate_cancel": {
+    "held": {
+      "phase": "媒体：ready · 麦权：held",
+      "capture": {
+        "track_state": "live",
+        "enabled": true,
+        "muted": false,
+        "settings": {
+          "sampleRate": 48000,
+          "channelCount": 1,
+          "latency": 0.01,
+          "echoCancellation": true,
+          "noiseSuppression": true,
+          "autoGainControl": true
+        }
+      }
+    },
+    "cancelled": {
+      "phase": "媒体：ready · 麦权：idle",
+      "capture": {
+        "track_state": "live",
+        "enabled": false,
+        "muted": false,
+        "settings": {
+          "sampleRate": 48000,
+          "channelCount": 1,
+          "latency": 0.01,
+          "echoCancellation": true,
+          "noiseSuppression": true,
+          "autoGainControl": true
+        }
+      },
+      "window": {
+        "started_at": "2026-10-23T17:21:37.889Z",
+        "ended_at": "2026-10-23T17:21:38.172Z",
+        "from_ms": 143103,
+        "to_ms": 143386,
+        "duration_ms": 283,
+        "group_id": "grp_Os1P2opMeO4Eouq13P9L4A",
+        "current_version": 1,
+        "granted_at": "2026-10-23T17:21:37.902Z",
+        "capture_at_start": {
+          "track_state": "live",
+          "enabled": false,
+          "muted": false,
+          "settings": {
+            "sampleRate": 48000,
+            "channelCount": 1,
+            "latency": 0.01,
+            "echoCancellation": true,
+            "noiseSuppression": true,
+            "autoGainControl": true
+          }
+        },
+        "capture_at_grant": {
+          "track_state": "live",
+          "enabled": true,
+          "muted": false,
+          "settings": {
+            "sampleRate": 48000,
+            "channelCount": 1,
+            "latency": 0.01,
+            "echoCancellation": true,
+            "noiseSuppression": true,
+            "autoGainControl": true
+          }
+        },
+        "capture_at_end": {
+          "track_state": "live",
+          "enabled": false,
+          "muted": false,
+          "settings": {
+            "sampleRate": 48000,
+            "channelCount": 1,
+            "latency": 0.01,
+            "echoCancellation": true,
+            "noiseSuppression": true,
+            "autoGainControl": true
+          }
+        },
+        "source_pcm": {
+          "total_samples": 3,
+          "valid_samples": 3,
+          "rms_peak": 0.01324,
+          "rms_mean": 0.00839,
+          "rms_latest": 0.01324,
+          "enabled_samples": 2,
+          "live_samples": 3
+        },
+        "remote_pcm": {
+          "total_samples": 3,
+          "valid_samples": 3,
+          "rms_peak": 0,
+          "rms_mean": 0,
+          "rms_latest": 0
+        },
+        "inbound_before": [
+          {
+            "packetsReceived": 6927,
+            "bytesReceived": 31572,
+            "totalAudioEnergy": 0,
+            "totalSamplesDuration": 141.94,
+            "codec": "audio/opus",
+            "clockRate": 48000
+          }
+        ],
+        "inbound_after": [
+          {
+            "packetsReceived": 6970,
+            "bytesReceived": 31701,
+            "totalAudioEnergy": 0,
+            "totalSamplesDuration": 142.83,
+            "codec": "audio/opus",
+            "clockRate": 48000
+          }
+        ],
+        "inbound_delta": {
+          "packets": 43,
+          "decoded_seconds": 0.89
+        }
+      }
+    }
+  },
+  "assessment": {
+    "capture_and_bidirectional_media_transport": "passed",
+    "basis": "Both sources were live 48kHz mono tracks, enabled only after floor grant; both remote ontrack decoders produced nonzero PCM; source tracks disabled at release and immediate cancel; all test Peers closed. No fixed-frequency or human speech judgement.",
+    "hidden_page_manual_validation": "not_confirmed_in_this_run"
+  },
+  "synthetic_matrix_regression": {
+    "status": "passed",
+    "checks": 10,
+    "source_kind": "synthetic",
+    "resources_after_close": [
+      {
+        "terminal": "A",
+        "created_peers": 1,
+        "open_peers": 0
+      },
+      {
+        "terminal": "B",
+        "created_peers": 1,
+        "open_peers": 0
+      },
+      {
+        "terminal": "C",
+        "created_peers": 13,
+        "open_peers": 0
+      }
+    ],
+    "raw_report_file": "browser-audio-microphone-regression-matrix.json",
+    "raw_report_sha256": "dba5369a3e67a6aa4d4c2196243f61cd063e9b5838108c0cab45a8afabc247bf"
+  }
+}
