@@ -7,6 +7,8 @@ idf_component_register(
         "rti_credentials.c"
         "rti_controller.c"
         "rti_font_source_han_sans_sc_16_gb2312.c"
+        "shenglu_brand_24.c"
+        "shenglu_brand_48.c"
         "wifi_manager.c"
         "wifi_serial_cli.c"
         "rti_session.c"
