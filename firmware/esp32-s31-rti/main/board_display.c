@@ -1,4 +1,5 @@
 #include "board_display.h"
+#include "app_brand.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -74,6 +75,8 @@ static size_t transcript_history_count;
 static char transcript_timeline[TRANSCRIPT_TIMELINE_MAX];
 
 LV_FONT_DECLARE(rti_font_source_han_sans_sc_16_gb2312);
+LV_FONT_DECLARE(shenglu_brand_24);
+LV_FONT_DECLARE(shenglu_brand_48);
 #define TRANSCRIPT_FONT (&rti_font_source_han_sans_sc_16_gb2312)
 
 /* Keep digits visible in both text modes so SSIDs/passwords never need a
@@ -175,9 +178,9 @@ static lv_obj_t *prepare_screen(const char *title, const char *subtitle)
     lv_obj_set_style_bg_grad_dir(screen, LV_GRAD_DIR_VER, 0);
 
     lv_obj_t *eyebrow = lv_label_create(screen);
-    lv_label_set_text(eyebrow, "RTI");
+    lv_label_set_text(eyebrow, APP_DISPLAY_NAME);
     lv_obj_set_style_text_color(eyebrow, lv_color_hex(0x48E0C2), 0);
-    lv_obj_set_style_text_font(eyebrow, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(eyebrow, &shenglu_brand_24, 0);
     lv_obj_set_style_text_letter_space(eyebrow, 2, 0);
     lv_obj_align(eyebrow, LV_ALIGN_TOP_MID, 0, 24);
 
@@ -420,14 +423,14 @@ static void wifi_connect_task(void *arg)
     if (result == ESP_OK && wifi_connected_callback != NULL) {
         const esp_err_t callback_result = wifi_connected_callback(wifi_connected_context);
         if (callback_result != ESP_OK && bsp_display_lock(0)) {
-            show_message_screen("RTI START FAILED", "Restart the device or try again", true);
+            show_message_screen("START FAILED", "Restart the device or try again", true);
             bsp_display_unlock();
         }
     } else if (bsp_display_lock(0)) {
         if (result != ESP_OK) {
             show_message_screen("CONNECTION FAILED", "Check the password or choose another network", true);
         } else {
-            show_message_screen("WIFI CONNECTED", "Credentials saved. Restart to enter RTI.", false);
+            show_message_screen("WIFI CONNECTED", "Credentials saved. Restart to open the app.", false);
         }
         bsp_display_unlock();
     }
@@ -526,7 +529,7 @@ static void append_timeline_text(char *output, size_t capacity, const char *spea
     if (used >= capacity - 1) {
         return;
     }
-    const char *speaker_color = strcmp(speaker, "RTI") == 0 ? "49E5C2" : "72A7FF";
+    const char *speaker_color = strcmp(speaker, APP_DISPLAY_NAME) == 0 ? "49E5C2" : "72A7FF";
     snprintf(output + used, capacity - used, "#%s ● %s#  %s\n",
              speaker_color, speaker, text);
 }
@@ -556,7 +559,7 @@ static void render_conversation_timeline(bool sync_layout)
     const char *user_role = conversation_language_chinese ? "我" : "ME";
     append_timeline_text(transcript_timeline, sizeof(transcript_timeline), user_role,
                          conversation_user_text);
-    append_timeline_text(transcript_timeline, sizeof(transcript_timeline), "RTI",
+    append_timeline_text(transcript_timeline, sizeof(transcript_timeline), APP_DISPLAY_NAME,
                          conversation_assistant_text);
     if (conversation_user_text[0] != '\0' || conversation_assistant_text[0] != '\0') {
         strlcat(transcript_timeline, "\n", sizeof(transcript_timeline));
@@ -564,7 +567,7 @@ static void render_conversation_timeline(bool sync_layout)
     for (size_t i = transcript_history_count; i > 0; --i) {
         const transcript_turn_t *turn = &transcript_history[i - 1];
         append_timeline_text(transcript_timeline, sizeof(transcript_timeline), user_role, turn->user);
-        append_timeline_text(transcript_timeline, sizeof(transcript_timeline), "RTI", turn->assistant);
+        append_timeline_text(transcript_timeline, sizeof(transcript_timeline), APP_DISPLAY_NAME, turn->assistant);
         if (i > 1) {
             strlcat(transcript_timeline, "\n", sizeof(transcript_timeline));
         }
@@ -861,8 +864,8 @@ static void voice_option_event_cb(lv_event_t *event)
     if (!conversation_action_is_stop) {
         strlcpy(conversation_assistant_text,
                 conversation_language_chinese
-                    ? "你好，我是 RTI。有什么想了解的，直接问我。"
-                    : "Hi, I'm RTI. Tell me what you'd like to know or accomplish.",
+                    ? APP_WELCOME_ZH
+                    : APP_WELCOME_EN,
                 sizeof(conversation_assistant_text));
         render_conversation_timeline(true);
     }
@@ -886,7 +889,7 @@ static const char *voice_profile_detail(const char *voice)
         if (strcmp(voice, "Serena") == 0) return "柔和自然";
         if (strcmp(voice, "Ethan") == 0) return "清晰有活力";
         if (strcmp(voice, "Chelsie") == 0) return "鲜明个性";
-        return "RTI 音色";
+        return "系统音色";
     }
     if (strncmp(voice, "rtiv_", 5) == 0) return "Custom cloned voice";
     if (strcmp(voice, "Tina") == 0) return "Warm and friendly";
@@ -894,7 +897,7 @@ static const char *voice_profile_detail(const char *voice)
     if (strcmp(voice, "Serena") == 0) return "Soft and gentle";
     if (strcmp(voice, "Ethan") == 0) return "Clear and energetic";
     if (strcmp(voice, "Chelsie") == 0) return "Distinct character voice";
-    return "RTI voice profile";
+    return "Voice profile";
 }
 
 static void voice_sheet_event_cb(lv_event_t *event)
@@ -958,7 +961,7 @@ static void voice_sheet_event_cb(lv_event_t *event)
         lv_obj_t *message = lv_label_create(sheet);
         lv_label_set_text(message, conversation_voice_profiles_loading
                                        ? (conversation_language_chinese ? "正在加载音色..."
-                                                                        : "Loading voices from RTI...")
+                                                                        : "Loading voices...")
                                        : (conversation_language_chinese ? "音色加载失败"
                                                                         : "Unable to load available voices"));
         lv_obj_set_style_text_color(message, lv_color_hex(0xA8B2BA), 0);
@@ -1066,7 +1069,7 @@ static const char *conversation_hero_text(board_conversation_state_t state, cons
 {
     if (state == BOARD_CONVERSATION_ACTIVE && detail != NULL) {
         if (strstr(detail, "responding") != NULL) {
-            return conversation_language_chinese ? "RTI 正在回复" : "RTI IS RESPONDING";
+            return conversation_language_chinese ? "正在回复" : "RESPONDING";
         }
         if (strstr(detail, "Understanding") != NULL) {
             return conversation_language_chinese ? "正在思考" : "THINKING";
@@ -1109,7 +1112,7 @@ static void conversation_detail_text(board_conversation_state_t state, const cha
         return;
     }
     if (state == BOARD_CONVERSATION_IDLE) {
-        strlcpy(output, conversation_language_chinese ? "点击开始与 RTI 对话"
+        strlcpy(output, conversation_language_chinese ? "点击开始进行语音对话"
                                                       : "Tap below to start", capacity);
     } else if (state == BOARD_CONVERSATION_STARTING) {
         strlcpy(output, conversation_language_chinese ? "正在创建安全会话"
@@ -1130,9 +1133,8 @@ static void apply_conversation_language(void)
     const lv_font_t *ui_font = conversation_language_chinese
                                    ? TRANSCRIPT_FONT
                                    : &lv_font_montserrat_14;
-    lv_label_set_text(conversation_device_label,
-                      conversation_language_chinese ? "AI 语音智能体" : "AI VOICE AGENT");
-    lv_obj_set_style_text_font(conversation_device_label, ui_font, 0);
+    lv_label_set_text(conversation_device_label, APP_POWERED_BY);
+    lv_obj_set_style_text_font(conversation_device_label, &lv_font_montserrat_14, 0);
     lv_label_set_text(conversation_online_label,
                       conversation_language_chinese ? "在线"
                                                     : LV_SYMBOL_WIFI " ONLINE");
@@ -1174,8 +1176,8 @@ static void apply_conversation_language(void)
     if (!conversation_action_is_stop && transcript_history_count == 0) {
         strlcpy(conversation_assistant_text,
                 conversation_language_chinese
-                    ? "你好，我是 RTI。有什么想了解的，直接问我。"
-                    : "Hi, I'm RTI. Tell me what you'd like to know or accomplish.",
+                    ? APP_WELCOME_ZH
+                    : APP_WELCOME_EN,
                 sizeof(conversation_assistant_text));
     }
     render_conversation_timeline(true);
@@ -1220,22 +1222,22 @@ esp_err_t board_display_init(void)
     lv_obj_set_style_bg_grad_dir(screen, LV_GRAD_DIR_VER, 0);
 
     lv_obj_t *eyebrow = lv_label_create(screen);
-    lv_label_set_text(eyebrow, "RTI");
+    lv_label_set_text(eyebrow, "语音协作终端");
     lv_obj_set_style_text_color(eyebrow, lv_color_hex(0x48E0C2), 0);
-    lv_obj_set_style_text_font(eyebrow, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(eyebrow, TRANSCRIPT_FONT, 0);
     lv_obj_set_style_text_letter_space(eyebrow, 2, 0);
     lv_obj_align(eyebrow, LV_ALIGN_TOP_MID, 0, 72);
 
     lv_obj_t *title = lv_label_create(screen);
-    lv_label_set_text(title, "RTI");
+    lv_label_set_text(title, APP_DISPLAY_NAME);
     lv_obj_set_style_text_color(title, lv_color_hex(0xF5FAFB), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_font(title, &shenglu_brand_48, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 125);
 
     lv_obj_t *subtitle = lv_label_create(screen);
-    lv_label_set_text(subtitle, "ESP32-S31  /  DEVICE PREVIEW");
+    lv_label_set_text(subtitle, "小组语音，随时同行");
     lv_obj_set_style_text_color(subtitle, lv_color_hex(0x93A9B2), 0);
-    lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(subtitle, TRANSCRIPT_FONT, 0);
     lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, 202);
 
     lv_obj_t *divider = lv_obj_create(screen);
@@ -1249,7 +1251,8 @@ esp_err_t board_display_init(void)
     create_status_chip(screen, "WIFI SETUP NEEDED", lv_color_hex(0xFFB45C), 415);
 
     lv_obj_t *footer = lv_label_create(screen);
-    lv_label_set_text(footer, "USB DEBUG CONNECTED");
+    lv_label_set_text(footer, APP_POWERED_BY);
+    lv_obj_set_style_text_font(footer, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(footer, lv_color_hex(0x607983), 0);
     lv_obj_set_style_text_letter_space(footer, 2, 0);
     lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, -54);
@@ -1261,7 +1264,7 @@ esp_err_t board_display_init(void)
         ESP_LOGW(TAG, "could not enable display backlight: %s", esp_err_to_name(err));
     }
 
-    ESP_LOGI(TAG, "RTI status screen ready: 800x480");
+    ESP_LOGI(TAG, "%s status screen ready: 800x480", APP_DISPLAY_NAME);
     return ESP_OK;
 }
 
@@ -1278,7 +1281,7 @@ esp_err_t board_display_show_wifi_connected(void)
     if (!bsp_display_lock(1000)) {
         return ESP_ERR_TIMEOUT;
     }
-    show_message_screen("WIFI CONNECTED", "Saved network connected. The device is ready for RTI.", false);
+    show_message_screen("WIFI CONNECTED", "Saved network connected. Voice is ready.", false);
     bsp_display_unlock();
     return ESP_OK;
 }
@@ -1329,10 +1332,10 @@ esp_err_t board_display_show_conversation(board_conversation_action_cb_t callbac
     lv_obj_set_style_radius(brand_dot, LV_RADIUS_CIRCLE, 0);
 
     lv_obj_t *brand = lv_label_create(screen);
-    lv_label_set_text(brand, "RTI");
+    lv_label_set_text(brand, APP_DISPLAY_NAME);
     lv_obj_set_pos(brand, 44, 18);
     lv_obj_set_style_text_color(brand, lv_color_hex(0xF4FAFC), 0);
-    lv_obj_set_style_text_font(brand, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(brand, &shenglu_brand_24, 0);
     lv_obj_set_style_text_letter_space(brand, 2, 0);
 
     conversation_device_label = lv_label_create(screen);
@@ -1489,8 +1492,8 @@ esp_err_t board_display_show_conversation(board_conversation_action_cb_t callbac
     conversation_user_text[0] = '\0';
     strlcpy(conversation_assistant_text,
             conversation_language_chinese
-                ? "你好，我是 RTI。有什么想了解的，直接问我。"
-                : "Hi, I'm RTI. Tell me what you'd like to know or accomplish.",
+                ? APP_WELCOME_ZH
+                : APP_WELCOME_EN,
             sizeof(conversation_assistant_text));
 
     conversation_action_button = lv_button_create(screen);

@@ -41,7 +41,7 @@ static void start_session(void)
 {
     rti_session_t created = {0};
     board_display_set_conversation_state(BOARD_CONVERSATION_STARTING,
-                                         "Creating a secure RTI session", false);
+                                         "Creating a secure voice session", false);
     const esp_err_t err = rti_session_create(&created);
     if (err == ESP_OK) {
         board_display_set_conversation_state(BOARD_CONVERSATION_STARTING,
@@ -73,8 +73,8 @@ static void start_session(void)
                                      false);
         board_display_set_transcript(BOARD_TRANSCRIPT_ASSISTANT,
                                      board_display_is_chinese()
-                                         ? "正在等待 RTI 的实时回复"
-                                         : "Waiting for RTI's realtime reply",
+                                         ? "正在等待实时回复"
+                                         : "Waiting for a realtime reply",
                                      false);
         ESP_LOGI(TAG, "session lifecycle is active");
     } else {
@@ -97,7 +97,7 @@ static void stop_session(void)
 
     rti_app_set_state(RTI_APP_STATE_STOPPING);
     board_display_set_conversation_state(BOARD_CONVERSATION_STOPPING,
-                                         "Ending the RTI session", true);
+                                         "Ending the voice session", true);
     webrtc_peer_stop();
     const esp_err_t err = rti_session_stop(&stopping, "device_hangup");
     if (err == ESP_OK) {
@@ -116,8 +116,8 @@ static void stop_session(void)
                                      false);
         board_display_set_transcript(BOARD_TRANSCRIPT_ASSISTANT,
                                      board_display_is_chinese()
-                                         ? "RTI 的实时回复会显示在这里"
-                                         : "RTI's realtime reply appears here",
+                                         ? "实时回复会显示在这里"
+                                         : "Realtime replies appear here",
                                      false);
     } else {
         finish_operation(true);

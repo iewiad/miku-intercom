@@ -1,6 +1,17 @@
-# Miku RTI for ESP32-S31-Korvo-1
+# 声路同行 · ESP32-S31-Korvo-1
 
-ESP-IDF firmware for using ESP32-S31-Korvo-1 as an RTI realtime voice endpoint.
+ESP-IDF firmware for 声路同行, using ESP32-S31-Korvo-1 as a Miku RTA realtime voice endpoint.
+
+The boot screen and main interface display the application name **声路同行**.
+The boot title uses a 48 px Chinese font, and the main header uses a 24 px font;
+both subsets contain only the four application-name characters. The rest of the
+Chinese interface continues to use the existing 16 px GB2312 font.
+
+The checked-in `shenglu_brand_24.c` and `shenglu_brand_48.c` were generated with
+`lv_font_conv@1.5.3`, using the SourceHanSansSC-Normal font bundled with LVGL.
+Their generation commands are recorded in each file header. Font compilation
+does not require Node.js. These derived fonts retain the SIL Open Font License
+1.1 and Adobe copyright notice; see [the full font license](licenses/SourceHanSansSC-OFL.txt).
 
 ## Current scope
 

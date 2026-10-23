@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "app_state.h"
+#include "app_brand.h"
 #include "board_display.h"
 #include "cJSON.h"
 #include "esp_aec.h"
@@ -824,9 +825,9 @@ static esp_err_t send_session_update(void)
     char instructions[384];
     strlcpy(instructions,
             board_display_is_chinese()
-                ? "你是 RTI AI 智能体。请用中文自然对话，回答简洁，适合语音播报。"
+                ? "你是" APP_DISPLAY_NAME "的实时语音助手。请用中文自然对话，回答简洁，适合语音播报。"
                   "当用户询问天气、新闻、价格、赛果等实时信息时，请使用网络搜索后再回答。"
-                : "You are the RTI AI agent. Reply naturally and concisely in English. "
+                : "You are the voice assistant in " APP_DISPLAY_NAME ". Reply naturally and concisely in English. "
                   "Use web search before answering questions about current weather, news, prices, or scores.",
             sizeof(instructions));
     cJSON_AddStringToObject(session, "instructions", instructions);
@@ -871,8 +872,8 @@ static esp_err_t send_welcome_prompt(void)
     char prompt[256];
     strlcpy(prompt,
             board_display_is_chinese()
-                ? "请只用中文说一句简短欢迎语：你好，我是 RTI。有什么想了解的，直接问我。不要补充其他内容。"
-                : "Say only this brief welcome: Hello, I'm RTI. Ask me anything you'd like to know.",
+                ? "请只用中文说一句简短欢迎语：" APP_WELCOME_ZH "不要补充其他内容。"
+                : "Say only this brief welcome: " APP_WELCOME_EN,
             sizeof(prompt));
     if (root == NULL || item == NULL || content == NULL || part == NULL ||
         !cJSON_AddStringToObject(root, "type", "conversation.item.create") ||
