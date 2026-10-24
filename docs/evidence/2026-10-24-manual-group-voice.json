@@ -63,12 +63,17 @@
     "status": "pending"
   },
   "modal_feedback_followup": {
-    "status": "IDF build, app-only flash and independent verify passed; physical display observation pending",
+    "status": "passed",
     "authoritative_group_label": true,
     "terminal_action": "返回对讲",
     "real_lvgl_test": "passed",
     "ui_guard_sanitizers": "passed",
-    "physical_observation": "pending",
+    "physical_observation": {
+      "preparation_modal_current_group": "user confirmed 后勤组 complete and no overlap",
+      "cancel_return": "user confirmed",
+      "microphone_started": false,
+      "terminal_result_render": "covered by real LVGL regression; no additional physical voice run on this display-only revision"
+    },
     "firmware": {
       "bytes": 2822576,
       "sha256": "2723e69e593b369a15d89b0fed7d548faba7edf7a911aca7e31c89d4e8bdca46",
@@ -86,6 +91,11 @@
       "command_kind": 0,
       "command_phase": 0,
       "group_media_sent_packets": 0
+    },
+    "after_test": {
+      "group_audio_explicitly_stopped": true,
+      "local_peer_close_observed": true,
+      "serial_observer_closed": true
     }
   },
   "platform_limit": "same session remote terminal status may later regress; no stable cleanup guarantee",
