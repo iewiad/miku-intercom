@@ -181,7 +181,10 @@ python3 firmware/esp32-s31-rti/tests/run_rta_create_cleanup.py --sanitize
 python3 firmware/esp32-s31-rti/tests/run_command_bootstrap.py --sanitize
 python3 firmware/esp32-s31-rti/tests/run_wifi_recovery.py
 python3 -m unittest discover -s tools -p 'test_dev.py'
+python3 firmware/esp32-s31-rti/tests/run_group_keyboard_layout.py
 ```
+
+键盘布局回归另外链接真实 LVGL，不需要 SDL。它覆盖 800×480 边界和底行触点，并要求旧锚点定位变体失败；可用 `--lvgl-dir` 指定依赖、`--build-dir` 复用私有 CMake 缓存。首次编译需要系统 C/C++ 编译器和 CMake。
 
 这些测试执行实际生产解析、意图和 worker 函数；SDK/HTTP/NVS 边界为 doubles，不能代替真实语音或物理触控。RTA stop 的 2xx 仅表示受理：命令路径还查询同一 session 的 `ended / failed / expired` 终态，失败则保持停麦并重试。界面 worker 发布只渲染，不反向回调 PTT，避免打断正在建立的连接代次。
 

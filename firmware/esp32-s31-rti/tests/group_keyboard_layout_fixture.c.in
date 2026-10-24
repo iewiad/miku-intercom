@@ -1,0 +1,198 @@
+#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "lvgl.h"
+#include "src/widgets/buttonmatrix/lv_buttonmatrix_private.h"
+
+/* LVGL constructors, styles, layout, hit testing and keyboard events are real.
+ * Only the controller/worker boundary is replaced; no HTTP or board access. */
+LV_FONT_DECLARE(rti_font_source_han_sans_sc_16_gb2312);
+#define TRANSCRIPT_FONT (&rti_font_source_han_sans_sc_16_gb2312)
+typedef int esp_err_t;
+#define ESP_OK 0
+#define ESP_ERR_INVALID_STATE 1
+#if !defined(__APPLE__) && !defined(__FreeBSD__)
+static size_t strlcpy(char *dst, const char *src, size_t cap) {
+    size_t size = strlen(src);
+    if(cap) { size_t n = size < cap - 1 ? size : cap - 1; memcpy(dst, src, n); dst[n] = 0; }
+    return size;
+}
+#endif
+typedef enum { GROUP_MODAL_NONE, GROUP_MODAL_JOIN, GROUP_MODAL_VOICE } group_modal_t;
+static group_modal_t group_modal;
+static lv_obj_t *group_command_overlay, *group_command_title, *group_command_detail;
+static lv_obj_t *group_command_submit, *group_command_submit_label;
+static lv_obj_t *group_command_cancel, *group_command_cancel_label, *group_join_textarea;
+static lv_obj_t *group_dropdown, *group_detail_label;
+static bool group_joining, group_voice_active, group_voice_can_cancel;
+static bool group_command_pending, group_voice_submitted;
+static bool group_choices_valid = true, group_stop_action = true, group_transport_ready = true;
+static uint32_t group_command_revision, group_command_pending_revision;
+static char group_command_detail_text[192], submitted_code[9];
+static struct { bool known; } choices = { true }, *group_choices = &choices;
+static void *group_command_context;
+static unsigned join_calls, voice_calls, release_calls;
+static esp_err_t join_action(const char *code, void *context) {
+    (void)context; ++join_calls; strlcpy(submitted_code, code, sizeof(submitted_code)); return ESP_OK;
+}
+static esp_err_t voice_action(bool cancel, void *context) {
+    (void)cancel; (void)context; ++voice_calls; return ESP_OK;
+}
+static esp_err_t (*group_join_callback)(const char *, void *) = join_action;
+static esp_err_t (*group_voice_callback)(bool, void *) = voice_action;
+static bool group_is_switching(void) { return false; }
+static int group_current_index(void) { return 0; }
+static void group_force_release(void) { ++release_calls; }
+static void group_render_controls(void) {}
+
+/* @maps */
+/* @production */
+
+static lv_indev_t *pointer;
+static lv_indev_data_t input;
+static void read_pointer(lv_indev_t *indev, lv_indev_data_t *data) { (void)indev; *data = input; }
+static void flush(lv_display_t *display, const lv_area_t *area, uint8_t *pixels) {
+    (void)area; (void)pixels; lv_display_flush_ready(display);
+}
+static void tap(int x, int y) {
+    assert(x >= 0 && x < 800 && y >= 0 && y < 480);
+    input.point.x = x; input.point.y = y;
+    input.state = LV_INDEV_STATE_PRESSED; lv_indev_read(pointer); lv_tick_inc(20);
+    input.state = LV_INDEV_STATE_RELEASED; lv_indev_read(pointer); lv_tick_inc(20);
+    lv_obj_update_layout(lv_screen_active());
+}
+static lv_obj_t *keyboard_child(lv_obj_t *parent) {
+    for(uint32_t i = 0; i < lv_obj_get_child_count(parent); ++i) {
+        lv_obj_t *child = lv_obj_get_child(parent, i);
+        if(lv_obj_check_type(child, &lv_keyboard_class)) return child;
+    }
+    assert(!"keyboard missing"); return NULL;
+}
+static bool inside(lv_obj_t *obj, const char *description) {
+    lv_area_t area; lv_obj_get_coords(obj, &area);
+    if(area.x1 < 0 || area.y1 < 0 || area.x2 >= 800 || area.y2 >= 480) {
+        fprintf(stderr, "%s outside 800x480: (%d,%d)-(%d,%d)\n", description,
+                (int)area.x1, (int)area.y1, (int)area.x2, (int)area.y2);
+        return false;
+    }
+    return true;
+}
+static bool keyboard_geometry(lv_obj_t *keyboard, int y, int height) {
+    if(!inside(keyboard, "keyboard")) return false;
+    lv_area_t area; lv_obj_get_coords(keyboard, &area);
+    assert(area.x1 == 12 && area.y1 == y && lv_area_get_width(&area) == 776 &&
+           lv_area_get_height(&area) == height);
+    lv_buttonmatrix_t *matrix = (lv_buttonmatrix_t *)keyboard;
+    assert(matrix->btn_cnt > 0);
+    /* Include every actual key hit rectangle, especially the bottom row. */
+    for(uint32_t i = 0; i < matrix->btn_cnt; ++i) {
+        lv_area_t key = matrix->button_areas[i];
+        assert(key.x1 >= 0 && key.y1 >= 0 && key.x2 < 776 && key.y2 < height);
+        assert(area.x1 + key.x1 >= 0 && area.y1 + key.y1 >= 0);
+        assert(area.x1 + key.x2 < 800 && area.y1 + key.y2 < 480);
+    }
+    return true;
+}
+static void tap_key(lv_obj_t *keyboard, const char *text) {
+    lv_buttonmatrix_t *matrix = (lv_buttonmatrix_t *)keyboard;
+    for(uint32_t i = 0; i < matrix->btn_cnt; ++i) {
+        if(strcmp(lv_buttonmatrix_get_button_text(keyboard, i), text) != 0) continue;
+        lv_area_t area; lv_obj_get_coords(keyboard, &area);
+        const lv_area_t *key = &matrix->button_areas[i];
+        tap(area.x1 + (key->x1 + key->x2) / 2, area.y1 + (key->y1 + key->y2) / 2);
+        return;
+    }
+    assert(!"key missing");
+}
+static void clean_screen(void) {
+    group_close_command();
+    lv_obj_clean(lv_screen_active());
+    group_command_pending = group_voice_submitted = group_voice_active = false;
+    group_command_detail_text[0] = 0;
+    group_dropdown = lv_dropdown_create(lv_screen_active());
+    lv_obj_add_flag(group_dropdown, LV_OBJ_FLAG_HIDDEN);
+    group_detail_label = lv_label_create(lv_screen_active());
+}
+static void open_join(void) {
+    lv_obj_t *opener = lv_button_create(lv_screen_active());
+    lv_obj_add_event_cb(opener, group_join_open_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_send_event(opener, LV_EVENT_CLICKED, NULL);
+    lv_obj_update_layout(lv_screen_active());
+    assert(group_modal == GROUP_MODAL_JOIN && group_command_overlay);
+}
+static bool test_join(void) {
+    clean_screen(); open_join();
+    lv_obj_t *keyboard = keyboard_child(group_command_overlay);
+    if(!keyboard_geometry(keyboard, 178, 290)) return false;
+    assert(inside(group_join_textarea, "join input"));
+    assert(inside(group_command_submit, "join submit"));
+    assert(inside(group_command_cancel, "join cancel"));
+    /* Use real pointer hit testing and LVGL keyboard processing, not a synthetic
+     * READY event: type eight letters, then tap the actual bottom-row OK key. */
+    for(const char *letter = "ABCDEFGH"; *letter; ++letter) {
+        const char key[] = { *letter, 0 }; tap_key(keyboard, key);
+    }
+    assert(strcmp(lv_textarea_get_text(group_join_textarea), "ABCDEFGH") == 0);
+    tap_key(keyboard, LV_SYMBOL_OK);
+    assert(join_calls == 1 && strcmp(submitted_code, "ABCDEFGH") == 0);
+    assert(group_modal == GROUP_MODAL_NONE && !group_join_textarea && !group_command_overlay);
+    group_command_pending = false;
+    open_join(); keyboard = keyboard_child(group_command_overlay);
+    assert(strcmp(lv_textarea_get_text(group_join_textarea), "") == 0);
+    tap_key(keyboard, "A"); tap_key(keyboard, LV_SYMBOL_CLOSE);
+    assert(group_modal == GROUP_MODAL_NONE && !group_join_textarea && join_calls == 1);
+    puts("Join keyboard: (12,178)-(787,467), all keys in bounds; pointer input/OK/cancel passed.");
+    return true;
+}
+static bool test_wifi(void) {
+    clean_screen();
+    lv_obj_t *textarea = lv_textarea_create(lv_screen_active());
+    lv_obj_align(textarea, LV_ALIGN_TOP_LEFT, 60, 126);
+    lv_obj_set_size(textarea, 680, 48); lv_textarea_set_one_line(textarea, true);
+    lv_obj_t *keyboard = create_rti_keyboard(lv_screen_active(), textarea);
+    lv_obj_update_layout(lv_screen_active());
+    if(!keyboard_geometry(keyboard, 190, 286)) return false;
+    assert(inside(textarea, "Wi-Fi input"));
+    tap_key(keyboard, "!");
+    assert(strcmp(lv_textarea_get_text(textarea), "!") == 0);
+    puts("Wi-Fi keyboard: (12,190)-(787,475), all keys in bounds; bottom-row ! pointer input passed.");
+    return true;
+}
+static bool test_voice(void) {
+    clean_screen();
+    lv_obj_t *opener = lv_button_create(lv_screen_active());
+    lv_obj_add_event_cb(opener, group_voice_open_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_send_event(opener, LV_EVENT_CLICKED, NULL);
+    lv_obj_update_layout(lv_screen_active());
+    assert(group_modal == GROUP_MODAL_VOICE);
+    assert(inside(group_command_title, "voice title"));
+    assert(inside(group_command_detail, "voice detail"));
+    assert(inside(group_command_submit, "voice start"));
+    assert(inside(group_command_cancel, "voice cancel"));
+    lv_area_t area; lv_obj_get_coords(group_command_cancel, &area);
+    tap((area.x1 + area.x2) / 2, (area.y1 + area.y2) / 2);
+    assert(group_modal == GROUP_MODAL_NONE && !group_command_overlay && voice_calls == 0);
+    puts("Voice modal: title/detail/start/cancel in bounds; pointer cancel passed.");
+    return true;
+}
+int main(int argc, char **argv) {
+    lv_init();
+    lv_display_t *display = lv_display_create(800, 480);
+    static uint8_t pixels[800 * 20 * 4];
+    lv_display_set_buffers(display, pixels, NULL, sizeof(pixels), LV_DISPLAY_RENDER_MODE_PARTIAL);
+    lv_display_set_flush_cb(display, flush);
+    pointer = lv_indev_create();
+    lv_indev_set_type(pointer, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_display(pointer, display);
+    lv_indev_set_read_cb(pointer, read_pointer);
+    lv_indev_set_mode(pointer, LV_INDEV_MODE_EVENT);
+    const char *only = argc > 1 ? argv[1] : NULL;
+    if((!only || !strcmp(only, "join")) && !test_join()) return EXIT_FAILURE;
+    if((!only || !strcmp(only, "wifi")) && !test_wifi()) return EXIT_FAILURE;
+    if(!only && !test_voice()) return EXIT_FAILURE;
+    lv_deinit();
+    return EXIT_SUCCESS;
+}

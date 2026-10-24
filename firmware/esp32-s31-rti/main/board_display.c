@@ -157,7 +157,8 @@ static lv_obj_t *create_rti_keyboard(lv_obj_t *screen, lv_obj_t *textarea)
     lv_keyboard_set_textarea(keyboard, textarea);
     lv_keyboard_set_popovers(keyboard, false);
     lv_obj_set_size(keyboard, 776, 286);
-    lv_obj_set_pos(keyboard, 12, 190);
+    /* Keyboard defaults to bottom alignment; use screen coordinates explicitly. */
+    lv_obj_align(keyboard, LV_ALIGN_TOP_LEFT, 12, 190);
     lv_obj_set_style_text_font(keyboard, &lv_font_montserrat_20, LV_PART_ITEMS);
     lv_obj_set_style_pad_row(keyboard, 3, LV_PART_MAIN);
     lv_obj_set_style_pad_column(keyboard, 3, LV_PART_MAIN);
@@ -2280,7 +2281,8 @@ static void group_join_open_event_cb(lv_event_t *event)
     lv_keyboard_set_mode(keyboard, LV_KEYBOARD_MODE_USER_1);
     lv_keyboard_set_textarea(keyboard, group_join_textarea);
     lv_keyboard_set_popovers(keyboard, false);
-    lv_obj_set_pos(keyboard, 12, 178);
+    /* Reset the keyboard constructor's bottom anchor before placing it. */
+    lv_obj_align(keyboard, LV_ALIGN_TOP_LEFT, 12, 178);
     lv_obj_set_size(keyboard, 776, 290);
     lv_obj_set_style_text_font(keyboard, &lv_font_montserrat_20, LV_PART_ITEMS);
     lv_obj_set_style_pad_row(keyboard, 4, 0);
