@@ -31,14 +31,14 @@ func TestMediaHTTPAuthCapabilityAndStaticFlags(t *testing.T) {
 	if !status.Available || status.DiagnosticsEnabled || status.Phase != "none" || status.PeerID != "" || status.Codec != "audio/opus" || status.ClockRate != 48000 || status.ServerEpoch == "" {
 		t.Fatal("invalid capability")
 	}
-	for _, path := range []string{"/diagnostics", "/diagnostics.js", "/audio.test.js", "/diagnostics.test.js"} {
+	for _, path := range []string{"/diagnostics", "/diagnostics.js", "/lifecycle.js", "/lifecycle.test.js", "/audio.test.js", "/diagnostics.test.js"} {
 		errorCode(t, request(f.h, "GET", path, "", "", nil), 404, "not_found")
 	}
 	if w := request(f.h, "GET", "/audio.js", "", "", nil); w.Code != 200 {
 		t.Fatal("audio.js unavailable")
 	}
 	yes := mediaAPI(t, true)
-	for _, path := range []string{"/diagnostics", "/diagnostics.js"} {
+	for _, path := range []string{"/diagnostics", "/diagnostics.js", "/lifecycle.js"} {
 		w := request(yes.h, "GET", path, "", "", nil)
 		if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" {
 			t.Fatal("diagnostics not gated correctly")

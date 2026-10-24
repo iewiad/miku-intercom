@@ -27,6 +27,8 @@
 <label>群口令 <input id="group-code" autocomplete="off" maxlength="16"></label><button id="join-group" disabled>加入测试群</button>
 <p><label>已加入群 <select id="single-groups" disabled></select></label><button id="single-switch" disabled>手动切换当前群</button></p>
 <p id="single-media-state" role="status">尚未采集麦克风。</p>
+<p id="single-lifecycle-state">被动生命周期尚未开始。</p>
+<p>原生隐藏验证请切走后等待，再返回查看留存事件；单纯窗口失焦不等于页面隐藏。日志记录事件可信标记、关闭前后采集与 Peer 状态，不保存标识或声音。</p>
 <button id="single-retry" hidden>显式重试采集与连接</button>
 <button id="single-play" disabled>开始收听 / 重试播放</button>
 <label><input id="single-muted" type="checkbox" checked disabled> 收听静音</label>

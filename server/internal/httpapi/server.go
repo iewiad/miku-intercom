@@ -114,6 +114,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.media != nil && s.media.DiagnosticsEnabled() {
 		static["/diagnostics"] = "diagnostics.html"
 		static["/diagnostics.js"] = "diagnostics.js"
+		static["/lifecycle.js"] = "lifecycle.js"
 	}
 	if file, ok := static[r.URL.Path]; ok {
 		if r.Method != http.MethodGet {
@@ -126,7 +127,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, err)
 			return
 		}
-		typ := map[string]string{"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8", "audio.js": "text/javascript; charset=utf-8", "diagnostics.html": "text/html; charset=utf-8", "diagnostics.js": "text/javascript; charset=utf-8"}[file]
+		typ := map[string]string{"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8", "audio.js": "text/javascript; charset=utf-8", "diagnostics.html": "text/html; charset=utf-8", "diagnostics.js": "text/javascript; charset=utf-8", "lifecycle.js": "text/javascript; charset=utf-8"}[file]
 		w.Header().Set("Content-Type", typ)
 		_, _ = w.Write(b)
 		return
