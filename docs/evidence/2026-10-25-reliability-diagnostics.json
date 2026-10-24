@@ -5,7 +5,7 @@
     "pull_request": 15,
     "commit": "e6c6a3076ee9bd4d7b468ad8d386e4ee13b9863c"
   },
-  "status": "offline_implementation_verified_target_build_pending",
+  "status": "offline_diagnostics_and_target_build_verified_hardware_reproduction_pending",
   "validation": {
     "unified_host_checks_passed": 24,
     "node_tests": 109,
@@ -14,7 +14,9 @@
     "analyzer_tests": 20,
     "rtc_callback_concurrency_calls": 80000,
     "go_race_vet_build": true,
-    "independent_review": "passed; two board metadata findings and two analyzer robustness findings corrected"
+    "independent_review": "passed; two board metadata findings and two analyzer robustness findings corrected",
+    "idf_reconfigure_build_size": true,
+    "callback_iram_and_internal_data_verified": true
   },
   "diagnostic_changes": [
     "single authorized resolution snapshot and fixed result categories; input evaluation explicitly distinguished",
@@ -48,8 +50,51 @@
     "usb_serial_absent_on_enumeration": true
   },
   "remaining": [
-    "complete target build and verify callback IRAM/internal data",
     "on next device session deploy candidate and collect one-reader logs through actual final stop",
     "correlate metadata to establish voice rejection and connection failure root cause; retain Issue16 open"
-  ]
+  ],
+  "target_candidate": {
+    "source_code_commit": "c22437a5c907de72ed247171c179c84039217083",
+    "image_version": "v0-69-gc22437a",
+    "application_bytes": 3483232,
+    "application_sha256": "52af2fe3d2889ff6776e73670a4a65e58ca7faaa75f6d28f1265a2f0dc2c6e75",
+    "partition_bytes": 4194304,
+    "partition_free_bytes": 711072,
+    "source_manifest_sha256": "55d563e1db10544edf33585433c8e472eeb17f22aecb2b6e5116b731ef8a70e1",
+    "static_sections": {
+      ".dram0.data": 31648,
+      ".dram0.bss": 58824
+    },
+    "callback_target_check": {
+      "object_section": ".iram1.1",
+      "call_relocations": [],
+      "final_section": ".iram0.text",
+      "bytes": 172,
+      "static_sections": {
+        "sample_lock": [
+          ".dram0.bss"
+        ],
+        "active": [
+          ".dram0.bss"
+        ],
+        "dropped_total": [
+          ".dram0.bss"
+        ],
+        "active_cycle": [
+          ".dram0.bss"
+        ],
+        "active_mode": [
+          ".dram0.bss"
+        ],
+        "pending_count": [
+          ".dram0.bss"
+        ],
+        "pending": [
+          ".dram0.bss"
+        ]
+      }
+    },
+    "flashed": false,
+    "hardware_verified": false
+  }
 }
