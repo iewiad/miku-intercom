@@ -1,0 +1,405 @@
+{
+  "schema": "shenglu.native-lifecycle-validation.v1",
+  "source_revision": "a93c32e754383a31383a043e4d26896d5eb72695",
+  "merged_pr7_commit": "32334f55606607e1efd3a0da1e0b65240966bbc3",
+  "source_kind": "system_microphone",
+  "human_listening": "not_performed",
+  "listening_muted": true,
+  "method": "Native Chrome UI only for three hide/return cycles. No BrowserTab attachment to the test tab until the three cycles and blur-only test were complete; passive snapshots retained for later readout.",
+  "event_count_at_readout": 50,
+  "dropped_events": 0,
+  "cycles": [
+    {
+      "index": 1,
+      "event_sequence": [
+        14,
+        16,
+        17,
+        21
+      ],
+      "hidden_at": "2026-10-24T04:29:28.357Z",
+      "visible_at": "2026-10-24T04:29:42.824Z",
+      "hidden_ms": 14466.5,
+      "visible_to_ready_ms": 340.1,
+      "held_before_blur": true,
+      "trusted_hidden": true,
+      "trusted_visible": true,
+      "old_peer": {
+        "seq": 1,
+        "state": "closed"
+      },
+      "old_capture": {
+        "track_state": "ended",
+        "enabled": false,
+        "muted": false
+      },
+      "hidden_current_peer": null,
+      "hidden_current_capture": null,
+      "hidden_open_peers": 0,
+      "hidden_output_attached": false,
+      "recovered_peer": {
+        "seq": 2,
+        "state": "connected"
+      },
+      "recovered_capture": {
+        "track_state": "live",
+        "enabled": false,
+        "muted": false
+      },
+      "recovered_pressed": false,
+      "recovered_floor_phase": "idle",
+      "recovered_open_peers": 1
+    },
+    {
+      "index": 2,
+      "event_sequence": [
+        27,
+        29,
+        30,
+        34
+      ],
+      "hidden_at": "2026-10-24T04:30:20.087Z",
+      "visible_at": "2026-10-24T04:30:32.065Z",
+      "hidden_ms": 11978.5,
+      "visible_to_ready_ms": 361.5,
+      "held_before_blur": false,
+      "trusted_hidden": true,
+      "trusted_visible": true,
+      "old_peer": {
+        "seq": 2,
+        "state": "closed"
+      },
+      "old_capture": {
+        "track_state": "ended",
+        "enabled": false,
+        "muted": false
+      },
+      "hidden_current_peer": null,
+      "hidden_current_capture": null,
+      "hidden_open_peers": 0,
+      "hidden_output_attached": false,
+      "recovered_peer": {
+        "seq": 3,
+        "state": "connected"
+      },
+      "recovered_capture": {
+        "track_state": "live",
+        "enabled": false,
+        "muted": false
+      },
+      "recovered_pressed": false,
+      "recovered_floor_phase": "idle",
+      "recovered_open_peers": 1
+    },
+    {
+      "index": 3,
+      "event_sequence": [
+        37,
+        39,
+        40,
+        44
+      ],
+      "hidden_at": "2026-10-24T04:30:37.895Z",
+      "visible_at": "2026-10-24T04:30:50.057Z",
+      "hidden_ms": 12161.8,
+      "visible_to_ready_ms": 364.1,
+      "held_before_blur": true,
+      "trusted_hidden": true,
+      "trusted_visible": true,
+      "old_peer": {
+        "seq": 3,
+        "state": "closed"
+      },
+      "old_capture": {
+        "track_state": "ended",
+        "enabled": false,
+        "muted": false
+      },
+      "hidden_current_peer": null,
+      "hidden_current_capture": null,
+      "hidden_open_peers": 0,
+      "hidden_output_attached": false,
+      "recovered_peer": {
+        "seq": 4,
+        "state": "connected"
+      },
+      "recovered_capture": {
+        "track_state": "live",
+        "enabled": false,
+        "muted": false
+      },
+      "recovered_pressed": false,
+      "recovered_floor_phase": "idle",
+      "recovered_open_peers": 1
+    }
+  ],
+  "blur_only": {
+    "event_sequence": [
+      48,
+      49
+    ],
+    "elapsed_ms": 1.9,
+    "before_pressed": true,
+    "after_pressed": false,
+    "before_capture": {
+      "track_state": "live",
+      "enabled": true,
+      "muted": false
+    },
+    "after_capture": {
+      "track_state": "live",
+      "enabled": false,
+      "muted": false
+    },
+    "same_peer": {
+      "seq": 4,
+      "state": "connected"
+    },
+    "phase": "ready",
+    "document_hidden": false
+  },
+  "restored_transfers": [
+    {
+      "direction": "B->restored A",
+      "ptt_duration_ms": 3011,
+      "source_pcm": {
+        "total_samples": 30,
+        "valid_samples": 30,
+        "rms_peak": 0.3858,
+        "rms_mean": 0.07219,
+        "rms_latest": 0.04573,
+        "enabled_samples": 30,
+        "live_samples": 30
+      },
+      "capture_at_grant": {
+        "track_state": "live",
+        "enabled": true,
+        "muted": false,
+        "settings": {
+          "sampleRate": 48000,
+          "channelCount": 1,
+          "latency": 0.01,
+          "echoCancellation": true,
+          "noiseSuppression": true,
+          "autoGainControl": true
+        }
+      },
+      "capture_at_end": {
+        "track_state": "live",
+        "enabled": false,
+        "muted": false,
+        "settings": {
+          "sampleRate": 48000,
+          "channelCount": 1,
+          "latency": 0.01,
+          "echoCancellation": true,
+          "noiseSuppression": true,
+          "autoGainControl": true
+        }
+      },
+      "receiver_cumulative_remote_pcm": {
+        "total_samples": 2461,
+        "valid_samples": 2461,
+        "rms_peak": 0.28885,
+        "rms_mean": 0.00092,
+        "rms_latest": 0,
+        "rolling_window": {
+          "from_ms": 10503,
+          "to_ms": 296303,
+          "sample_limit": 3000
+        }
+      },
+      "receiver_cumulative_inbound": [
+        {
+          "packetsReceived": 8459,
+          "bytesReceived": 36971,
+          "totalAudioEnergy": 0,
+          "totalSamplesDuration": 174.43,
+          "codec": "audio/opus",
+          "clockRate": 48000
+        }
+      ]
+    },
+    {
+      "direction": "restored A->B",
+      "ptt_duration_ms": 3100,
+      "source_pcm": {
+        "total_samples": 31,
+        "valid_samples": 31,
+        "rms_peak": 0.02611,
+        "rms_mean": 0.00765,
+        "rms_latest": 0.00974,
+        "enabled_samples": 30,
+        "live_samples": 31
+      },
+      "capture_at_grant": {
+        "track_state": "live",
+        "enabled": true,
+        "muted": false,
+        "settings": {
+          "sampleRate": 48000,
+          "channelCount": 1,
+          "latency": 0.01,
+          "echoCancellation": true,
+          "noiseSuppression": true,
+          "autoGainControl": true
+        }
+      },
+      "capture_at_end": {
+        "track_state": "live",
+        "enabled": false,
+        "muted": false,
+        "settings": {
+          "sampleRate": 48000,
+          "channelCount": 1,
+          "latency": 0.01,
+          "echoCancellation": true,
+          "noiseSuppression": true,
+          "autoGainControl": true
+        }
+      },
+      "receiver_cumulative_remote_pcm": {
+        "total_samples": 512,
+        "valid_samples": 512,
+        "rms_peak": 0.01592,
+        "rms_mean": 0.00043,
+        "rms_latest": 0,
+        "rolling_window": {
+          "from_ms": 727,
+          "to_ms": 51826,
+          "sample_limit": 3000
+        }
+      },
+      "receiver_cumulative_inbound": [
+        {
+          "packetsReceived": 2500,
+          "bytesReceived": 19032,
+          "totalAudioEnergy": 0,
+          "totalSamplesDuration": 51.19,
+          "codec": "audio/opus",
+          "clockRate": 48000
+        }
+      ]
+    }
+  ],
+  "cleanup": [
+    {
+      "terminal": "生命周期A",
+      "resources": [
+        {
+          "terminal": "生命周期A",
+          "created_peers": 4,
+          "open_peers": 0
+        }
+      ],
+      "last_lifecycle": {
+        "seq": 52,
+        "at_ms": 315583.8,
+        "at": "2026-10-24T04:34:04.069Z",
+        "event_type": "disabled-closed",
+        "is_trusted": null,
+        "visibility_state": "visible",
+        "document_hidden": false,
+        "has_focus": true,
+        "phase": "disabled",
+        "desired": false,
+        "pressed": false,
+        "floor_phase": "idle",
+        "current_version": 1,
+        "peer": null,
+        "capture": null,
+        "previous_peer": {
+          "seq": 4,
+          "state": "closed"
+        },
+        "previous_capture": {
+          "track_state": "ended",
+          "enabled": false,
+          "muted": false
+        },
+        "open_peers": 0,
+        "output_attached": false
+      }
+    },
+    {
+      "terminal": "恢复链路B",
+      "resources": [
+        {
+          "terminal": "恢复链路B",
+          "created_peers": 1,
+          "open_peers": 0
+        }
+      ],
+      "last_lifecycle": {
+        "seq": 7,
+        "at_ms": 52655.1,
+        "at": "2026-10-24T04:34:04.441Z",
+        "event_type": "disabled-closed",
+        "is_trusted": null,
+        "visibility_state": "visible",
+        "document_hidden": false,
+        "has_focus": true,
+        "phase": "disabled",
+        "desired": false,
+        "pressed": false,
+        "floor_phase": "idle",
+        "current_version": 1,
+        "peer": null,
+        "capture": null,
+        "previous_peer": {
+          "seq": 1,
+          "state": "closed"
+        },
+        "previous_capture": {
+          "track_state": "ended",
+          "enabled": false,
+          "muted": false
+        },
+        "open_peers": 0,
+        "output_attached": false
+      }
+    }
+  ],
+  "limits": [
+    "Native tab hide/return on this local Chrome only; no system sleep/minimize/offline/restart inference.",
+    "In held cycles blur cancelled transmission before hidden closed resources.",
+    "Receiver peaks/decoder counters are cumulative; PTT duration includes acquisition, not exact voiced duration or latency.",
+    "Human listening remains unverified."
+  ],
+  "raw_reports": [
+    {
+      "artifact": "outputs/browser-lifecycle-restored.json",
+      "sha256": "f76163295fbfca173987d128af6ecabb44f3fe09f2d2f8f0012cd27fdc0b7668"
+    },
+    {
+      "artifact": "outputs/browser-lifecycle-recovery-before.json",
+      "sha256": "404bc968c82b99f8214292dc894f139e6c5d8267ad8b9f02560ec25a3fce2f6e"
+    },
+    {
+      "artifact": "outputs/browser-lifecycle-recovery-source-A.json",
+      "sha256": "db6d947d53161fa24e74f3177cfaee9852cfe43dbde4f95a842c0966a712de7d"
+    },
+    {
+      "artifact": "outputs/browser-lifecycle-recovery-source-B.json",
+      "sha256": "3edfd449d7af5c964393cd5c7a4d5c8fcef4b20964f779c7d4aa515df9974575"
+    },
+    {
+      "artifact": "outputs/browser-lifecycle-recovery-receiver-A.json",
+      "sha256": "881dda3f1dd3d912bc0352c85872753387dcde73c7f4186b24cb10bfbaaabdf8"
+    },
+    {
+      "artifact": "outputs/browser-lifecycle-recovery-receiver-B.json",
+      "sha256": "581d8b0010096083cafe301e4cddc58da76f2667b7873d4d33164295cf8e7996"
+    },
+    {
+      "artifact": "outputs/browser-lifecycle-closed-A.json",
+      "sha256": "9948cce2c66a2a3ffc397746035aa059da3b66b8ae811a2a600f6a58148a8846"
+    },
+    {
+      "artifact": "outputs/browser-lifecycle-closed-B.json",
+      "sha256": "41c205c12d32dc8d014662d01675c8633751e4f6dfaf9f50b2da296f220e48c1"
+    }
+  ],
+  "board_used": false,
+  "rta_used": false
+}

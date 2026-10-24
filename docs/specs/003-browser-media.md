@@ -60,6 +60,8 @@ Go 测试使用真实 Pion Peer 与 RTP，验证无麦权/无 peer_id 零转发�
 
 独立单端模式可显式选择真实系统麦克风，直接复用 AudioClient 默认 getUserMedia 与正常麦权/PTT，不创建合成源；三端自动矩阵始终使用合成音。真实模式使用普通页面的隐藏/离线/失焦停发和关闭规则，默认收听静音，人工听测时显式开启或重试播放。报告必须标明真实或合成音源，并记录按麦窗口、采集 track 的 live/enabled、采样率/通道等非标识设置以及远端 ontrack PCM/Opus 指标；禁止导出设备 ID、track label、Token、SDP 或录音。真实输入不使用固定频率判定。
 
+真实模式的被动生命周期日志最多保留 128 条并记录丢弃数，区分可信 visibilitychange 与 blur/focus。隐藏清理后快照只记录旧 track 状态、Peer 本地序号与连接状态及当前资源是否解绑；恢复快照须能核对新 Peer、未按麦和源 track 禁用。日志不序列化真实 Peer ID、设备标识、客户端对象或声音，读取动作本身不作为隐藏证据。
+
 自动数字诊断、系统麦克风采集与传输、人工听测分别记录。没有人说话时可能只有静音，不能把包计数或有效解码时长当作有声/语音清晰度证据；有声检查要有实际远端非零 PCM，最终听清仍由真人确认。只有前者通过时就如实报告，不把按钮变化或宿主合成 RTP 当成完整听测。
 
 参考：[Pion 固定版本](https://github.com/pion/webrtc/releases/tag/v4.2.23)、[Pion GatheringCompletePromise](https://pkg.go.dev/github.com/pion/webrtc/v4#GatheringCompletePromise)、[TrackLocalStaticRTP](https://github.com/pion/webrtc/blob/v4.2.23/track_local_static.go)、[浏览器静音语义](https://developer.mozilla.org/en-US/docs/Web/API/MediaStreamTrack/enabled)、[远端音频能量统计](https://www.w3.org/TR/webrtc-stats/#dom-rtcinboundrtpstreamstats-totalaudioenergy)。
