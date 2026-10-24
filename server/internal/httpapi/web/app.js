@@ -53,14 +53,14 @@ export class APIError extends Error {
   constructor(status, code, message) { super(message); this.status = status; this.code = code; }
 }
 const messages = {
-  floor_busy: '群内麦权正被占用，松手后可再次申请。',
+  floor_busy: '伙伴正在发言，稍后再按住说话。',
   join_rate_limited: '口令尝试次数较多，请稍后再试。',
-  request_ended: '本次麦权申请已结束，请重新按下。',
-  request_capacity: '麦权申请较频繁，请稍后重新按下。',
-  lease_not_held: '麦权授权已结束，请重新按下。',
-  operation_capacity: '此身份的切群记录已达开发版上限，暂时无法发起新操作。',
+  request_ended: '这次发言已结束，请重新按住说话。',
+  request_capacity: '操作较频繁，请稍后再按住说话。',
+  lease_not_held: '这次发言已结束，请重新按住说话。',
+  operation_capacity: '此浏览器的切换记录已满，请联系维护者处理。',
   version_conflict: '当前群版本已变化，已刷新状态，请重新操作。',
-  epoch_conflict: '服务已重新启动，请刷新后重新按下。',
+  epoch_conflict: '连接正在恢复，请稍后重新按住说话。',
   request_expired: '这次申请已过期，请松手后重新按下。',
   request_cancelled: '这次申请已取消，请重新按下。',
   not_member: '尚未加入这个群，无法切换。',
@@ -75,16 +75,23 @@ export class ControlClient {
     onChange = () => {}, onIdentity = () => {}, onPending = () => {}, restorePending = null, audio = null} = {}) {
     Object.assign(this, {fetchImpl, now, random, schedule, cancel, authorize, onChange, onIdentity, onPending, restorePending, audio});
     this.identity = null; this.state = null; this.stateAt = 0; this.epoch = 0;
-    this.active = true; this.authInvalid = false; this.connected = false; this.mutationBusy = false; this.polling = false;
+    this.active = true; this.authInvalid = false; this.connected = false; this.mutationBusy = false; this.polling = false; this.uiBlocked = false;
     this.pendingSwitch = null; this.confirming = false; this.retryTimer = null;
     this.floorGeneration = 0; this.pressed = false; this.floorPhase = 'idle';
     this.floorRequest = null; this.lease = null; this.acquiring = false; this.releasing = 0;
     this.renewTimer = null; this.expiryTimer = null; this.share = null;
-    this.notice = ''; this.noticeTone = 'info';
+    this.notice = ''; this.noticeTone = 'info'; this.lastRefreshError = '';
   }
   emit() { this.onChange(this); }
   inform(text, tone = 'info') { this.notice = text; this.noticeTone = tone; this.emit(); }
   allowed() { return !!this.identity && this.active && this.authorize(); }
+  setUIBlocked(blocked) {
+    this.uiBlocked = !!blocked;
+    // Synchronous cancellation also invalidates an acquire that resolves after
+    // the user has opened a secondary task. Closing never presses or syncs audio.
+    if (this.uiBlocked) this.cancelFloor();
+    else this.emit();
+  }
   load(identity, pending = null) { if (this.identity?.token !== identity?.token) { this.cancelFloor(); this.audio?.suspend(); } this.identity = identity; this.pendingSwitch = pending; this.emit(); }
   async request(path, method = 'GET', body, {token = this.identity?.token, keepalive = false} = {}) {
     const headers = {'Accept': 'application/json'};
@@ -113,7 +120,7 @@ export class ControlClient {
       this.voice?.interrupt(); this.audio?.disable(); this.identity = {device: result.device, token: result.token};
       this.active = true; this.authInvalid = false; this.epoch++; this.onIdentity(this.identity); this.emit();
       this.mutationBusy = false; await this.voice?.initialize(); await this.refresh();
-      this.inform('身份已建立。创建一个群，或用伙伴的口令加入。', 'success');
+      this.inform('准备好了。创建一个群，或用伙伴的口令加入。', 'success');
     } catch (error) { this.inform(errorText(error), 'error'); }
     finally { this.mutationBusy = false; this.emit(); }
   }
@@ -125,15 +132,21 @@ export class ControlClient {
     if (changed) {
       const restarted = this.state.server_epoch !== next.server_epoch;
       this.cancelFloor(); this.audio?.suspend('群状态已变化，正在恢复音频。');
-      if (restarted) this.notice = '服务已重新启动，麦权已清空；需要发言时请重新按下。';
+      if (restarted) { this.notice = '连接已恢复，需要发言时请重新按住说话。'; this.noticeTone = 'success'; }
     }
     this.state = next; this.stateAt = this.now(); this.connected = true; this.emit(); void this.audio?.sync(); return true;
   }
   async refresh() {
     if (!this.allowed() || this.polling || this.pendingSwitch || this.mutationBusy) return;
-    const epoch = this.epoch; this.polling = true;
-    try { const next = await this.request('/state'); this.applyState(next, epoch); }
-    catch (error) { if (epoch === this.epoch && this.active) { this.connected = false; this.cancelFloor(); this.audio?.suspend('控制连接未确认，音频已停止。'); this.inform(errorText(error), 'error'); } }
+    const epoch = this.epoch; this.polling = true; this.emit();
+    try {
+      const next = await this.request('/state');
+      if (this.applyState(next, epoch)) {
+        if (this.lastRefreshError && this.noticeTone === 'error' && this.notice === this.lastRefreshError) this.inform('群组已更新。', 'success');
+        this.lastRefreshError = '';
+      }
+    }
+    catch (error) { if (epoch === this.epoch && this.active) { this.connected = false; this.cancelFloor(); this.audio?.suspend('控制连接未确认，音频已停止。'); this.lastRefreshError = errorText(error); this.inform(this.lastRefreshError, 'error'); } }
     finally { this.polling = false; this.emit(); }
   }
   async mutate(path, body) {
@@ -145,7 +158,7 @@ export class ControlClient {
       if (epoch !== this.epoch || !this.allowed()) return;
       this.applyState(result.state, epoch);
       if (result.code) this.share = {name: result.group.name, code: result.code};
-      this.inform(path === '/groups' ? '群已创建。请妥善保存口令，服务端不会再次展示。' : '已加入，第二个群不会自动打断当前群。', 'success');
+      this.inform(path === '/groups' ? '群组已创建。口令只显示这一次，请保存并私下分享。' : '已加入群组。你可以从群列表手动进入。', 'success');
       return result;
     } catch (error) { if (epoch === this.epoch) this.inform(errorText(error), 'error'); }
     finally { this.mutationBusy = false; this.emit(); }
@@ -158,12 +171,12 @@ export class ControlClient {
   }
   joinGroup(code) { return this.mutate('/memberships', {code}); }
   async switchGroup(groupID) {
-    if (!this.allowed() || this.mutationBusy || this.pendingSwitch || !this.state) return false;
+    if (!this.allowed() || this.uiBlocked || this.mutationBusy || this.pendingSwitch || !this.state) return false;
     this.cancelFloor(); this.audio?.suspend('正在确认切群结果。'); ++this.epoch;
     const pending = {operation_id: this.random(), group_id: groupID, expected_version: this.state.current_version};
     try { this.onPending(pending); }
     catch { this.inform('无法保存切群请求，尚未提交。请恢复浏览器本地存储后重试。', 'error'); void this.audio?.sync(); return false; }
-    this.pendingSwitch = pending; this.inform('正在确认切群结果；确认前暂停麦权操作。');
+    this.pendingSwitch = pending; this.inform('正在切换群组，完成前请稍候。');
     await this.confirmSwitch(true); return true;
   }
   async confirmSwitch(first = false) {
@@ -185,22 +198,22 @@ export class ControlClient {
       const state = result.state || await this.request('/state');
       if (epoch !== this.epoch || !this.allowed()) return;
       this.onPending(null); this.pendingSwitch = null; this.applyState(state, epoch);
-      this.inform(result.operation.status === 'applied' ? '当前群已确认，请查看音频连接状态后再按住说话。' :
+      this.inform(result.operation.status === 'applied' ? '已切换群组，语音连接完成后就能说话。' :
         (messages[result.operation.error_code] || '切群被拒绝，已按服务端状态恢复。'), result.operation.status === 'applied' ? 'success' : 'error');
     } catch (error) {
       if (epoch === this.epoch && this.allowed()) {
-        this.inform('切群结果尚未确认。将查询同一操作；未知时仍用原请求重试，不推断当前群。', 'error');
+        this.inform('切换还没完成，正在继续确认。请稍候，或点击“继续连接”。', 'error');
         this.retryTimer = this.schedule(() => { void this.confirmSwitch(); }, 1800);
       }
     } finally { this.confirming = false; this.emit(); }
   }
   serverNow() { return Date.parse(this.state?.server_time || '') + Math.max(0, this.now() - this.stateAt); }
   canPress() {
-    return this.allowed() && this.connected && !this.voice?.blocking && (!this.audio || this.audio.isReady()) && !!this.state?.current_group_id && !!this.state.server_epoch &&
+    return this.allowed() && !this.uiBlocked && this.connected && !this.voice?.blocking && (!this.audio || this.audio.isReady()) && !!this.state?.current_group_id && !!this.state.server_epoch &&
       Number.isFinite(this.serverNow()) && !this.pendingSwitch && !this.mutationBusy && !this.acquiring && !this.releasing && !this.pressed;
   }
   stillPressed(generation, request) {
-    return this.allowed() && this.pressed && generation === this.floorGeneration && !this.pendingSwitch &&
+    return this.allowed() && !this.uiBlocked && this.pressed && generation === this.floorGeneration && !this.pendingSwitch &&
       (!this.audio || (this.audio.isReady() && request.peer_id === this.audio.peerID)) &&
       this.state?.server_epoch === request.server_epoch && this.state.current_group_id === request.group_id && this.state.current_version === request.current_version;
   }
@@ -243,9 +256,9 @@ export class ControlClient {
   scheduleLease(generation, request) {
     this.cancel(this.renewTimer); this.cancel(this.expiryTimer);
     const remaining = Date.parse(this.lease?.expires_at || '') - this.serverNow();
-    if (!Number.isFinite(remaining) || remaining <= 0) { this.cancelFloor('麦权授权已到期，请重新按下。'); return; }
+    if (!Number.isFinite(remaining) || remaining <= 0) { this.cancelFloor('这次发言已结束，请重新按住说话。'); return; }
     this.expiryTimer = this.schedule(() => {
-      if (this.stillPressed(generation, request)) this.cancelFloor('麦权授权已到期，请重新按下。');
+      if (this.stillPressed(generation, request)) this.cancelFloor('这次发言已结束，请重新按住说话。');
     }, remaining);
     this.renewTimer = this.schedule(() => { void this.renewFloor(generation, request); }, 1000);
   }
@@ -283,17 +296,62 @@ export class ControlClient {
   }
 }
 
+// A visible speaking/ready state requires the actual media binding as well as
+// control state. A stale floor snapshot alone never means audio is connected.
+export function channelPresentation(client) {
+  const audio = client.audio, state = client.state;
+  const current = state?.groups?.find(group => group.id === state.current_group_id);
+  const view = (phase, title, detail, hint = '按住说话，松开结束', button = '按住说话') => ({phase, title, detail, hint, button});
+  if (!client.allowed()) return view('paused', '此页面已暂停', '返回正在使用的页面，或在这里继续。', '继续使用后再说话');
+  if (client.pendingSwitch) return view('switching', '正在切换群组', '切换完成后将更新当前群，请稍候。', '正在切换，请稍候');
+  if (client.voice?.blocking) return view('voice', client.voice.current ? '正在语音切群' : '正在准备', '语音操作结束后，会恢复群内对讲。', '结束语音操作后再说话');
+  if (client.uiBlocked) return view('managing', '正在添加群组', '当前发言已停止。关闭面板后可返回对讲操作。', '先关闭添加群组面板');
+  if (client.mutationBusy) return view('updating', '正在更新群组', '正在更新群组信息，请稍候。', '操作进行中，请稍候');
+  if (!state) return !client.polling && client.noticeTone === 'error' ?
+    view('error', '群组暂未加载', '请检查网络，然后点击刷新重试。', '获取群组后再连接语音') :
+    view('loading', '正在获取群组', '获取完成后，会显示你已加入的群组。', '正在获取群组，请稍候');
+  if (!current) return view('empty', '先加入一个群', '创建你的小组，或输入伙伴分享的口令。', '加入群组后即可连接');
+  if (!client.connected) return view('error', '暂时无法连接', '检查网络后，点击刷新重试。', '连接恢复后再说话');
+  if (!audio?.desired) return view('disconnected', '尚未连接语音', '连接后可以收听，也可以按住按钮向群里说话。', '先连接群语音');
+  if (audio.phase === 'playback_blocked') return view('playback', '还差一步，就能收听', '点击“开始收听”，允许这个页面播放声音。', '先点击开始收听');
+  if (audio.phase === 'error') return view('error', '语音连接没有完成', '请检查网络和麦克风权限，再试一次。', '重试连接后再说话');
+  if (!audio.isReady()) return view('connecting', '正在连接语音', '连接完成后，就能收听并按住说话。', '正在连接，请稍候');
+  if (client.floorPhase === 'held' && client.pressed) return view('speaking', '你正在说话', '声音正在发送给当前群。松开按钮就会结束。', '松开按钮，结束这次发言', '松开结束');
+  if (client.floorPhase === 'acquiring' && client.pressed) return view('requesting', '正在准备发言', '请继续按住，看到“你正在说话”后再开口。', '请继续按住', '请继续按住');
+  if (client.acquiring || client.releasing) return view('ending', '正在结束发言', '马上就好，结束后可再次按住说话。', '请稍候再按');
+  const floor = current.floor;
+  if (floor && floor.device_id !== client.identity?.device.id && Date.parse(floor.expires_at) > client.serverNow()) {
+    return view('listening', `${floor.device_name || '伙伴'}正在发言`, audio.listeningMuted ? '收听目前已静音，可以取消静音听伙伴说话。' : '听伙伴说完，再按住按钮回应。', '伙伴正在发言，请稍候');
+  }
+  return view('ready', '可以说话了', audio.listeningMuted ? '收听已静音。按住按钮仍可向群里说话。' : '按住下方按钮，和当前群的伙伴说句话。');
+}
+
 function boot() {
   const $ = id => document.getElementById(id);
   const tab = randomID(); let identityChanged = false;
   const read = key => { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } };
-  let client;
+  let client, addPanelOpen = false, addMode = 'join', addReturnFocus = null, formMessage = '', copiedCode = '';
   const owns = () => {
     try { return !identityChanged && localStorage.getItem(ownerKey(client.identity.device.id)) === tab && read(IDENTITY_KEY)?.token === client.identity.token; }
     catch { return false; }
   };
   const text = (id, value) => { if ($(id).textContent !== String(value)) $(id).textContent = value; };
   const element = (tag, className, value) => { const node = document.createElement(tag); node.className = className; if (value !== undefined) node.textContent = value; return node; };
+  const canManage = () => client.allowed() && !client.mutationBusy && !client.pendingSwitch && !client.voice?.blocking;
+  function openAddPanel(mode = 'join', trigger = $('add-group-open')) {
+    if (!canManage()) return false;
+    addPanelOpen = true; addMode = mode; addReturnFocus = trigger; formMessage = '';
+    client.setUIBlocked(true); render();
+    $(mode === 'create' ? 'create-name' : 'join-code').focus();
+    return true;
+  }
+  function closeAddPanel() {
+    if (!addPanelOpen) return;
+    addPanelOpen = false; formMessage = ''; client.setUIBlocked(false); render();
+    const emptyTrigger = addReturnFocus === $('empty-create') || addReturnFocus === $('empty-join');
+    const target = emptyTrigger && client.state?.groups?.length ? $('add-group-open') : addReturnFocus || $('add-group-open');
+    (target.disabled ? $('current-name') : target).focus();
+  }
   function render() {
     const identity = client.identity;
     $('welcome').hidden = !!identity; $('workspace').hidden = !identity;
@@ -303,59 +361,76 @@ function boot() {
     text('lock-title', client.authInvalid ? '本机身份需要重新建立' : '此标签页已暂停操作');
     text('lock-description', client.authInvalid ? '服务不再识别此浏览器保存的身份。重新建立本机身份后，需要重新加入原来的群。' : identityChanged ? '本浏览器保存的身份已被其他标签页更新。重新载入后才能继续。' : '同一身份一次只在一个标签页操作，避免抢麦与切群互相干扰。');
     text('takeover', client.authInvalid ? '重新建立本机身份' : identityChanged ? '重新载入此页面' : '改用当前标签页');
-    const operable = client.allowed() && !client.mutationBusy && !client.pendingSwitch && !client.voice?.blocking;
+    const operable = canManage();
     for (const id of ['create-name', 'create-purpose', 'join-code', 'create-group', 'join-group']) $(id).disabled = !operable;
+    for (const id of ['add-group-open', 'empty-create', 'empty-join', 'create-mode', 'join-mode']) $(id).disabled = !operable;
+    $('add-group-panel').hidden = !addPanelOpen;
+    $('add-group-open').setAttribute('aria-expanded', String(addPanelOpen));
+    $('create-form').hidden = addMode !== 'create'; $('join-form').hidden = addMode !== 'join';
+    $('create-mode').setAttribute('aria-pressed', String(addMode === 'create'));
+    $('join-mode').setAttribute('aria-pressed', String(addMode === 'join'));
+    $('add-group-status').hidden = !formMessage; text('add-group-status', formMessage);
     $('identity-submit').disabled = client.mutationBusy;
     $('refresh-state').disabled = !client.allowed() || !!client.pendingSwitch || client.mutationBusy;
     $('retry-switch').hidden = !client.pendingSwitch;
     $('retry-switch').disabled = client.confirming || !client.active;
     $('notice').hidden = !client.notice; text('notice', client.notice); $('notice').dataset.tone = client.noticeTone;
     $('share-card').hidden = !client.share;
-    if (client.share) { text('share-name', client.share.name); text('share-code', client.share.code); }
+    if (client.share) {
+      text('share-name', client.share.name); text('share-code', client.share.code);
+      text('copy-code', copiedCode === client.share.code ? '已复制' : '复制口令');
+    }
     const state = client.state;
     const groups = state?.groups || [];
     const current = groups.find(group => group.id === state?.current_group_id);
+    const loadFailed = !state && !client.polling && client.noticeTone === 'error';
     const visibleGroups = filterGroups(groups, $('group-filter').value);
-    text('group-count', `${groups.length} 个`);
+    text('group-count', state ? `${groups.length} 个` : '—');
     $('group-filter').disabled = groups.length === 0;
-    text('group-filter-status', groups.length ? `显示 ${visibleGroups.length} / ${groups.length} 个已加入群` : '仅筛选已加入群的列表');
+    text('group-filter-status', !state ? '群组列表尚未加载' : groups.length ? `显示 ${visibleGroups.length} / ${groups.length} 个已加入群` : '仅筛选已加入群的列表');
     const list = $('group-list'); list.replaceChildren();
     for (const group of visibleGroups) {
       const row = element('li', `group-row${group.id === current?.id ? ' selected' : ''}`);
       const labels = element('div', 'group-labels'); labels.append(element('strong', '', group.name), element('span', '', `已加入成员 ${group.member_count} 人`));
       if (groupPurpose(group)) labels.append(element('span', 'group-purpose', group.purpose));
       const button = element('button', 'group-enter', group.id === current?.id ? '当前群' : '进入');
-      button.type = 'button'; button.disabled = !operable || group.id === current?.id;
+      button.type = 'button'; button.disabled = !operable || addPanelOpen || group.id === current?.id;
       button.addEventListener('click', () => { void client.switchGroup(group.id); });
       row.append(labels, button); list.append(row);
     }
-    $('empty-groups').hidden = groups.length > 0;
+    $('empty-groups').hidden = !state || groups.length > 0;
     $('empty-filter').hidden = groups.length === 0 || visibleGroups.length > 0;
-    text('current-name', client.pendingSwitch ? '正在确认切群结果' : current?.name || (identity ? '还没有当前群' : '先建立你的身份'));
-    text('current-detail', client.pendingSwitch ? '操作终态确认前，麦权按钮暂停使用' : current ? `已加入成员 ${current.member_count} 人 · 可手动切换当前群` : '创建群或输入口令，然后启用音频');
-    text('sync-label', !identity ? '本机演示' : !client.active ? '此标签页已暂停' : !state ? '等待状态同步' : !client.connected ? '连接未确认' : '服务端状态已同步');
-    text('floor-label', client.floorPhase === 'held' ? '你正在讲话' : client.floorPhase === 'acquiring' ? '正在申请麦权' : client.releasing || client.acquiring ? '正在结束上次申请' : '未按麦');
-    text('floor-description', client.floorPhase === 'held' ? '麦克风正在向当前群发送声音，松手立即停发' : current?.floor && current.floor.device_id !== identity?.device.id ? `${current.floor.device_name} 持有麦权` : '松手、失焦或离开页面都会结束申请与持有');
-    text('ptt-title', client.floorPhase === 'held' ? '你正在讲话' : client.floorPhase === 'acquiring' ? '申请中…' : '按住说话');
-    $('ptt').dataset.phase = client.floorPhase;
+    $('empty-actions').hidden = !state || groups.length > 0;
+    text('current-name', !state ? (loadFailed ? '群组暂未加载' : '正在获取群组') : current?.name || '你的第一个群组');
+    text('current-detail', !state ? (loadFailed ? '检查网络后可刷新重试' : '正在获取已加入的群组，请稍候') : client.pendingSwitch ? '正在切换，语音会稍作暂停' : current ? `已加入 ${current.member_count} 人` : '让要一起协作的伙伴，来到同一个频道');
+    $('current-purpose').hidden = !groupPurpose(current || {}); text('current-purpose', groupPurpose(current || {}));
+    text('sync-label', !client.active ? '此页面已暂停' : !state ? '正在获取群组' : !client.connected ? '连接待恢复' : '群组信息已更新');
+    const presentation = channelPresentation(client);
+    $('channel-panel').dataset.phase = presentation.phase;
+    text('floor-label', presentation.title); text('floor-description', presentation.detail);
+    text('ptt-title', presentation.button); text('ptt-hint', presentation.hint);
+    $('ptt').dataset.phase = presentation.phase;
     $('ptt').disabled = !client.pressed && !client.canPress();
     $('ptt').setAttribute('aria-pressed', String(client.pressed));
     const audio = client.audio;
-    text('audio-status', ({disabled:'未启用音频',waiting:'等待群状态',connecting:'音频连接中',ready:audio?.listeningMuted ? '收听已静音' : '可收听',playback_blocked:'播放受阻',error:'音频连接失败'})[audio?.phase] || '未启用音频');
+    const mediaReady = !!audio?.isReady();
+    $('audio-status').dataset.phase = mediaReady ? 'ready' : audio?.phase || 'disabled';
+    text('audio-status', mediaReady ? (audio.listeningMuted ? '已连接 · 收听静音' : '语音已连接') :
+      ({disabled:'语音未连接',waiting:'等待连接',connecting:'正在连接',ready:'正在恢复连接',playback_blocked:'需要允许播放',error:'连接未完成'})[audio?.phase] || '语音未连接');
     text('audio-message', audio?.message || '建议戴耳机，避免同机多端播放造成回声。');
     $('audio-enable').hidden = !!audio?.desired && audio?.phase !== 'error';
-    text('audio-enable', audio?.phase === 'error' ? '重试音频' : '启用音频');
-    $('audio-enable').disabled = !operable || !current || !client.connected;
+    text('audio-enable', audio?.phase === 'error' ? '重新连接' : '连接群语音');
+    $('audio-enable').disabled = !operable || addPanelOpen || !current || !client.connected;
     $('audio-disable').hidden = !audio?.desired;
     $('audio-play').hidden = audio?.phase !== 'playback_blocked';
     $('listen-muted').disabled = !audio?.desired; $('listen-muted').checked = !!audio?.listeningMuted;
     const voice=client.voice;
-    $('voice-start').disabled=!operable || !current || !client.connected || !voice?.available;
+    $('voice-start').disabled=!operable || addPanelOpen || !current || !client.connected || !voice?.available;
     $('voice-cancel').hidden=!voice?.current; $('voice-cancel').disabled=!voice?.canCancel;
+    text('voice-cancel', voice?.canCancel ? '取消语音切群' : voice?.current?.submitted ? '正在切换，请稍候' : '正在返回群组');
     $('voice-check').hidden=voice?.phase!=='checking' || !!voice?.initializing;
     text('voice-status',voice?.message || '正在检查语音切群。');
 
-    text('ptt-hint', client.pendingSwitch ? '等待切群终态' : !current ? '入群后可用' : !client.audio?.isReady() ? '先启用并连接音频' : client.floorPhase === 'held' ? '松手即释放' : '支持触屏、鼠标与空格键');
   }
   client = new ControlClient({authorize: owns, onChange: render, restorePending: id => read(pendingKey(id)),
     onIdentity(identity) { localStorage.setItem(IDENTITY_KEY, JSON.stringify(identity)); claimOwner(localStorage, identity.device.id, tab, true); },
@@ -369,10 +444,10 @@ function boot() {
   });
   client.voice=new VoiceCommandClient({control:client,audio:client.audio,request:(...args)=>client.request(...args),
     scopeRequest:()=>{const token=client.identity?.token;return(path,method,body,options)=>client.request(path,method,body,{...options,token});},onChange:render});
-  $('voice-start').addEventListener('click',()=>{void client.voice.start();});
+  $('voice-start').addEventListener('click',()=>{if (!client.uiBlocked) void client.voice.start();});
   $('voice-cancel').addEventListener('click',()=>client.voice.interrupt());
   $('voice-check').addEventListener('click',()=>{void client.voice.initialize();});
-  $('audio-enable').addEventListener('click', () => { void client.audio.enable(); });
+  $('audio-enable').addEventListener('click', () => { if (!client.uiBlocked) void client.audio.enable(); });
   bindAudioDisable($('audio-disable'), client);
   $('audio-play').addEventListener('click', () => { void client.audio.retryPlayback(); });
   $('listen-muted').addEventListener('change', () => client.audio.setListeningMuted($('listen-muted').checked));
@@ -381,19 +456,40 @@ function boot() {
   }
   $('create-purpose').addEventListener('input', () => $('create-purpose').setCustomValidity(validPurpose($('create-purpose').value) ? '' : '职责简介最多 256 个字符，不能包含控制字符。'));
   $('group-filter').addEventListener('input', render);
+  $('add-group-open').addEventListener('click', () => openAddPanel('join', $('add-group-open')));
+  $('empty-create').addEventListener('click', () => openAddPanel('create', $('empty-create')));
+  $('empty-join').addEventListener('click', () => openAddPanel('join', $('empty-join')));
+  $('add-group-close').addEventListener('click', closeAddPanel);
+  for (const mode of ['create', 'join']) $(mode + '-mode').addEventListener('click', () => {
+    if (!addPanelOpen || !canManage()) return;
+    addMode = mode; formMessage = ''; render(); $(mode === 'create' ? 'create-name' : 'join-code').focus();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && addPanelOpen) { event.preventDefault(); closeAddPanel(); }
+  });
   $('identity-form').addEventListener('submit', event => { event.preventDefault(); void client.createIdentity($('nickname').value.trim()); });
   $('create-form').addEventListener('submit', async event => {
     event.preventDefault();
+    if (!addPanelOpen || addMode !== 'create' || !canManage()) return;
+    formMessage = '';
     if (await client.createGroup($('create-name').value.trim(), $('create-purpose').value)) {
       $('create-name').value = ''; $('create-purpose').value = ''; $('create-purpose').setCustomValidity('');
-    }
+      closeAddPanel();
+    } else { formMessage = client.notice || '没有创建成功，请检查填写内容后重试。'; render(); }
   });
-  $('join-form').addEventListener('submit', async event => { event.preventDefault(); if (await client.joinGroup($('join-code').value.trim())) $('join-code').value = ''; });
+  $('join-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!addPanelOpen || addMode !== 'join' || !canManage()) return;
+    formMessage = '';
+    if (await client.joinGroup($('join-code').value.trim())) { $('join-code').value = ''; closeAddPanel(); }
+    else { formMessage = client.notice || '没有加入成功，请检查口令后重试。'; render(); }
+  });
   $('retry-switch').addEventListener('click', () => { void client.confirmSwitch(); });
   $('refresh-state').addEventListener('click', () => { void client.refresh(); });
   $('copy-code').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(client.share.code); client.inform('口令已复制，请只分享给要加入的伙伴。', 'success'); }
-    catch { client.inform('浏览器无法自动复制，请选择上面的口令手动复制。'); }
+    const code = client.share?.code; if (!code) return;
+    try { await navigator.clipboard.writeText(code); copiedCode = code; client.inform('口令已复制，请只分享给要加入的伙伴。', 'success'); }
+    catch { client.inform('暂时无法自动复制，请选中口令手动复制。', 'error'); }
   });
   $('takeover').addEventListener('click', () => {
     if (client.authInvalid) {
@@ -410,7 +506,7 @@ function boot() {
   $('ptt').addEventListener('keyup', event => { if ([' ', 'Enter'].includes(event.key)) { event.preventDefault(); endPress(); } });
   $('ptt').addEventListener('blur', endPress);
   window.addEventListener('blur', endPress);
-  window.addEventListener('offline', () => { client.voice.interrupt('浏览器离线，语音指令已停止。'); client.connected = false; client.cancelFloor('浏览器已离线，麦权已在本地结束。'); client.audio.suspend('浏览器已离线。'); });
+  window.addEventListener('offline', () => { client.voice.interrupt('网络已断开，语音切群已停止。'); client.connected = false; client.cancelFloor('网络已断开，发言已经停止。'); client.audio.suspend('网络已断开。'); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) { client.voice.interrupt('页面隐藏，语音指令已停止。'); endPress(); client.audio.suspend('页面隐藏，音频已停止。'); } else if (client.allowed()) void client.refresh(); });
   window.addEventListener('online', () => { if (client.allowed()) void client.refresh(); });
   window.addEventListener('pagehide', () => { client.voice.interrupt('页面已离开，语音指令已停止。'); endPress(); client.audio.suspend(); if (client.identity && owns()) localStorage.removeItem(ownerKey(client.identity.device.id)); });
@@ -420,9 +516,9 @@ function boot() {
     if (event.key === IDENTITY_KEY) { identityChanged = true; client.suspend('身份已在其他标签页更新，此页面已暂停。'); }
     else if (event.key === pendingKey(client.identity.device.id)) {
       client.pendingSwitch = read(pendingKey(client.identity.device.id));
-      if (client.active) client.suspend('另一标签页更新了切群操作，请重新接管并确认终态后继续。');
+      if (client.active) client.suspend('另一页面更新了群组切换，请在这里继续确认。');
     }
-    else if (event.key === ownerKey(client.identity.device.id) && event.newValue !== tab) client.suspend('另一标签页已接管此身份，本页已退出麦权操作。');
+    else if (event.key === ownerKey(client.identity.device.id) && event.newValue !== tab) client.suspend('已在另一页面继续使用，这里已停止发言。');
   });
   setInterval(() => {
     if (client.identity && client.active && !owns()) client.suspend('此身份已由另一标签页使用。');

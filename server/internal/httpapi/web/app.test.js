@@ -182,6 +182,23 @@ test('failed refresh cancels local floor and blocks new presses until resynced',
   assert.equal(h.client.connected, false); assert.equal(h.client.pressed, false); assert.equal(h.client.canPress(), false);
 });
 
+test('failed refresh followed by a new server epoch restores a success notice while remaining unpressed', async () => {
+  let reads = 0;
+  const h = setup(call => {
+    if (call.url.endsWith('/floor/acquire')) return response(200, grant(call.body));
+    if (call.url.endsWith('/state')) return ++reads === 1 ? response(503, {error: {code: 'unavailable', message: '连接暂时不可用'}}) :
+      response(200, state({server_epoch: 'restarted_epoch'}));
+    return response(200, {released: true});
+  });
+  await h.client.pressFloor(); assert.equal(h.client.floorPhase, 'held');
+  await h.client.refresh(); assert.equal(h.client.noticeTone, 'error'); assert.equal(h.client.pressed, false);
+  await h.client.refresh(); await flush();
+  assert.equal(h.client.connected, true); assert.equal(h.client.state.server_epoch, 'restarted_epoch');
+  assert.equal(h.client.noticeTone, 'success'); assert.match(h.client.notice, /恢复/);
+  assert.equal(h.client.pressed, false); assert.equal(h.client.floorPhase, 'idle'); assert.equal(h.client.lease, null);
+  assert.equal(h.calls.filter(call => call.url.endsWith('/floor/acquire')).length, 1);
+});
+
 test('same-identity tabs cannot claim ownership together; takeover suspends and releases', async () => {
   const map = new Map(); const storage = {getItem: key => map.get(key) || null, setItem: (key, value) => map.set(key, value)};
   assert.equal(claimOwner(storage, 'device_1', 'tab_a'), true);

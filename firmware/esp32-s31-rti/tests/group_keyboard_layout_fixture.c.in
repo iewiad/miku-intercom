@@ -12,6 +12,8 @@
  * Only the controller/worker boundary is replaced; no HTTP or board access. */
 LV_FONT_DECLARE(rti_font_source_han_sans_sc_16_gb2312);
 LV_FONT_DECLARE(shenglu_brand_24);
+LV_FONT_DECLARE(shenglu_ui_24);
+LV_FONT_DECLARE(shenglu_group_20_gb2312);
 #define TRANSCRIPT_FONT (&rti_font_source_han_sans_sc_16_gb2312)
 typedef int esp_err_t;
 #define ESP_OK 0
@@ -39,12 +41,14 @@ static bool group_speaking, group_switch_pending;
 static bool group_joining, group_voice_active, group_voice_can_cancel;
 static bool group_command_pending, group_voice_submitted;
 static bool group_choices_valid = true, group_stop_action = true, group_transport_ready = true;
+static bool group_candidate_valid = true;
 static uint32_t group_command_revision, group_command_pending_revision;
 static char group_command_detail_text[192], submitted_code[9];
 static struct {
-    bool known; size_t count; char current_id[81];
+    bool known, can_select, switching; size_t count; char current_id[81];
     struct { char id[81], name[129]; } items[2];
-} choices = { true, 2, "a", {{"a", "后勤组"}, {"b", "验收测试群"}} }, *group_choices = &choices;
+} choices = { .known = true, .can_select = true, .count = 2, .current_id = "a",
+              .items = {{"a", "后勤组"}, {"b", "验收测试群"}} }, *group_choices = &choices;
 static void *group_command_context;
 typedef void (*board_conversation_action_cb_t)(bool, void *);
 typedef void (*board_ptt_action_cb_t)(bool, void *);
@@ -64,9 +68,7 @@ static esp_err_t voice_action(bool cancel, void *context) {
 }
 static esp_err_t (*group_join_callback)(const char *, void *) = join_action;
 static esp_err_t (*group_voice_callback)(bool, void *) = voice_action;
-static bool group_is_switching(void) { return false; }
 static void group_force_release(void) { ++release_calls; }
-static void group_render_controls(void) {}
 /* Dropdown selection is outside these modal/volume tests; LVGL widgets and
  * production group-page/slider initialization and event handlers remain real. */
 static void group_dropdown_event_cb(lv_event_t *event) { (void)event; }
@@ -75,13 +77,35 @@ static bool bsp_display_lock(int timeout) { (void)timeout; return true; }
 static void bsp_display_unlock(void) {}
 
 /* @maps */
+/* @font_coverage */
+/* @dynamic_coverage */
 /* @production */
 
 static lv_indev_t *pointer;
 static lv_indev_data_t input;
+static uint32_t framebuffer[800 * 480];
+static const char *preview_directory;
+static void check_tree(lv_obj_t *parent);
 static void read_pointer(lv_indev_t *indev, lv_indev_data_t *data) { (void)indev; *data = input; }
 static void flush(lv_display_t *display, const lv_area_t *area, uint8_t *pixels) {
-    (void)area; (void)pixels; lv_display_flush_ready(display);
+    for(int y = area->y1; y <= area->y2; ++y) {
+        memcpy(&framebuffer[y * 800 + area->x1], pixels, (size_t)lv_area_get_width(area) * 4);
+        pixels += lv_area_get_width(area) * 4;
+    }
+    lv_display_flush_ready(display);
+}
+static void preview(const char *name) {
+    if(!preview_directory) return;
+    lv_tick_inc(300); lv_timer_handler();
+    lv_obj_invalidate(lv_screen_active()); lv_refr_now(NULL);
+    char path[1024]; snprintf(path, sizeof(path), "%s/board-%s.ppm", preview_directory, name);
+    FILE *file = fopen(path, "wb"); assert(file);
+    fputs("P6\n800 480\n255\n", file);
+    for(size_t i = 0; i < 800 * 480; ++i) {
+        unsigned char rgb[] = {framebuffer[i] >> 16, framebuffer[i] >> 8, framebuffer[i]};
+        assert(fwrite(rgb, 1, 3, file) == 3);
+    }
+    assert(fclose(file) == 0);
 }
 static void tap(int x, int y) {
     assert(x >= 0 && x < 800 && y >= 0 && y < 480);
@@ -145,6 +169,19 @@ static void clean_screen(void) {
     group_ptt_button = lv_button_create(lv_screen_active());
     group_status_label = lv_label_create(lv_screen_active());
     group_action_label = lv_label_create(lv_screen_active());
+    group_switch_button = lv_button_create(lv_screen_active());
+    group_switch_label = lv_label_create(group_switch_button);
+    group_ptt_label = lv_label_create(group_ptt_button);
+    choices.known = true; choices.can_select = true; choices.switching = false;
+    group_choices_valid = true; group_stop_action = true; group_transport_ready = true;
+    group_joining = false; group_modal = GROUP_MODAL_NONE; group_switch_pending = false;
+    strlcpy(choices.current_id, "a", sizeof(choices.current_id));
+    strlcpy(choices.items[0].name, "后勤组", sizeof(choices.items[0].name));
+    /* This fixture replaces the worker directory publication. Give the real
+     * dropdown the same authorized options without inventing a live backend. */
+    lv_dropdown_set_options(group_dropdown, "后勤组\n验收测试群");
+    lv_dropdown_set_text_static(group_dropdown, NULL); lv_dropdown_set_selected(group_dropdown, 0);
+    strlcpy(choices.items[1].name, "验收测试群", sizeof(choices.items[1].name));
 }
 static void open_join(void) {
     lv_obj_t *opener = lv_button_create(lv_screen_active());
@@ -160,6 +197,8 @@ static bool test_join(void) {
     assert(inside(group_join_textarea, "join input"));
     assert(inside(group_command_submit, "join submit"));
     assert(inside(group_command_cancel, "join cancel"));
+    check_tree(group_command_overlay);
+    preview("join");
     /* Use real pointer hit testing and LVGL keyboard processing, not a synthetic
      * READY event: type eight letters, then tap the actual bottom-row OK key. */
     for(const char *letter = "ABCDEFGH"; *letter; ++letter) {
@@ -203,7 +242,9 @@ static bool test_voice(void) {
     assert(inside(group_command_current, "voice current group"));
     assert(inside(group_command_submit, "voice start"));
     assert(inside(group_command_cancel, "voice cancel"));
+    check_tree(group_command_overlay);
     assert(strcmp(lv_label_get_text(group_command_current), "当前群：后勤组") == 0);
+    preview("voice");
     lv_area_t area; lv_obj_get_coords(group_command_submit, &area);
     tap((area.x1 + area.x2) / 2, (area.y1 + area.y2) / 2);
     assert(voice_calls == 1 && group_command_pending);
@@ -303,6 +344,169 @@ static bool test_volume(void) {
     puts("Group volume: loaded 0/30/55/100 retained; real slider drag applies live without persistence, release saves final value once.");
     return true;
 }
+static bool disjoint(lv_obj_t *a, lv_obj_t *b) {
+    lv_area_t x, y; lv_obj_get_coords(a, &x); lv_obj_get_coords(b, &y);
+    return x.x2 < y.x1 || y.x2 < x.x1 || x.y2 < y.y1 || y.y2 < x.y1;
+}
+static void check_tree(lv_obj_t *parent) {
+    for(uint32_t i = 0; i < lv_obj_get_child_count(parent); ++i) {
+        lv_obj_t *child = lv_obj_get_child(parent, i);
+        if(lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) continue;
+        assert(inside(child, "page/modal child"));
+        if(lv_obj_check_type(child, &lv_label_class)) {
+            const lv_font_t *font = lv_obj_get_style_text_font(child, 0);
+            const unsigned char *p = (const unsigned char *)lv_label_get_text(child);
+            while(*p) {
+                uint32_t point = *p++;
+                if(point >= 0xc0) {
+                    unsigned tail = point < 0xe0 ? 1 : point < 0xf0 ? 2 : 3;
+                    point &= (1u << (6 - tail)) - 1;
+                    while(tail--) point = (point << 6) | (*p++ & 0x3f);
+                }
+                if(point == '\n') continue;
+                lv_font_glyph_dsc_t glyph = {0};
+                if(!lv_font_get_glyph_dsc(font, &glyph, point, 0) || glyph.is_placeholder) {
+                    fprintf(stderr, "Missing visible glyph U+%04X in %.80s\n", (unsigned)point, lv_label_get_text(child));
+                    assert(!"missing UI glyph");
+                }
+            }
+            for(uint32_t j = i + 1; j < lv_obj_get_child_count(parent); ++j) {
+                lv_obj_t *other = lv_obj_get_child(parent, j);
+                if(lv_obj_check_type(other, &lv_label_class) && !lv_obj_has_flag(other, LV_OBJ_FLAG_HIDDEN)) {
+                    if(!disjoint(child, other)) fprintf(stderr, "Overlapping labels: %.80s / %.80s\n",
+                        lv_label_get_text(child), lv_label_get_text(other));
+                    assert(disjoint(child, other));
+                }
+            }
+        }
+        check_tree(child);
+    }
+}
+static void check_ui_glyphs(void) {
+    const unsigned char *p = (const unsigned char *)font_coverage;
+    unsigned count = 0;
+    while(*p) {
+        uint32_t point = *p++;
+        if(point >= 0xc0) {
+            unsigned tail = point < 0xe0 ? 1 : point < 0xf0 ? 2 : 3;
+            point &= (1u << (6 - tail)) - 1;
+            while(tail--) point = (point << 6) | (*p++ & 0x3f);
+        }
+        lv_font_glyph_dsc_t glyph = {0};
+        assert(lv_font_get_glyph_dsc(&shenglu_ui_24, &glyph, point, 0));
+        assert(!glyph.is_placeholder && glyph.resolved_font == &shenglu_ui_24);
+        ++count;
+    }
+    printf("UI 24px subset: %u non-ASCII source glyphs verified; no brand-font fallback.\n", count);
+}
+static void check_dynamic_glyphs(void) {
+    const unsigned char *p = (const unsigned char *)dynamic_coverage;
+    unsigned count = 0;
+    for(unsigned ascii = 32; ascii <= 126; ++ascii) {
+        lv_font_glyph_dsc_t glyph = {0};
+        assert(lv_font_get_glyph_dsc(&shenglu_group_20_gb2312, &glyph, ascii, 0) && !glyph.is_placeholder);
+    }
+    while(*p) {
+        uint32_t point = *p++;
+        if(point >= 0xc0) {
+            unsigned tail = point < 0xe0 ? 1 : point < 0xf0 ? 2 : 3;
+            point &= (1u << (6 - tail)) - 1;
+            while(tail--) point = (point << 6) | (*p++ & 0x3f);
+        }
+        lv_font_glyph_dsc_t old = {0}, next = {0};
+        const bool old_available = lv_font_get_glyph_dsc(TRANSCRIPT_FONT, &old, point, 0) && !old.is_placeholder;
+        const bool next_available = lv_font_get_glyph_dsc(&shenglu_group_20_gb2312, &next, point, 0) && !next.is_placeholder;
+        assert(old_available == next_available);
+        if(next_available) assert(next.resolved_font == &shenglu_group_20_gb2312);
+        ++count;
+    }
+    lv_font_glyph_dsc_t emoji = {0};
+    assert(!lv_font_get_glyph_dsc(&shenglu_group_20_gb2312, &emoji, 0x1f600, 0) || emoji.is_placeholder);
+    printf("Dynamic group 20px/2bpp: %u original symbols + 95 ASCII checked against 16px coverage; no emoji expansion.\n", count);
+}
+static unsigned page_press, page_release;
+static void page_ptt(bool pressed, void *context) {
+    (void)context; if(pressed) ++page_press; else ++page_release;
+}
+static bool test_group_page(void) {
+    assert(board_display_show_group(NULL, page_ptt, NULL, volume_action, 38, &volume_calls) == ESP_OK);
+    choices.known = choices.can_select = true; choices.switching = false;
+    group_choices_valid = group_candidate_valid = true;
+    strlcpy(choices.current_id, "a", sizeof(choices.current_id));
+    strlcpy(choices.items[0].name, "后勤组", sizeof(choices.items[0].name));
+    lv_dropdown_set_options(group_dropdown, "后勤组\n验收测试群");
+    lv_dropdown_set_text_static(group_dropdown, NULL); lv_dropdown_set_selected(group_dropdown, 0);
+    group_stop_action = true;
+    assert(board_display_set_group_state(NULL, "正在连接群语音，请稍候", false, false) == ESP_OK);
+    lv_obj_update_layout(lv_screen_active()); preview("connecting");
+    assert(lv_obj_has_state(group_ptt_button, LV_STATE_DISABLED));
+    assert(board_display_set_group_state(NULL, "按住说话，与当前群组沟通", true, false) == ESP_OK);
+    lv_obj_update_layout(lv_screen_active());
+    check_tree(lv_screen_active()); check_ui_glyphs(); check_dynamic_glyphs();
+    assert(lv_obj_get_style_text_font(group_name_label, 0) == &shenglu_group_20_gb2312);
+    assert(lv_obj_get_style_text_font(group_ptt_label, 0) == &shenglu_ui_24);
+    assert(lv_obj_get_style_text_font(group_status_label, 0) == TRANSCRIPT_FONT);
+    assert(disjoint(group_name_label, group_status_label) && disjoint(group_name_label, group_detail_label));
+    lv_obj_t *buttons[] = {lv_obj_get_parent(group_action_label), group_ptt_button,
+                          group_voice_button, group_join_button, group_dropdown, group_switch_button};
+    for(size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); ++i) {
+        assert(inside(buttons[i], "page control"));
+        assert(lv_obj_get_width(buttons[i]) >= 44 && lv_obj_get_height(buttons[i]) >= 44);
+        for(size_t j = i + 1; j < sizeof(buttons) / sizeof(buttons[0]); ++j) assert(disjoint(buttons[i], buttons[j]));
+    }
+    lv_area_t ptt; lv_obj_get_coords(group_ptt_button, &ptt);
+    assert(lv_area_get_width(&ptt) >= 500 && lv_area_get_height(&ptt) >= 150);
+    page_press = page_release = 0;
+    pointer_state(ptt.x1 + 4, ptt.y1 + 4, LV_INDEV_STATE_PRESSED);
+    assert(page_press == 1 && group_pressed);
+    pointer_state(ptt.x2 - 4, ptt.y2 - 4, LV_INDEV_STATE_RELEASED);
+    assert(page_release == 1 && !group_pressed);
+    preview("ready");
+    assert(board_display_set_group_state(NULL, "松手后结束本次发言", true, true) == ESP_OK);
+    lv_obj_update_layout(lv_screen_active()); preview("speaking");
+    assert(strcmp(lv_label_get_text(group_status_label), "正在发言") == 0);
+    /* Long UTF-8 names stay within the fixed label, including the old 42-char
+     * boundary fixture; no small four-character brand font renders them. */
+    for(size_t i = 0; i < 32; ++i) memcpy(choices.items[0].name + i * 3, "验", 3);
+    choices.items[0].name[96] = 0;
+    char long_options[300]; snprintf(long_options, sizeof(long_options), "%s\n验收测试群", choices.items[0].name);
+    lv_dropdown_set_options(group_dropdown, long_options); group_render_current();
+    lv_obj_update_layout(lv_screen_active()); check_tree(lv_screen_active());
+    assert(lv_obj_get_height(group_name_label) == 32 && lv_label_get_long_mode(group_name_label) == LV_LABEL_LONG_MODE_DOTS);
+    preview("long-name");
+    for(size_t i = 0; i < 42; ++i) memcpy(choices.items[0].name + i * 3, "验", 3);
+    choices.items[0].name[126] = 0; group_render_current();
+    lv_obj_update_layout(lv_screen_active()); check_tree(lv_screen_active());
+    choices.items[0].name[96] = 0; group_render_current();
+    lv_dropdown_set_options(group_dropdown, long_options);
+    lv_obj_remove_state(group_dropdown, LV_STATE_DISABLED); lv_dropdown_open(group_dropdown);
+    group_render_controls(); lv_obj_update_layout(lv_screen_active());
+    assert(inside(lv_dropdown_get_list(group_dropdown), "upward group list"));
+    assert(lv_obj_has_state(group_ptt_button, LV_STATE_DISABLED));
+    preview("group-list"); lv_dropdown_close(group_dropdown);
+    group_voice_active = true; group_render_controls();
+    assert(lv_obj_has_state(group_ptt_button, LV_STATE_DISABLED));
+    assert(strcmp(lv_label_get_text(group_status_label), "语音切群进行中") == 0);
+    group_voice_active = false; group_render_controls();
+    lv_obj_t *slider = group_slider(); lv_area_t track; lv_obj_get_coords(slider, &track);
+    const int x = (track.x1 + track.x2) / 2;
+    unsigned hit_rows = 0;
+    for(int y = track.y1 - 17; y <= track.y2 + 17; ++y) {
+        lv_point_t point = {x, y};
+        assert(y >= 0 && y < 480 && y > 418);
+        assert(lv_obj_hit_test(slider, &point)); ++hit_rows;
+    }
+    assert(hit_rows >= 44);
+    const int touch_rows[] = {track.y1 - 17, track.y2 + 17};
+    for(size_t i = 0; i < 2; ++i) {
+        volume_persists = 0;
+        pointer_state(x, touch_rows[i], LV_INDEV_STATE_PRESSED);
+        pointer_state(x, touch_rows[i], LV_INDEV_STATE_RELEASED);
+        assert(volume_persists == 1 && last_persisted_volume == (uint8_t)lv_slider_get_value(slider));
+    }
+    puts("Group page: bounded controls/long Chinese, non-overlap, real PTT release, upward list gates and 44px slider pointer targets passed.");
+    return true;
+}
 int main(int argc, char **argv) {
     lv_init();
     lv_display_t *display = lv_display_create(800, 480);
@@ -314,11 +518,13 @@ int main(int argc, char **argv) {
     lv_indev_set_display(pointer, display);
     lv_indev_set_read_cb(pointer, read_pointer);
     lv_indev_set_mode(pointer, LV_INDEV_MODE_EVENT);
-    const char *only = argc > 1 ? argv[1] : NULL;
+    if(argc == 3 && !strcmp(argv[1], "--preview-dir")) preview_directory = argv[2];
+    const char *only = argc > 1 && !preview_directory ? argv[1] : NULL;
     if((!only || !strcmp(only, "join")) && !test_join()) return EXIT_FAILURE;
     if((!only || !strcmp(only, "wifi")) && !test_wifi()) return EXIT_FAILURE;
     if(!only && !test_voice()) return EXIT_FAILURE;
     if(!only && !test_volume()) return EXIT_FAILURE;
+    if(!only && !test_group_page()) return EXIT_FAILURE;
     lv_deinit();
     return EXIT_SUCCESS;
 }

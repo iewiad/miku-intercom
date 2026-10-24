@@ -87,6 +87,7 @@ test('product purpose rendering and filtering are text-only, retain the current 
     assert.equal($('empty-groups').hidden, false); assert.equal($('empty-filter').hidden, true);
     $('group-filter').value = ''; state = {...state, groups: [{id: 'current', name: '当前群', member_count: 1}]};
     intervals[0](); await flush();
+    await $('add-group-open').dispatch('click'); await $('create-mode').dispatch('click');
     $('create-name').value = '新群'; $('create-purpose').value = '  Equipment Support  ';
     await $('create-form').dispatch('submit'); await flush();
     assert.equal($('create-name').value, '新群'); assert.equal($('create-purpose').value, '  Equipment Support  ');

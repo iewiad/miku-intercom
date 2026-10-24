@@ -68,7 +68,7 @@ export class VoiceCommandClient {
       peer.onconnectionstatechange=()=>{
         if(!this.currentSession(s))return;
         if(['failed','closed','disconnected'].includes(peer.connectionState))void this.finish(s,'语音连接中断，正在恢复。');
-        else if(peer.connectionState==='connected'&&!s.updated){this.phase='connecting';this.message='语音媒体已连接，等待指令通道。';this.emit();}
+        else if(peer.connectionState==='connected'&&!s.updated){this.phase='connecting';this.message='语音已连接，正在准备识别。';this.emit();}
       };
       const channel=peer.createDataChannel('oai-events',{ordered:true});s.channel=channel;
       channel.onopen=()=>this.ensureSession(s);
@@ -76,7 +76,7 @@ export class VoiceCommandClient {
       channel.onclose=()=>{if(this.currentSession(s))void this.finish(s,'语音连接已关闭，正在恢复。');};
       channel.onerror=()=>{if(this.currentSession(s))void this.finish(s,'语音连接失败，正在恢复。');};
       track.onended=()=>{if(this.currentSession(s)&&!s.accepted)void this.finish(s,'麦克风已停止，正在恢复。');};
-      this.phase='ice';this.message='正在收集语音连接信息。';this.emit();
+      this.phase='ice';this.message='正在准备语音连接，请稍候。';this.emit();
       await peer.setLocalDescription(await peer.createOffer());
       await this.waitICE(s);if(!this.currentSession(s))return;
       this.phase='connecting';this.message='正在连接语音服务。';this.emit();
@@ -84,7 +84,7 @@ export class VoiceCommandClient {
       if(!this.currentSession(s))return;
       if(answer.type!=='answer'||typeof answer.sdp!=='string')throw new Error('invalid RTA answer');
       await peer.setRemoteDescription(answer);
-      if(this.currentSession(s)&&!s.updated){this.phase='connecting';this.message='正在连接语音媒体与指令通道。';this.emit();}
+      if(this.currentSession(s)&&!s.updated){this.phase='connecting';this.message='正在连接语音识别，请稍候。';this.emit();}
     }catch(error){if(this.currentSession(s))await this.finish(s,voiceErrorText(error));}
   }
   waitICE(s){
