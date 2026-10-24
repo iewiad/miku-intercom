@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Exercise production controller command lifecycle with real cJSON and SDK doubles.
+"""Exercise production group boot/volume and command lifecycle with SDK doubles.
 
 No real RTA, networking, tasks, audio, UI rendering, or NVS writes occur. The
 journal save is an asserted boundary; its durability is covered separately.
+Boot uses real app/controller functions, a board_audio_init double returning an
+already loaded volume, and a faithful same-value nonpersist UI callback. Real
+LVGL slider initialization/drag/release is covered by run_group_keyboard_layout.
 Use --cjson-dir for an already installed cJSON source; nothing is downloaded.
 """
 from pathlib import Path
@@ -30,10 +33,21 @@ def main():
         raise RuntimeError('production intent type missing')
     names = ('intent_cancel', 'intent_queue_switch', 'string_field', 'command_event', 'finish_command',
              'join_command', 'process_command', 'group_controller_join_group', 'group_controller_voice_action',
-             'prepare_selected_switch')
+             'prepare_selected_switch', 'volume', 'group_controller_init', 'group_controller_print_status')
     fixture = Path(__file__).with_name('group_command_flow_fixture.c.in').read_text()
     fixture = fixture.replace('/* @production-intent */', intent.group())
-    fixture = fixture.replace('/* @production-functions */', '\n\n'.join(extract_function(production,n) for n in names))
+    for header, name in [('board_audio.h', 'board_audio_t'), ('webrtc_peer.h', 'webrtc_group_stats_t')]:
+        declaration = re.search(r'typedef struct \{[^}]+\} ' + name + r';', (project / 'main' / header).read_text())
+        if not declaration:
+            raise RuntimeError(f'production {name} type missing')
+        fixture = fixture.replace(f'/* @production-{name} */', declaration.group())
+    audio_source = (project / 'main/board_audio.c').read_text()
+    fixture = fixture.replace('/* @production-audio-default */', re.search(r'^#define RTI_AUDIO_DEFAULT_VOLUME \d+$', audio_source, re.M).group())
+    fixture = fixture.replace('/* @production-functions */', extract_function(audio_source, 'board_audio_get_output_volume') + '\n\n' +
+                              '\n\n'.join(extract_function(production,n) for n in names))
+    app_source = (project / 'main/app_main.c').read_text()
+    fixture = fixture.replace('/* @production-app-boot */', '\n\n'.join(extract_function(app_source, name)
+                              for name in ('enter_voice_after_wifi', 'app_main')))
     with tempfile.TemporaryDirectory(prefix='intercom-command-flow-') as tmp:
         tmp = Path(tmp)
         (tmp/'esp_err.h').write_text('#pragma once\ntypedef int esp_err_t;\n#define ESP_OK 0\n#define ESP_FAIL 1\n#define ESP_ERR_INVALID_ARG 2\n#define ESP_ERR_INVALID_STATE 3\n#define ESP_ERR_NO_MEM 4\n#define ESP_ERR_INVALID_RESPONSE 5\n')

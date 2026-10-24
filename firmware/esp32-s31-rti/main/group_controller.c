@@ -1826,12 +1826,12 @@ esp_err_t group_controller_init(const board_audio_t *board)
         return ESP_ERR_NO_MEM;
     }
     audio = *board;
-    (void)board_audio_set_output_volume(&audio, 0, false);
+    const uint8_t initial_volume = board_audio_get_output_volume(&audio);
     esp_err_t err = esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, wifi_event, NULL);
     if (err != ESP_OK) {
         return err;
     }
-    err = board_display_show_group(group_controller_action, group_controller_ptt, group_controller_switch_group, volume, 0, NULL);
+    err = board_display_show_group(group_controller_action, group_controller_ptt, group_controller_switch_group, volume, initial_volume, NULL);
     if (err == ESP_OK) {
         err = board_display_set_group_commands(group_controller_join_group, group_controller_voice_action, NULL);
     }
@@ -1980,7 +1980,7 @@ void group_controller_print_status(void)
     webrtc_peer_group_get_stats(&stats);
     printf("INTERCOM_STATUS {\"configured\":%s,\"desired\":%s,\"connected\":%s,\"pressed\":%s,\"held\":%s,\"busy\":%s,"
            "\"source_frames\":%" PRIu64 ",\"sent_packets\":%" PRIu64 ",\"received_packets\":%" PRIu64 ",\"decoded_samples\":%" PRIu64 ","
-           "\"source_rms_peak\":%.6f,\"remote_rms_peak\":%.6f,"
+           "\"source_rms_peak\":%.6f,\"remote_rms_peak\":%.6f,\"output_volume\":%u,"
            "\"ptt_id\":%" PRIu32 ",\"ptt_start_us\":%" PRId64 ",\"ptt_end_us\":%" PRId64 ","
            "\"ptt_raw_n\":%" PRIu64 ",\"ptt_raw_peak\":%.6f,\"ptt_raw_mean\":%.6f,"
            "\"ptt_enc_n\":%" PRIu64 ",\"ptt_enc_peak\":%.6f,\"ptt_enc_mean\":%.6f,\"heap_internal_free\":%u,"
@@ -1990,7 +1990,7 @@ void group_controller_print_status(void)
            group_config_ready() ? "true" : "false", snapshot.desired ? "true" : "false", connected ? "true" : "false",
            snapshot.pressed ? "true" : "false", holding ? "true" : "false", snapshot.busy ? "true" : "false",
            stats.source_frames, stats.sent_packets, stats.received_packets, stats.decoded_samples,
-           (double)stats.source_rms_peak, (double)stats.remote_rms_peak,
+           (double)stats.source_rms_peak, (double)stats.remote_rms_peak, (unsigned)board_audio_get_output_volume(&audio),
            stats.ptt_id, stats.ptt_start_us, stats.ptt_end_us,
            stats.ptt_raw_frames, (double)stats.ptt_raw_rms_peak,
            stats.ptt_raw_frames ? stats.ptt_raw_rms_sum / stats.ptt_raw_frames : 0.0,

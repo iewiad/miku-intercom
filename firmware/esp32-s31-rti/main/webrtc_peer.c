@@ -10,6 +10,7 @@
 #include "app_state.h"
 #include "app_brand.h"
 #include "board_display.h"
+#include "group_audio_level.h"
 #include "cJSON.h"
 #include "esp_aec.h"
 #include "esp_attr.h"
@@ -1932,6 +1933,9 @@ static void microphone_task(void *arg)
                 memset(clean_accumulator, 0, rtc.encoder_input_size);
             }
             if (rtc.group_mode) {
+                // Only this already-admitted encoder frame is scaled. Leaving
+                // the accumulator tail untouched prevents double amplification.
+                group_audio_level_apply(clean_accumulator, encoder_samples);
                 const float rms = pcm_rms(clean_accumulator, encoder_samples);
                 group_ptt_record_rms(encode_epoch, rms, true);
             }

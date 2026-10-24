@@ -6,6 +6,7 @@ idf_component_register(
         "board_display.c"
         "rti_credentials.c"
         "group_config.c"
+        "group_audio_level.c"
         "group_controller.c"
         "group_command_state.c"
         "group_switch_journal.c"

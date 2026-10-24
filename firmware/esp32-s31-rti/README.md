@@ -102,6 +102,20 @@ boundaries differ, and the encoder count does not assert a successful send.
 The older `source_rms_peak` is cumulative for the Peer, including unpressed
 capture, so it cannot establish the level of one particular transmission.
 
+Group uplink applies a bounded 8x gain (+18.06 dB) to each admitted encoder
+frame. It reduces that frame's common gain when needed to keep its absolute
+peak below 29490 (about 0.9 full scale), preserving the waveform without hard
+clipping. Only the current frame is scaled, so accumulated future samples are
+not amplified twice. `ptt_enc_*` measures the result after this processing.
+There is no additional voice/noise gate; background noise receives the same
+bounded gain, and large transients can lower gain for their entire frame.
+RTA and command audio do not use this group-level adjustment.
+
+Group startup keeps the output volume already loaded by `board_audio_init`
+instead of forcing a temporary mute. The group UI and `output_volume` UART
+field reflect that applied value; only an explicit user adjustment persists
+a new value.
+
 The following is the historical **PR #10 first-slice** evidence, not validation
 of the current multi-group image. Its application is **2,606,960 B**, SHA256:
 
@@ -374,6 +388,7 @@ the journal runner):
 ```bash
 python3 firmware/esp32-s31-rti/tests/run_group_cli.py
 python3 firmware/esp32-s31-rti/tests/run_group_media_gate.py
+python3 firmware/esp32-s31-rti/tests/run_group_audio_level.py
 python3 firmware/esp32-s31-rti/tests/run_group_journal.py --sanitize
 python3 firmware/esp32-s31-rti/tests/run_switch_resolver.py
 ```

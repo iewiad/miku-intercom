@@ -147,6 +147,7 @@ python3 firmware/esp32-s31-rti/tests/run_http_client_reuse.py
 ```sh
 python3 firmware/esp32-s31-rti/tests/run_group_cli.py
 python3 firmware/esp32-s31-rti/tests/run_group_media_gate.py
+python3 firmware/esp32-s31-rti/tests/run_group_audio_level.py
 python3 firmware/esp32-s31-rti/tests/run_group_journal.py --sanitize
 python3 firmware/esp32-s31-rti/tests/run_switch_resolver.py
 ```

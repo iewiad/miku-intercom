@@ -2004,7 +2004,8 @@ static void group_switch_event_cb(lv_event_t *event)
 
 static void group_volume_event_cb(lv_event_t *event)
 {
-    if (lv_event_get_code(event) != LV_EVENT_VALUE_CHANGED) {
+    const lv_event_code_t code = lv_event_get_code(event);
+    if (code != LV_EVENT_VALUE_CHANGED && code != LV_EVENT_RELEASED) {
         return;
     }
     const uint8_t value = (uint8_t)lv_slider_get_value(lv_event_get_target_obj(event));
@@ -2012,7 +2013,7 @@ static void group_volume_event_cb(lv_event_t *event)
     snprintf(text, sizeof(text), value ? "收听音量 %u%%" : "收听已静音 %u%%", (unsigned)value);
     lv_label_set_text(group_volume_label, text);
     if (group_volume_callback) {
-        group_volume_callback(value, false, group_context);
+        group_volume_callback(value, code == LV_EVENT_RELEASED, group_context);
     }
 }
 
@@ -2442,6 +2443,7 @@ esp_err_t board_display_show_group(board_conversation_action_cb_t startstop,
     lv_slider_set_range(slider, 0, 100);
     lv_slider_set_value(slider, level, LV_ANIM_OFF);
     lv_obj_add_event_cb(slider, group_volume_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(slider, group_volume_event_cb, LV_EVENT_RELEASED, NULL);
     group_label(screen, "先选择群组，再点击切换；松手停止发言", 28, 435, 744, 0x6F8998);
     group_render_controls();
     bsp_display_unlock();

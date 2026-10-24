@@ -2,6 +2,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdarg.h>
+#include <inttypes.h>
 #include <string.h>
 #include "cJSON.h"
 #include "group_command_state.h"
@@ -15,7 +17,12 @@
 #define strlcpy fixture_strlcpy
 static size_t fixture_strlcpy(char *d,const char*s,size_t cap) { size_t n=strlen(s);if(cap){size_t m=n<cap-1?n:cap-1;memcpy(d,s,m);d[m]=0;}return n; }
 /* @production-intent */
-static int guard,audio;
+typedef void *esp_codec_dev_handle_t;
+/* @production-board_audio_t */
+/* @production-webrtc_group_stats_t */
+/* @production-audio-default */
+static int guard;
+static board_audio_t audio;
 static group_intent_t intent;
 static group_command_state_t command;
 static group_config_t config;
@@ -45,6 +52,7 @@ static char resolved_target[81],seen_transcript[513],last_detail[192];
 static uint32_t ui_revision;
 static bool ui_busy;
 static esp_err_t group_controller_voice_action(bool cancel,void *context);
+static esp_err_t group_controller_join_group(const char *,void *);
 static void command_event(const webrtc_command_event_t *,void *);
 static int64_t esp_timer_get_time(void) {return now_us;}
 static void mbedtls_platform_zeroize(void *p,size_t n) {volatile unsigned char *c=p;while(n--)*c++=0;}
@@ -77,7 +85,7 @@ esp_err_t rti_session_create_command(rti_session_t *s) {
  if(cancel_in_create)assert(group_controller_voice_action(true,NULL)==ESP_OK);
  return create_result;
 }
-static esp_err_t webrtc_peer_start_command(const rti_session_t *s,const int *a,uint32_t generation,webrtc_command_event_cb_t cb,void *ctx) {
+static esp_err_t webrtc_peer_start_command(const rti_session_t *s,const board_audio_t *a,uint32_t generation,webrtc_command_event_cb_t cb,void *ctx) {
  (void)s;(void)a;++start_calls;
  if(start_result==ESP_OK) {webrtc_command_event_t ready={.type=WEBRTC_COMMAND_READY,.generation=generation};cb(&ready,ctx);}
  return start_result;
@@ -93,7 +101,120 @@ static esp_err_t group_switch_journal_save(const group_switch_journal_t *record)
 }
 static void reload_switch_journal(void) {assert(!"unexpected journal failure");}
 static void finish_unsent_switch(const char *detail) {(void)detail;selection_queued=false;intent.switch_pending=false;}
+// SDK/UI boundaries for the real controller initialization. board_audio_init has
+// already applied the saved codec volume; initialization must not override it.
+typedef void *TaskHandle_t;
+static TaskHandle_t worker;
+static void *catalog_lock;
+static int mutex_object,task_object;
+static unsigned volume_calls,persist_calls,display_volume;
+static void (*display_volume_callback)(uint8_t,bool,void *);
+static char status_output[4096];
+static int64_t lease_deadline_us;
+static uint64_t http_requests,tls_connections,http_failures;
+static size_t published_group_count;
+#define WIFI_EVENT 1
+#define WIFI_EVENT_STA_DISCONNECTED 2
+#define pdPASS 1
+#define MALLOC_CAP_INTERNAL 1
+static void *xSemaphoreCreateMutex(void) {return &mutex_object;}
+static void wifi_event(void *a,int base,int32_t event,void *data) {(void)a;(void)base;(void)event;(void)data;}
+static esp_err_t esp_event_handler_register(int base,int32_t event,void (*callback)(void *,int,int32_t,void *),void *context) {
+ assert(base==WIFI_EVENT&&event==WIFI_EVENT_STA_DISCONNECTED&&callback==wifi_event&&context==NULL);return ESP_OK;
+}
+static esp_err_t esp_event_handler_unregister(int base,int32_t event,void (*callback)(void *,int,int32_t,void *)) {
+ assert(base==WIFI_EVENT&&event==WIFI_EVENT_STA_DISCONNECTED&&callback==wifi_event);return ESP_OK;
+}
+static void group_controller_action(bool stop,void *context) {(void)stop;(void)context;}
+static void group_controller_ptt(bool pressed,void *context) {(void)pressed;(void)context;}
+static esp_err_t group_controller_switch_group(const char *target,uint32_t view,void *context) {(void)target;(void)view;(void)context;return ESP_OK;}
+static esp_err_t board_audio_set_output_volume(board_audio_t *board,uint8_t value,bool persist) {
+ assert(board&&value<=100);++volume_calls;if(persist)++persist_calls;board->output_volume=value;return ESP_OK;
+}
+static esp_err_t board_display_show_group(void (*action)(bool,void *),void (*ptt)(bool,void *),
+ esp_err_t (*switch_group)(const char *,uint32_t,void *),void (*volume_callback)(uint8_t,bool,void *),uint8_t initial_volume,void *context) {
+ assert(action==group_controller_action&&ptt==group_controller_ptt&&switch_group==group_controller_switch_group&&context==NULL);
+ display_volume=initial_volume;display_volume_callback=volume_callback;if(volume_callback)volume_callback(initial_volume,false,context);return ESP_OK;
+}
+static esp_err_t board_display_set_group_commands(esp_err_t (*join)(const char *,void *),esp_err_t (*voice)(bool,void *),void *context) {
+ assert(join==group_controller_join_group&&voice==group_controller_voice_action&&context==NULL);return ESP_OK;
+}
+bool group_config_ready(void) {return true;}
+static void run(void *context) {(void)context;assert(!"task must not run in this fixture");}
+static int xTaskCreate(void (*task)(void *),const char *name,unsigned stack,void *context,unsigned priority,TaskHandle_t *handle) {
+ assert(task==run&&!strcmp(name,"group_lifecycle")&&stack==20*1024&&context==NULL&&priority==10);*handle=&task_object;return pdPASS;
+}
+static bool webrtc_peer_group_connected(void) {return true;}
+static void webrtc_peer_group_get_stats(webrtc_group_stats_t *stats) {memset(stats,0,sizeof(*stats));}
+static size_t heap_caps_get_free_size(unsigned capability) {assert(capability==MALLOC_CAP_INTERNAL);return 1024;}
+static int status_printf(const char *format,...) {
+ va_list args;va_start(args,format);const int count=vsnprintf(status_output,sizeof(status_output),format,args);va_end(args);return count;
+}
+#define printf status_printf
 /* @production-functions */
+#undef printf
+// Execute the group-mode boot path too, with the board_audio_init boundary
+// returning a codec volume already loaded/applied from NVS. Both saved Wi-Fi
+// and first-time Wi-Fi setup must deliver that same value to the controller.
+#define CONFIG_MIKU_INTERCOM_DEFAULT_MODE 1
+#define CONFIG_MIKU_RTI_AEC_BOOT_SELF_TEST 0
+#define ESP_ERR_NOT_FOUND 6
+#define ESP_ERR_NVS_NO_FREE_PAGES 7
+#define ESP_ERR_NVS_NEW_VERSION_FOUND 8
+#define ESP_ERROR_CHECK(call) assert((call)==ESP_OK)
+typedef struct {int cores;} esp_chip_info_t;
+static const char *TAG="fixture";
+static board_audio_t board_audio;
+static uint8_t loaded_volume;
+static bool saved_wifi;
+static esp_err_t (*wifi_setup_callback)(void *);
+static void *wifi_setup_context;
+static void quiet_log(const char *tag,const char *format,...) {(void)tag;(void)format;}
+#define ESP_LOGI(...) quiet_log(__VA_ARGS__)
+#define ESP_LOGW(...) quiet_log(__VA_ARGS__)
+#define ESP_LOGE(...) quiet_log(__VA_ARGS__)
+static void esp_chip_info(esp_chip_info_t *info) {info->cores=2;}
+static esp_err_t nvs_flash_init(void) {return ESP_OK;}
+static esp_err_t board_display_init(void) {return ESP_OK;}
+static esp_err_t board_audio_init(board_audio_t *board) {
+ *board=(board_audio_t){.microphone=&task_object,.speaker=&mutex_object,.output_volume=loaded_volume};return ESP_OK;
+}
+static esp_err_t webrtc_peer_prepare(void) {return ESP_OK;}
+static esp_err_t wifi_manager_init(void) {return ESP_OK;}
+static esp_err_t wifi_serial_cli_start(void) {return ESP_OK;}
+static bool wifi_manager_has_saved_credentials(void) {return saved_wifi;}
+static esp_err_t wifi_manager_connect_saved(void) {assert(saved_wifi);return ESP_OK;}
+static const char *esp_err_to_name(esp_err_t error) {(void)error;return "fixture_error";}
+static esp_err_t board_display_show_wifi_setup(esp_err_t (*callback)(void *),void *context) {
+ wifi_setup_callback=callback;wifi_setup_context=context;return ESP_OK;
+}
+/* @production-app-boot */
+static void verify_initial_volume(void) {
+ const uint8_t levels[]={0,30,55,100};
+ assert(group_controller_init(NULL)==ESP_ERR_INVALID_STATE);
+ for(unsigned has_wifi=0;has_wifi<2;++has_wifi) {
+ for(size_t i=0;i<sizeof(levels)/sizeof(levels[0]);++i) {
+  worker=NULL;volume_calls=persist_calls=0;display_volume_callback=NULL;
+  saved_wifi=has_wifi;loaded_volume=levels[i];wifi_setup_callback=NULL;wifi_setup_context=NULL;
+  app_main();
+  if(!saved_wifi) {
+   assert(!worker&&wifi_setup_callback&&wifi_setup_context==&board_audio);
+   assert(wifi_setup_callback(wifi_setup_context)==ESP_OK);
+  }
+  assert(volume_calls==1&&persist_calls==0&&display_volume==levels[i]);
+  assert(audio.output_volume==levels[i]&&board_audio.output_volume==levels[i]);
+  group_controller_print_status();
+  assert(!strncmp(status_output,"INTERCOM_STATUS ",16));cJSON *status=cJSON_Parse(status_output+16);assert(status);
+  assert(cJSON_IsNumber(cJSON_GetObjectItemCaseSensitive(status,"output_volume")));
+  assert(cJSON_GetObjectItemCaseSensitive(status,"output_volume")->valueint==levels[i]);
+  assert(cJSON_HasObjectItem(status,"connected")&&cJSON_HasObjectItem(status,"current_version"));cJSON_Delete(status);
+  assert(display_volume_callback);display_volume_callback(41,false,NULL);
+  assert(volume_calls==2&&persist_calls==0&&audio.output_volume==41);
+  display_volume_callback(30,true,NULL);assert(volume_calls==3&&persist_calls==1&&audio.output_volume==30);
+ }
+ }
+ worker=NULL;
+}
 static void reset(void) {
  memset(&intent,0,sizeof(intent));memset(&command,0,sizeof(command));memset(&config,0,sizeof(config));
  memset(&command_session,0,sizeof(command_session));command_session_live=command_peer_live=false;
@@ -118,6 +239,7 @@ static void final_event(uint32_t ticket,const char *text) {
  webrtc_command_event_t event={.type=WEBRTC_COMMAND_FINAL,.generation=ticket};strlcpy(event.text,text,sizeof(event.text));command_event(&event,NULL);
 }
 int main(void) {
+ verify_initial_volume();
  reset();begin_voice();const uint32_t first_ticket=command.ticket;
  final_event(first_ticket,"切到乙群");final_event(first_ticket,"切到甲群");
  assert(command.phase==GROUP_COMMAND_RESOLVING&&strcmp(command.transcript,"切到乙群")==0);
@@ -186,6 +308,6 @@ int main(void) {
  assert(process_command());assert(join_posts==0&&command.kind==GROUP_COMMAND_NONE);
  reset();assert(group_controller_join_group("ABCDEFG2",NULL)==ESP_OK);stop_after_submit=true;
  assert(process_command());assert(join_posts==1&&!intent.desired&&command.kind==GROUP_COMMAND_NONE);
- puts("controller command flow: passed (first final, stop ACK retry, late event, early/in-flight cancel, journal handoff, join STOP)");
+ puts("controller command flow: passed (saved volume/UI/status, first final, stop ACK retry, late event, early/in-flight cancel, journal handoff, join STOP)");
  return 0;
 }

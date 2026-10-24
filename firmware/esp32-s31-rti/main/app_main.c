@@ -67,11 +67,6 @@ void app_main(void)
 
     ESP_ERROR_CHECK(wifi_manager_init());
     ESP_ERROR_CHECK(wifi_serial_cli_start());
-#if CONFIG_MIKU_INTERCOM_DEFAULT_MODE
-    /* Shared Wi-Fi setup enters the group UI only after a successful connection.
-     * RTA is entered later only through an explicit voice command. */
-    ESP_ERROR_CHECK(board_audio_set_output_volume(&board_audio, 0, false));
-#endif
     err = wifi_manager_has_saved_credentials()
               ? wifi_manager_connect_saved()
               : ESP_ERR_NOT_FOUND;

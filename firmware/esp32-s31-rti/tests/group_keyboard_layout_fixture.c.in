@@ -5,11 +5,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include "lvgl.h"
+#include "app_brand.h"
 #include "src/widgets/buttonmatrix/lv_buttonmatrix_private.h"
 
 /* LVGL constructors, styles, layout, hit testing and keyboard events are real.
  * Only the controller/worker boundary is replaced; no HTTP or board access. */
 LV_FONT_DECLARE(rti_font_source_han_sans_sc_16_gb2312);
+LV_FONT_DECLARE(shenglu_brand_24);
 #define TRANSCRIPT_FONT (&rti_font_source_han_sans_sc_16_gb2312)
 typedef int esp_err_t;
 #define ESP_OK 0
@@ -30,6 +32,9 @@ static lv_obj_t *group_command_submit, *group_command_submit_label;
 static lv_obj_t *group_command_cancel, *group_command_cancel_label, *group_join_textarea;
 static lv_obj_t *group_dropdown, *group_detail_label;
 static lv_obj_t *group_name_label, *group_ptt_button, *group_status_label, *group_action_label;
+static lv_obj_t *group_ptt_label, *group_volume_label, *group_join_button, *group_voice_button;
+static lv_obj_t *group_switch_button, *group_switch_label;
+static bool group_connected, group_pressed;
 static bool group_speaking, group_switch_pending;
 static bool group_joining, group_voice_active, group_voice_can_cancel;
 static bool group_command_pending, group_voice_submitted;
@@ -41,6 +46,15 @@ static struct {
     struct { char id[81], name[129]; } items[2];
 } choices = { true, 2, "a", {{"a", "后勤组"}, {"b", "验收测试群"}} }, *group_choices = &choices;
 static void *group_command_context;
+typedef void (*board_conversation_action_cb_t)(bool, void *);
+typedef void (*board_ptt_action_cb_t)(bool, void *);
+typedef esp_err_t (*board_group_switch_action_cb_t)(const char *, uint32_t, void *);
+typedef void (*board_volume_action_cb_t)(uint8_t, bool, void *);
+static board_conversation_action_cb_t group_action_callback;
+static board_ptt_action_cb_t group_ptt_callback;
+static board_group_switch_action_cb_t group_switch_callback;
+static board_volume_action_cb_t group_volume_callback;
+static void *group_context;
 static unsigned join_calls, voice_calls, release_calls;
 static esp_err_t join_action(const char *code, void *context) {
     (void)context; ++join_calls; strlcpy(submitted_code, code, sizeof(submitted_code)); return ESP_OK;
@@ -53,6 +67,10 @@ static esp_err_t (*group_voice_callback)(bool, void *) = voice_action;
 static bool group_is_switching(void) { return false; }
 static void group_force_release(void) { ++release_calls; }
 static void group_render_controls(void) {}
+/* Dropdown selection is outside these modal/volume tests; LVGL widgets and
+ * production group-page/slider initialization and event handlers remain real. */
+static void group_dropdown_event_cb(lv_event_t *event) { (void)event; }
+static void group_switch_event_cb(lv_event_t *event) { (void)event; }
 static bool bsp_display_lock(int timeout) { (void)timeout; return true; }
 static void bsp_display_unlock(void) {}
 
@@ -232,6 +250,59 @@ static bool test_voice(void) {
     puts("Voice modal: authoritative group refresh/UTF-8, pending/recovery gates, failure detail, and pointer return passed.");
     return true;
 }
+static unsigned volume_calls, volume_persists;
+static uint8_t last_volume, last_persisted_volume;
+static void volume_action(uint8_t value, bool persist, void *context) {
+    assert(context == &volume_calls);
+    ++volume_calls; last_volume = value;
+    if(persist) { ++volume_persists; last_persisted_volume = value; }
+}
+static lv_obj_t *group_slider(void) {
+    for(uint32_t i = 0; i < lv_obj_get_child_count(lv_screen_active()); ++i) {
+        lv_obj_t *child = lv_obj_get_child(lv_screen_active(), i);
+        if(lv_obj_check_type(child, &lv_slider_class)) return child;
+    }
+    assert(!"group volume slider missing"); return NULL;
+}
+static void pointer_state(int x, int y, lv_indev_state_t state) {
+    input.point.x = x; input.point.y = y; input.state = state;
+    lv_indev_read(pointer); lv_tick_inc(20); lv_obj_update_layout(lv_screen_active());
+}
+static bool test_volume(void) {
+    const uint8_t levels[] = {0, 30, 55, 100};
+    for(size_t i = 0; i < sizeof(levels) / sizeof(levels[0]); ++i) {
+        volume_calls = volume_persists = 0;
+        assert(board_display_show_group(NULL, NULL, NULL, volume_action, levels[i], &volume_calls) == ESP_OK);
+        lv_obj_update_layout(lv_screen_active());
+        lv_obj_t *slider = group_slider();
+        assert(inside(slider, "group volume slider"));
+        assert(lv_slider_get_value(slider) == levels[i]);
+        assert(volume_calls == 1 && last_volume == levels[i] && volume_persists == 0);
+        char expected[48];
+        snprintf(expected, sizeof(expected), levels[i] ? "收听音量 %u%%" : "收听已静音 %u%%", (unsigned)levels[i]);
+        assert(strcmp(lv_label_get_text(group_volume_label), expected) == 0);
+    }
+    volume_calls = volume_persists = 0;
+    assert(board_display_show_group(NULL, NULL, NULL, volume_action, 30, &volume_calls) == ESP_OK);
+    lv_obj_update_layout(lv_screen_active());
+    lv_obj_t *slider = group_slider();
+    lv_area_t area; lv_obj_get_coords(slider, &area);
+    const int y = (area.y1 + area.y2) / 2;
+    /* Real LVGL pointer press/drag emits VALUE_CHANGED. No direct production
+     * callback invocation or hand-built RELEASED event stands in for a gesture. */
+    pointer_state(area.x1 + lv_area_get_width(&area) * 30 / 100, y, LV_INDEV_STATE_PRESSED);
+    pointer_state(area.x1 + lv_area_get_width(&area) * 50 / 100, y, LV_INDEV_STATE_PRESSED);
+    pointer_state(area.x1 + lv_area_get_width(&area) * 70 / 100, y, LV_INDEV_STATE_PRESSED);
+    assert(volume_calls >= 3 && volume_persists == 0);
+    const uint8_t final_value = (uint8_t)lv_slider_get_value(slider);
+    assert(final_value >= 65 && final_value <= 75 && last_volume == final_value);
+    pointer_state(input.point.x, y, LV_INDEV_STATE_RELEASED);
+    assert(volume_persists == 1 && last_persisted_volume == final_value && last_volume == final_value);
+    char expected[48]; snprintf(expected, sizeof(expected), "收听音量 %u%%", (unsigned)final_value);
+    assert(strcmp(lv_label_get_text(group_volume_label), expected) == 0);
+    puts("Group volume: loaded 0/30/55/100 retained; real slider drag applies live without persistence, release saves final value once.");
+    return true;
+}
 int main(int argc, char **argv) {
     lv_init();
     lv_display_t *display = lv_display_create(800, 480);
@@ -247,6 +318,7 @@ int main(int argc, char **argv) {
     if((!only || !strcmp(only, "join")) && !test_join()) return EXIT_FAILURE;
     if((!only || !strcmp(only, "wifi")) && !test_wifi()) return EXIT_FAILURE;
     if(!only && !test_voice()) return EXIT_FAILURE;
+    if(!only && !test_volume()) return EXIT_FAILURE;
     lv_deinit();
     return EXIT_SUCCESS;
 }

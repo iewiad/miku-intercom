@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise production keyboard/modal builders against the installed, real LVGL.
+"""Exercise production keyboard/modal/group-volume builders with real LVGL.
 
 Headless 800x480 layout and pointer hit testing; no ESP-IDF, SDL, board, network,
-or microphone. Reuses a private CMake cache with --build-dir. Both old keyboard
+or microphone. Volume uses the real group-page constructor and pointer-driven
+slider changes/release. Reuses a private CMake cache with --build-dir. Both old keyboard
 positioning mutations must fail the same geometric checks.
 """
 from pathlib import Path
@@ -68,6 +69,8 @@ def run(project, lvgl, build):
         "group_command_cancel_event_cb", "group_voice_submit_event_cb", "group_join_submit",
         "group_join_submit_event_cb", "group_join_keyboard_event_cb", "group_command_button",
         "group_create_command_overlay", "group_join_open_event_cb", "group_voice_open_event_cb",
+        "group_cancel_ptt", "group_ptt_event_cb", "group_screen_event_cb", "group_action_event_cb",
+        "group_volume_event_cb", "board_display_show_group",
     )
     bodies = [function(source, name) for name in names]
     declarations = "\n".join(body[:body.index("{")].strip() + ";" for body in bodies)
@@ -95,8 +98,9 @@ set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
 add_subdirectory("{lvgl.as_posix()}" lvgl)
 foreach(target layout layout_old)
-  add_executable(${{target}} ${{target}}.c "{(project / 'main/rti_font_source_han_sans_sc_16_gb2312.c').as_posix()}")
+  add_executable(${{target}} ${{target}}.c "{(project / 'main/rti_font_source_han_sans_sc_16_gb2312.c').as_posix()}" "{(project / 'main/shenglu_brand_24.c').as_posix()}")
   target_link_libraries(${{target}} PRIVATE lvgl::lvgl m)
+  target_include_directories(${{target}} PRIVATE "{(project / 'main').as_posix()}")
   target_compile_options(${{target}} PRIVATE -Wall -Wextra)
 endforeach()
 '''
