@@ -1,0 +1,178 @@
+{
+  "date": "2026-10-25",
+  "status": "manual_flows_and_six_direction_listening_completed_with_recorded_retries",
+  "merged_main_commit": "e1f825ce0f303148e3fcb2203224d9a338cfc40f",
+  "merged_pull_requests": [
+    13,
+    14
+  ],
+  "initial_application": {
+    "code_commit": "5ed8c620175d3e7f0788d014d1c0f99990ec24b4",
+    "runtime_sources_equal_merged_main": true,
+    "bytes": 3474528,
+    "sha256": "5eacfdc09c49162214df5d0ada8e42ca19c8b25e55a7ad784672f59c57e72949"
+  },
+  "initial_manual_checks": {
+    "board_touch_connect": "user confirmed current group and ready; fresh UART connected and unpressed",
+    "board_release_and_slide": "user confirmed both stop paths; observer saw granted windows then stable sent packet count and unpressed",
+    "board_explicit_switch_and_return": "selection alone retained current group; follow-up confirmed return; authoritative version 21 to 23 and original group restored",
+    "board_join_keyboard": "short-code validation, bottom-row backspace/cancel and empty input on reopen confirmed",
+    "browser_create_panel": "user confirmed Esc return, group creation, displayed invitation and success collapse; no audio connected",
+    "board_new_membership": "user confirmed new group; count 6 to 7, current group and version 23 unchanged, ready and unpressed",
+    "board_voice_cancel": "preparation cancel and post-ready cancel confirmed; same group and version 23, ready and unpressed",
+    "browser_join_panel": "user confirmed separate localhost B, short-code failure retains input, valid join collapses form and current target correct; audio not connected",
+    "browser_filter_and_enter": "user confirmed purpose match, no-result filter preserves current group, clear restores list; A/B explicitly entered target; audio not connected"
+  },
+  "initial_spoken_switch_failure": {
+    "user_initial_report": "recognition failed or not switched",
+    "user_screen_confirmation": "target group displayed; group connection failed",
+    "authoritative_version_before": 23,
+    "authoritative_version_after": 24,
+    "switch_pending": false,
+    "connected": false,
+    "pressed": false,
+    "held": false,
+    "command_phase": "recovering",
+    "repeated_connect_error": "ESP_ERR_NO_MEM",
+    "last_http_status": 200,
+    "http_status_scope": "last completed control request, not proof of SDP or media connection success",
+    "failure_stage_logged": false,
+    "allocation_stage_inference": "after peer_open, largest internal block is smaller than required 20480-byte peer worker stack",
+    "heap_cycles": [
+      {
+        "cycle": 110,
+        "start_internal": 109379,
+        "start_largest_internal": 33792,
+        "after_peer_open_internal": 58771,
+        "after_peer_open_largest_internal": 17408,
+        "stop_internal": 111743,
+        "stop_largest_internal": 40960,
+        "stop_psram": 15886168
+      },
+      {
+        "cycle": 111,
+        "start_internal": 111935,
+        "start_largest_internal": 40960,
+        "after_peer_open_internal": 62595,
+        "after_peer_open_largest_internal": 17408,
+        "stop_internal": 111715,
+        "stop_largest_internal": 40960,
+        "stop_psram": 15886168
+      }
+    ],
+    "scope": "two sampled retry cycles support contiguous internal heap shortage; no long-term leak conclusion",
+    "retry_stopped_explicitly": true,
+    "observer_interruption": "first observer exited after a temporary second UART reader; observation resumed with a sole reader and raw 115200 configuration",
+    "audio_or_transcript_saved": false
+  },
+  "pending": [
+    "voice recognition usability and metadata-only diagnostics for distinguishing rejected exact commands",
+    "reduce or characterize intermittent media channel-wait timeouts and internal/DMA headroom",
+    "full all-theme/narrow-screen/assistive browser observations, long-run quality and exact latency remain separate"
+  ],
+  "fix": {
+    "description": "reserve unchanged 20480-byte internal peer worker before peer_open; EventGroup startup barrier; stop wakes parked worker and retains original ownership/retirement protocol",
+    "host_checks_passed": 22,
+    "node_tests": 109,
+    "python_tests": 14,
+    "firmware_host_suites": 17,
+    "new_threaded_startup_scenarios": 12,
+    "asan_ubsan": true,
+    "independent_review": "passed",
+    "idf_build": "clean commit reconfigure/build/size passed",
+    "application": {
+      "code_commit": "22aa3fb5469f1e8c6c7da26b6b806510b5b63d55",
+      "image_version": "v0-66-g22aa3fb",
+      "bytes": 3474832,
+      "sha256": "71ccf1ef0169338671203bf9c037f632562ba60637c79ea6724726487e115c1c",
+      "application_offset": "0x10000",
+      "partition_bytes": 4194304,
+      "partition_free_bytes": 719472,
+      "source_manifest_sha256": "1eaa3d5fd5cb2f504b1e25ba9bfd5e29d06c0da5e79eb21014631b11ea25d2e3",
+      "independent_flash_verify_passed": true,
+      "nvs_erased": false,
+      "static_dram_sections": {
+        ".dram0.data": 31648,
+        ".dram0.bss": 58664
+      }
+    }
+  },
+  "product_page_listening": {
+    "surfaces": "formal product homepages on 127.0.0.1 and localhost; distinct origins; visible side by side",
+    "audio_source": "human speech using each sender physical microphone and ordinary PTT",
+    "results": {
+      "A_to_B_headphones": "clear complete phrase and released",
+      "B_to_A_headphones": "clear complete phrase and released after side-by-side retest",
+      "board_to_A_headphones": "clear complete phrase and released",
+      "board_to_B_headphones": "clear complete phrase; slide out and released",
+      "A_to_board_speaker": "clear complete phrase and released",
+      "B_to_board_speaker": "clear complete phrase and released"
+    },
+    "B_to_A_first_attempt": "no sound; user reported audible after arranging windows side by side; no native hidden-event report collected, so exact cause not independently established",
+    "instrumented_current_browser_audio_reports": false,
+    "browser_closeout": "user confirmed both product pages disconnected, PTT unavailable and Chrome microphone indicators disappeared; not a measured open-Peer-count claim",
+    "browser_automation_used": false
+  },
+  "fixed_image_manual_checks": {
+    "touch_connect": "correct group, ready and unpressed, 7 memberships",
+    "spoken_switch_to_original": "user confirmed popup/homepage and readiness; version24 to25",
+    "manual_switch_and_volume": "user confirmed target group; drag to0/release and return to38/release; version26",
+    "ptt_release": "board toA clear phrase; physical release stops",
+    "ptt_slide_out": "board toB clear phrase; slide out stops",
+    "post_ready_voice_cancel": "user confirmed same target, ready and unpressed",
+    "stop_reconnect_stop": "user confirmed correct group/volume and unpressed on reconnect; final stopped"
+  },
+  "voice_target_retests": {
+    "human_target_attempts": "target not matched in later human attempts; original group retained and eventually ready",
+    "guidance_correction": "one suggested phrase incorrectly included unsupported polite prefix; immediately corrected to documented exact command; actual utterance not retained",
+    "reason_scope": "without a retained transcript, do not attribute each no-match to ASR or parser input",
+    "synthetic_source": "known offline Tingting command via built-in speaker and physical board microphone; user started voice through touch",
+    "synthetic_intended_command": "切到新版验收群。",
+    "synthetic_target_reached": true,
+    "synthetic_version_before": 27,
+    "synthetic_version_after": 28,
+    "synthetic_ready_unpressed": true,
+    "speaker_volume_restored": true,
+    "computer_default_audio_routes_unchanged": true,
+    "human_audio_or_transcript_saved": false
+  },
+  "fixed_image_recovery_observations": {
+    "peer_start_cycles": 26,
+    "peer_stop_complete_cycles": 26,
+    "all_observed_cycles_completed": true,
+    "observed_start_failures": [
+      {
+        "mode": "group",
+        "stage": "channel_wait",
+        "error": "ESP_ERR_TIMEOUT"
+      },
+      {
+        "mode": "group",
+        "stage": "channel_wait",
+        "error": "ESP_ERR_TIMEOUT"
+      }
+    ],
+    "deferred_cleanup_log_observations": 4,
+    "deferred_cleanup_scope": "retained context was later safely retired; these are four log observations, not four independent faults",
+    "peer_worker_min_free_stack_bytes_observed": 13080,
+    "fatal_observed": false,
+    "scope": "no recurring NO_MEM in this observation; two channel-wait timeouts recovered; not zero-error, long-run, or ASR-accuracy proof"
+  },
+  "final_closeout": {
+    "board": {
+      "desired": false,
+      "connected": false,
+      "pressed": false,
+      "held": false,
+      "command_kind": 0,
+      "command_phase": 0,
+      "output_volume": 38
+    },
+    "last_confirmed_group_before_stop": "新版验收群",
+    "last_confirmed_version": 28,
+    "catalog_scope": "stopped mode forgets live catalog; retained current group was confirmed before final stop",
+    "serial_closed": true,
+    "serial_unowned": true,
+    "local_product_server_kept_running": true
+  }
+}

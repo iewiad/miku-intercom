@@ -44,12 +44,14 @@
 #define RTC_EVENT_DATA_DONE BIT6
 #define RTC_EVENT_CONNECTED BIT7
 #define RTC_EVENT_COMMAND_READY BIT8
+#define RTC_EVENT_LOOP_START BIT9
 #define RTC_SIGNAL_TIMEOUT_MS 25000
 #define RTC_EVENT_JSON_MAX (12 * 1024)
 #define RTC_DATA_EVENT_QUEUE_LENGTH 32
 #define RTC_DATA_EVENT_STACK_SIZE (20 * 1024)
 #define RTC_DATA_EVENT_TASK_PRIORITY 5
 #define RTC_PEER_TASK_PRIORITY 6
+#define RTC_PEER_STACK_SIZE (20 * 1024)
 #define RTC_STREAMING_UI_INTERVAL_US 80000
 #define RTC_PIPELINE_STATS_INTERVAL_US 5000000
 #define RTC_TRANSCRIPT_MAX 1024
@@ -274,6 +276,9 @@ static esp_err_t fail_peer_start(const char *stage, esp_err_t error)
     if (rtc.command_mode) {
         ESP_LOGW(TAG, "RTA_COMMAND start_failure stage=%s err=%s", stage, esp_err_to_name(error));
         command_log_stats("start_failure");
+    } else {
+        ESP_LOGW(TAG, "RTC start_failure mode=%s stage=%s err=%s",
+                 rtc.group_mode ? "group" : "conversation", stage, esp_err_to_name(error));
     }
     webrtc_peer_stop();
     return error;
@@ -2463,6 +2468,10 @@ static esp_err_t start_audio(const board_audio_t *audio)
 static void peer_loop_task(void *arg)
 {
     (void)arg;
+    // Reserve the contiguous internal stack before esp_peer_open fragments the
+    // heap. Do not access its partial peer until start, or retirement, releases
+    // this gate. Stop releases it with running=false on every early failure.
+    xEventGroupWaitBits(rtc.events, RTC_EVENT_LOOP_START, pdFALSE, pdTRUE, portMAX_DELAY);
     uint32_t calls = 0;
     uint32_t slow_calls = 0;
     int64_t total_us = 0;
@@ -2506,6 +2515,8 @@ static void peer_loop_task(void *arg)
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
+    ESP_LOGI(TAG, "RTC peer loop stopped: stack_min_free_bytes=%u",
+             (unsigned)uxTaskGetStackHighWaterMark(NULL));
     finish_worker(RTC_EVENT_LOOP_DONE);
 }
 
@@ -2598,6 +2609,11 @@ void webrtc_peer_stop(void)
         }
     }
     rtc.running = false;
+    if (rtc.events != NULL) {
+        // A worker reserved before peer_open may still be parked at startup.
+        // Releasing an EventGroup bit is also safe on repeated deferred stops.
+        xEventGroupSetBits(rtc.events, RTC_EVENT_LOOP_START);
+    }
     if ((rtc.loop_task != NULL || rtc.data_task != NULL) && rtc.events != NULL) {
         EventBits_t wait_for = 0;
         if (rtc.loop_task != NULL) {
@@ -2681,6 +2697,34 @@ void webrtc_peer_stop(void)
     portEXIT_CRITICAL(&group_state_lock);
     log_heap_state("stop_complete", cycle);
     ESP_LOGI(TAG, "PeerConnection closed");
+}
+
+static esp_err_t open_peer_transport(esp_peer_cfg_t *peer_cfg, uint32_t cycle)
+{
+    // Allocate the largest required internal block first, while it is still
+    // contiguous. This remains the same WithCaps-owned 20 KiB internal stack.
+    if (xTaskCreateWithCaps(peer_loop_task, "rti_peer", RTC_PEER_STACK_SIZE, NULL,
+                            RTC_PEER_TASK_PRIORITY, &rtc.loop_task,
+                            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) != pdPASS) {
+        return fail_peer_start("peer_worker_reserve", ESP_ERR_NO_MEM);
+    }
+    log_heap_state("after_worker_reserve", cycle);
+    const int ret = esp_peer_open(peer_cfg, esp_peer_get_default_impl(), &rtc.peer);
+    if (ret != ESP_PEER_ERR_NONE) {
+        ESP_LOGE(TAG, "PeerConnection open failed: %d", ret);
+        return fail_peer_start("peer_open", ESP_FAIL);
+    }
+    log_heap_state("after_peer_open", cycle);
+
+    rtc.running = true;
+    if (!rtc.group_mode && xTaskCreateWithCaps(
+            data_event_task, "rti_events", RTC_DATA_EVENT_STACK_SIZE, NULL,
+            RTC_DATA_EVENT_TASK_PRIORITY, &rtc.data_task,
+            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
+        return fail_peer_start("data_worker_create", ESP_ERR_NO_MEM);
+    }
+    xEventGroupSetBits(rtc.events, RTC_EVENT_LOOP_START);
+    return ESP_OK;
 }
 
 static esp_err_t start_peer(const rti_session_t *session, const board_audio_t *audio,
@@ -2773,25 +2817,9 @@ static esp_err_t start_peer(const rti_session_t *session, const board_audio_t *a
         .extra_cfg = &default_cfg,
         .extra_size = sizeof(default_cfg),
     };
-    int ret = esp_peer_open(&peer_cfg, esp_peer_get_default_impl(), &rtc.peer);
-    if (ret != ESP_PEER_ERR_NONE) {
-        ESP_LOGE(TAG, "PeerConnection open failed: %d", ret);
-        return fail_peer_start("peer_open", ESP_FAIL);
-    }
-    log_heap_state("after_peer_open", cycle);
-
-    rtc.running = true;
-    if ((!rtc.group_mode && xTaskCreateWithCaps(
-            data_event_task, "rti_events", RTC_DATA_EVENT_STACK_SIZE, NULL,
-            RTC_DATA_EVENT_TASK_PRIORITY, &rtc.data_task,
-            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) ||
-        xTaskCreateWithCaps(peer_loop_task, "rti_peer", 20 * 1024, NULL,
-                            RTC_PEER_TASK_PRIORITY,
-                            &rtc.loop_task,
-                            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) != pdPASS) {
-        return fail_peer_start("worker_create", ESP_ERR_NO_MEM);
-    }
-    ret = esp_peer_new_connection(rtc.peer);
+    const esp_err_t transport_err = open_peer_transport(&peer_cfg, cycle);
+    if (transport_err != ESP_OK) return transport_err;
+    int ret = esp_peer_new_connection(rtc.peer);
     if (ret != ESP_PEER_ERR_NONE) {
         ESP_LOGE(TAG, "new PeerConnection failed: %d", ret);
         return fail_peer_start("new_connection", ESP_FAIL);
