@@ -23,7 +23,7 @@
 <label>音源 <select id="single-source"><option value="synthetic">合成测试音（默认）</option><option value="synthetic_speech">本机合成语音 WAV</option><option value="system_microphone">真实系统麦克风</option></select></label>
 <label>合成频率 <select id="single-frequency"><option value="440">440 Hz</option><option value="997">997 Hz</option><option value="1777">1777 Hz</option></select></label>
 <label id="speech-file-label" hidden>合成语音文件 <input id="single-speech-file" type="file" accept="audio/wav,.wav"></label>
-<p id="speech-file-help" hidden>仅选择本机生成的合成语音 WAV：不超过 2 MiB、12 秒、双声道。文件只在本页内存解码，不上传文件或保存音频。获权后从头发送一次，经真实群音频链路；不代表真人采集或人工听测。</p>
+<p id="speech-file-help" hidden>仅选择本机生成的合成语音 WAV：不超过 2 MiB、12 秒、双声道。文件只在本页内存解码，不上传文件或保存音频。获权后从头发送一次，播放结束后排空尾音 0.25 秒再放麦。发送时请留在本窗口，看到“已完整发送”后再切换；失焦会立即停发。另有片长加 1 秒、最多 13 秒的停止上限，超时不会标为完整发送。不代表真人采集或人工听测。</p>
 <button id="enable-single">显式启用所选单端音源</button><br>
 <label>建群名称 <input id="group-name" value="跨标签诊断群" maxlength="32"></label><button id="create-group" disabled>建立测试群并显示口令</button>
 <label>群口令 <input id="group-code" autocomplete="off" maxlength="16"></label><button id="join-group" disabled>加入测试群</button>
@@ -40,6 +40,7 @@
 <button id="single-speech" hidden disabled>申请并发送一次合成语音</button>
 <button id="single-timed" hidden disabled>诊断驱动：正常获权后最多发送 3 秒</button>
 <button id="single-cancel" disabled>立即停止发送 / 取消申请</button>
+<p id="single-send-state" role="status" aria-live="polite">尚未发送。</p>
 <p>正常 PTT 松手、取消、失焦立即停发。3 秒按钮是显式开发驱动器，同样通过正常麦权申请；可立即停止，失焦或页面隐藏仍取消。安静环境的 RMS 可为 0，RTP 增长本身不代表真实有声。</p>
 <p id="single-status">单端尚未启用。</p>
 <p id="share-code"></p>

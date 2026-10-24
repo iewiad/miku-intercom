@@ -68,34 +68,93 @@ export function rtpDelta(before, after) {
 // The explicit developer driver uses the same ControlClient acquire/cancel path as normal PTT.
 export class DiagnosticPTTDriver {
   constructor(client, {schedule = (callback, delay) => globalThis.setTimeout(callback, delay), cancel = id => globalThis.clearTimeout(id), duration = 3000,
+    sourceDuration = duration, drainDuration = 0, timeoutReason = 'duration-limit', now = () => performance.now(), onChange = () => {},
     onGranted = () => {}, onStop = () => {}} = {}) {
-    Object.assign(this, {client, schedule, cancel, duration, onGranted, onStop}); this.generation = 0; this.active = false; this.timer = null;
+    Object.assign(this, {client, schedule, cancel, duration, sourceDuration, drainDuration, timeoutReason, now, onChange, onGranted, onStop});
+    this.generation = 0; this.active = false; this.timer = this.drainTimer = null; this.phase = 'idle'; this.attempts = [];
   }
+  snapshot() {
+    const elapsed = this.grantedAt === null || this.grantedAt === undefined ? 0 : Math.max(0, (this.active ? this.now() : this.endedAt) - this.grantedAt);
+    const remaining = this.phase === 'draining' ? this.drainDuration - (this.now() - this.sourceEndedAt) : this.sourceDuration - elapsed;
+    return {phase: this.phase, stop_reason: this.stopReason || null, elapsed_ms: Math.round(elapsed),
+      remaining_ms: this.active ? Math.max(0, Math.ceil(remaining)) : 0, expected_duration_ms: this.sourceDuration,
+      attempts: this.attempts.map(attempt => ({...attempt}))};
+  }
+  setPhase(phase) { this.phase = phase; this.onChange(); }
   async start({prepare = null, isCurrent = () => true} = {}) {
-    this.stop(); const generation = ++this.generation; this.active = true;
+    this.stop('superseded'); const generation = ++this.generation; this.active = true;
+    this.grantedAt = this.endedAt = this.sourceEndedAt = null; this.stopReason = null;
+    this.requestedAt = new Date().toISOString(); this.setPhase('preparing');
     try {
       // Preparation belongs to this cancellable attempt too: a pending native
       // AudioContext.resume must not acquire a floor after blur or navigation.
       if (prepare) await prepare();
       if (generation !== this.generation) return;
-      if (!isCurrent()) { this.stop(); return; }
+      if (!isCurrent()) { this.stop('state-changed'); return; }
+      this.setPhase('acquiring');
       await this.client.pressFloor();
       if (generation !== this.generation) return;
-      if (!isCurrent()) { this.stop(); return; }
-      if (!this.client.pressed || this.client.floorPhase !== 'held') { this.active = false; return; }
-      this.onGranted();
-      this.timer = this.schedule(() => this.stop(), this.duration);
-    } catch (error) { if (generation === this.generation) this.stop(); throw error; }
+      if (!isCurrent()) { this.stop('state-changed'); return; }
+      if (!this.client.pressed || this.client.floorPhase !== 'held') { this.stop('not-granted'); return; }
+      this.grantedAt = this.now(); this.setPhase('sending');
+      this.onGranted(() => {
+        if (generation !== this.generation || !this.active || this.phase !== 'sending') return;
+        this.sourceEndedAt = this.now(); this.setPhase('draining');
+        this.drainTimer = this.schedule(() => { if (generation === this.generation) this.stop('source-ended'); }, this.drainDuration);
+      });
+      if (generation === this.generation && this.active) this.timer = this.schedule(() => {
+        if (generation === this.generation) this.stop(this.timeoutReason);
+      }, this.duration);
+    } catch (error) { if (generation === this.generation) this.stop('error'); throw error; }
   }
-  stop() {
-    ++this.generation; this.active = false; if (this.timer !== null) this.cancel(this.timer); this.timer = null;
-    try { this.onStop(); } finally { if (this.client.pressed || this.client.floorRequest) this.client.cancelFloor(); }
+  stop(reason = 'user-cancelled') {
+    ++this.generation; const wasActive = this.active; this.active = false;
+    for (const timer of [this.timer, this.drainTimer]) if (timer !== null) this.cancel(timer);
+    this.timer = this.drainTimer = null;
+    if (wasActive) {
+      this.endedAt = this.now(); this.stopReason = reason; this.phase = 'stopped';
+      this.attempts.push({requested_at: this.requestedAt, ended_at: new Date().toISOString(), stop_reason: reason,
+        sending_ms: this.grantedAt === null ? 0 : Math.round(Math.max(0, this.endedAt - this.grantedAt)), expected_duration_ms: this.sourceDuration});
+      if (this.attempts.length > 30) this.attempts.shift();
+    }
+    try { this.onStop(); } finally {
+      if (this.client.pressed || this.client.floorRequest) this.client.cancelFloor();
+      if (wasActive) this.onChange();
+    }
   }
+  observeFloor() {
+    if (this.active && ['sending', 'draining'].includes(this.phase) && (!this.client.pressed || this.client.floorPhase !== 'held')) this.stop('floor-lost');
+  }
+}
+export function diagnosticSendMessage(send, sourceKind) {
+  if (!send || send.phase === 'idle') return sourceKind === 'synthetic_speech' ? '发送完整合成语音前，请留在本窗口；失焦会立即停发。' : '尚未使用限时发送；手动 PTT 松手即停发。';
+  if (send.phase === 'preparing') return '正在准备音源，请留在本窗口。';
+  if (send.phase === 'acquiring') return '正在申请麦权，获权前不会播放；请留在本窗口。';
+  if (send.phase === 'sending') return `正在发送，约剩 ${(send.remaining_ms / 1000).toFixed(1)} 秒。请留在本窗口，看到结束提示后再切换。`;
+  if (send.phase === 'draining') return '语音已播放完，正在排空尾音；请继续留在本窗口。';
+  const reasons = {
+    'source-ended': '合成语音已完整发送，已释放麦权。现在可以切换窗口并检查接收端。',
+    'duration-limit': '已达到限时发送上限并停止，已释放麦权。',
+    'source-timeout': '等待语音自然结束或尾音排空超时，已停止；本次未确认完整发送。',
+    'window-blur': '窗口失焦，已立即停发；本次未完整发送。重发时请留在本窗口。',
+    'page-hidden': '页面隐藏，已立即停发并关闭旧连接；本次未完整发送。',
+    'user-cancelled': '已手动取消发送或申请；本次未完整发送。',
+    'floor-lost': '麦权已结束，已停止发送；本次未确认完整发送。',
+    'media-interrupted': '媒体连接变化，已停止发送；本次未完整发送，连接就绪后可重试。',
+    'not-granted': '未获麦权，音源未开始播放；可在麦权空闲后重试。',
+    'state-changed': '窗口、当前群或连接状态变化，已取消发送；本次未完整发送。',
+    'group-changed': '正在切换群组，已停止发送；本次未完整发送。',
+    'offline': '网络离线，已停止发送并关闭旧连接；本次未完整发送。',
+    'disabled': '测试音频已关闭，发送已停止。',
+    'superseded': '旧发送已取消，请等待本次发送结果。',
+    'error': '准备音源或申请麦权失败，已停止；本次未完整发送。',
+  };
+  return reasons[send.stop_reason] || '发送已停止；本次未确认完整发送。';
 }
 export function bindDiagnosticPTTPointer(button, client, getDriver) {
   const endPointerPress = bindPTTPointer(button, client);
   // End pending preparation too, even when no floor request exists yet.
-  return () => { getDriver()?.stop(); endPointerPress(); };
+  return (reason = 'user-cancelled') => { getDriver()?.stop(typeof reason === 'string' ? reason : 'user-cancelled'); endPointerPress(); };
 }
 const SPEECH_MAX_BYTES = 2 * 1024 * 1024;
 export async function loadSyntheticSpeech(file, context) {
@@ -123,17 +182,19 @@ export function syntheticSpeechSource(context, buffer) {
     if (old) { old.onended = null; try { old.stop(); } catch { /* Already ended. */ } old.disconnect(); }
   };
   return {stream: destination.stream,
-    play() {
+    play(onEnded = () => {}) {
       assert(!closed, '合成语音音源已关闭，请重新连接。'); stop();
       const node = context.createBufferSource(); node.buffer = buffer; node.loop = false;
       node.connect(destination); current = node;
-      node.onended = () => { if (current === node) current = null; node.disconnect(); };
+      node.onended = () => { const finished = current === node && !closed; if (finished) current = null; node.disconnect(); if (finished) onEnded(); };
       try { node.start(); } catch (error) { stop(); throw error; }
     }, stop,
     close() { if (closed) return; closed = true; stop(); for (const track of destination.stream.getTracks()) { track.enabled = false; track.stop(); } destination.disconnect(); },
   };
 }
-export const speechSendDuration = buffer => Math.min(12000, Math.ceil(buffer.duration * 1000) + 250);
+// The watchdog includes the 250 ms natural-end drain plus event-loop slack. It
+// never proves completion: only the source's onended followed by drain does.
+export const speechSendDuration = buffer => Math.min(13000, Math.ceil(buffer.duration * 1000) + 1000);
 export class SingleInitialization {
   constructor(onChange = () => {}) { this.onChange = onChange; this.busy = false; this.generation = 0; }
   cancel() { ++this.generation; }
@@ -205,6 +266,7 @@ export class Terminal {
           this.lifecyclePhase = this.audio.phase; this.lifecyclePeer = this.audio.peer;
           this.recordLifecycle('audio-state');
         }
+        if (this.driver?.active && !this.audio.isReady()) this.driver.stop('media-interrupted');
         changed();
       },
       onFailure: () => this.control.cancelFloor('媒体连接失败'),
@@ -252,7 +314,9 @@ export class Terminal {
     this.sourcePCM = new Float32Array(this.sourceAnalyser.fftSize);
   }
   observePTT() {
-    if (this.sourceKind === 'synthetic' || !this.control) return;
+    if (!this.control) return;
+    this.driver?.observeFloor();
+    if (this.sourceKind === 'synthetic') return;
     if (this.sourceKind === 'synthetic_speech' && (!this.control.pressed || this.control.floorPhase !== 'held')) this.speechSource?.stop();
     if (this.control.pressed && !this.activeWindow) this.activeWindow = {started: performance.now(),
       started_at: new Date().toISOString(), group_id: this.control.state?.current_group_id,
@@ -273,6 +337,7 @@ export class Terminal {
   observation() {
     const windows = [...this.windows, ...(this.activeWindow ? [{...this.activeWindow, ended: performance.now(), ended_at: null, capture_at_end: captureStatus(this.audio.localStream), inbound_after: this.rtpLatest}] : [])];
     return {terminal: this.label, source_kind: this.sourceKind, current_version: this.control.state?.current_version,
+      diagnostic_send: this.driver?.snapshot() || null,
       ...(this.sourceKind === 'synthetic_speech' ? {synthetic_clip: {duration_seconds: round(this.speechBuffer?.duration), channels: this.speechBuffer?.numberOfChannels, sample_rate: this.speechBuffer?.sampleRate},
         remote_rms_frames: this.samples.slice(-200).map(sample => ({elapsed_ms: Math.round(sample.at - this.startedAt), rms: round(sample.rms), valid: !!sample.valid}))} : {}),
       capture: captureStatus(this.audio.localStream), last_capture: this.lastCapture,
@@ -298,7 +363,7 @@ export class Terminal {
         if (this.sourceSamples.length > SAMPLE_LIMIT) this.sourceSamples.shift(); this.lastCapture = capture;
       }
     }
-    if (!this.analyser || this.closed || this.context.state !== 'running') return;
+    if (!this.analyser || this.closed || this.context.state !== 'running') { if (this.driver?.active) this.changed(); return; }
     this.analyser.getFloatTimeDomainData(this.pcm);
     let frequency = null;
     if (this.sourceKind === 'synthetic') { this.analyser.getFloatFrequencyData(this.bins); frequency = spectrumPeak(this.bins, this.context.sampleRate, this.analyser.fftSize).frequency; }
@@ -327,7 +392,7 @@ export class Terminal {
     if (this.audio.peer) this.peers.add(this.audio.peer);
   }
   async switchTo(group) {
-    this.driver?.stop();
+    this.driver?.stop('group-changed');
     this.speechSource?.stop();
     this.attachRemote(null, null);
     this.audio.suspend('diagnostic-switch');
@@ -358,7 +423,7 @@ export class Terminal {
   }
   async close() {
     this.closed = true; clearInterval(this.sampler); clearInterval(this.pollTimer);
-    this.driver?.stop();
+    this.driver?.stop('disabled');
     const previous = {previousPeer: this.audio.peer, previousTrack: this.audio.localStream?.getAudioTracks?.()[0]};
     this.speechSource?.stop(); this.control.cancelFloor(); await this.audio.disable(); this.attachRemote(null, null); this.attachLocal(null); this.output.remove();
     this.recordLifecycle('disabled-closed', null, previous);
@@ -387,8 +452,10 @@ function bootDiagnostics() {
     $('speech-file-label').hidden = $('speech-file-help').hidden = kind !== 'synthetic_speech';
     $('single-speech-file').disabled = !!single || running || !!initialization?.busy;
     $('single-tone').hidden = kind !== 'synthetic';
+    $('single-tone').disabled = !single || !!driver?.active || !single.control.canPress();
     $('single-speech').hidden = kind !== 'synthetic_speech';
     $('single-speech').disabled = !single || !!driver?.active || !single.control.canPress();
+    $('single-send-state').textContent = diagnosticSendMessage(driver?.snapshot(), kind);
     $('single-ptt').hidden = kind === 'synthetic_speech';
     $('single-ptt').disabled = !single || (!single.control.pressed && !single.control.canPress());
     $('single-ptt').setAttribute('aria-pressed', String(!!single?.control.pressed));
@@ -428,7 +495,7 @@ function bootDiagnostics() {
   }
   async function closeAll(invalidateInitialization = true) {
     if (invalidateInitialization) initialization.cancel();
-    const closing = terminals; driver?.stop(); driver = null;
+    const closing = terminals; driver?.stop('disabled'); driver = null;
     await Promise.allSettled(closing.map(t => t.close()));
     if (report && closing.length) report.resources_after_close = closing.map(t => ({terminal: t.label,
       created_peers: t.peers.size, open_peers: [...t.peers].filter(p => p.connectionState !== 'closed').length}));
@@ -542,11 +609,12 @@ function bootDiagnostics() {
         if (!current()) return null;
         const terminal = new Terminal($('single-name').value.trim() || '单端', Number($('single-frequency').value), context, render, null, kind, speechBuffer);
         single = terminal; terminals = [terminal];
-        driver = new DiagnosticPTTDriver(terminal.control, kind === 'synthetic_speech' ? {
+        driver = new DiagnosticPTTDriver(terminal.control, {...(kind === 'synthetic_speech' ? {
           duration: speechSendDuration(speechBuffer),
-          onGranted: () => { assert(terminal.speechSource, '合成语音尚未连接，请重试连接。'); terminal.speechSource.play(); },
+          sourceDuration: Math.ceil(speechBuffer.duration * 1000), drainDuration: 250, timeoutReason: 'source-timeout',
+          onGranted: onEnded => { assert(terminal.speechSource, '合成语音尚未连接，请重试连接。'); terminal.speechSource.play(onEnded); },
           onStop: () => terminal.speechSource?.stop(),
-        } : {}); terminal.driver = driver; return terminal;
+        } : {}), onChange: render}); terminal.driver = driver; return terminal;
       }, async (terminal, current) => {
         sessionStorage.setItem(SINGLE_KEY, JSON.stringify(terminal.control.identity));
         terminal.pollTimer = setInterval(async () => { if (single !== terminal || terminal.closed || terminal.control.pressed) return; await terminal.control.refresh(); }, 1200);
@@ -560,27 +628,27 @@ function bootDiagnostics() {
   });
   async function groupAction(create) {
     const terminal = single; if (!terminal) return;
-    driver?.stop();
+    driver?.stop('group-changed');
     try {
       const result = create ? await terminal.control.createGroup($('group-name').value.trim()) : await terminal.control.joinGroup($('group-code').value.trim());
       if (single !== terminal || terminal.closed) return;
       assert(result, '建群 / 入群失败');
       if (create) $('share-code').textContent = `仅分享本机测试群口令：${result.code}`;
-      await terminal.connect(false); if (single !== terminal || terminal.closed) return; $('single-tone').disabled = false; $('single-status').textContent = terminal.sourceKind === 'system_microphone' ? '真实系统麦克风已连接。按住正常PTT验采集传输；本轮未做人工听测。' : terminal.sourceKind === 'synthetic_speech' ? '真实 Opus Peer 已连接；点击发送一次合成语音，获权后从头播放，结束后自动放麦。' : '真实 Opus Peer 已连接，可互发测试音。';
+      await terminal.connect(false); if (single !== terminal || terminal.closed) return; $('single-tone').disabled = false; $('single-status').textContent = terminal.sourceKind === 'system_microphone' ? '真实系统麦克风已连接。按住正常PTT验采集传输；本轮未做人工听测。' : terminal.sourceKind === 'synthetic_speech' ? '真实 Opus Peer 已连接；发送时请留在本窗口，看到“已完整发送”后再切换到接收端。' : '真实 Opus Peer 已连接，可互发测试音。';
     } catch (error) { if (single !== terminal || terminal.closed) return; $('single-status').textContent = `连接失败：${String(error.message).slice(0, 120)}`; }
   }
   $('create-group').addEventListener('click', () => void groupAction(true));
   $('join-group').addEventListener('click', () => void groupAction(false));
   $('single-tone').addEventListener('click', async () => {
-    if (!single || single.sourceKind !== 'synthetic') return; $('single-tone').disabled = true;
-    try { await acquire(single); $('single-status').textContent = '获权后发送合成测试音，3 秒后释放。'; await sleep(3000); }
+    if (!single || single.sourceKind !== 'synthetic' || !single.control.canPress() || driver?.active) return;
+    try { await driver.start(); }
     catch (error) { $('single-status').textContent = `测试失败：${String(error.message).slice(0, 120)}`; }
-    finally { await single?.release(); $('single-tone').disabled = false; $('single-status').textContent = '测试音已停止；远端记录自动保留在报告中。'; }
+    finally { render(); }
   });
   $('single-speech').addEventListener('click', async () => {
     if (!single || single.sourceKind !== 'synthetic_speech' || !single.control.canPress() || driver?.active) return;
     const terminal = single, sender = driver, peer = terminal.audio.peer;
-    $('single-status').textContent = '正在申请正常麦权；获权后发送一次合成语音，可立即停止，结束后自动放麦。';
+    $('single-status').textContent = '发送时请留在本窗口；发送进度和停止原因显示在按钮下方。';
     try {
       const pending = sender.start({prepare: ensureContext,
         isCurrent: () => single === terminal && driver === sender && !terminal.closed && terminal.audio.peer === peer && terminal.audio.isReady() && !document.hidden && document.hasFocus()});
@@ -625,7 +693,7 @@ function bootDiagnostics() {
     $('single-status').textContent = '显式诊断驱动：正常获权后最多发送3秒，可立即停止；失焦/隐藏立即取消。未做人工听测。';
     try { await driver.start(); } catch { $('single-status').textContent = '诊断申请未完成，请确认状态后重试。'; } render();
   });
-  $('single-cancel').addEventListener('click', () => { driver?.stop(); endPress(); render(); });
+  $('single-cancel').addEventListener('click', () => { endPress('user-cancelled'); render(); });
   $('single-play').addEventListener('click', async () => {
     if (!single) return;
     await ensureContext(); single.audio.setListeningMuted(false); await single.audio.retryPlayback(); render();
@@ -637,13 +705,13 @@ function bootDiagnostics() {
   });
   $('single-switch').addEventListener('click', async () => {
     if (!single || !$('single-groups').value) return;
-    try { endPress(); await single.switchTo($('single-groups').value); $('single-status').textContent = '当前群已确认；恢复后未按麦。'; }
+    try { endPress('group-changed'); await single.switchTo($('single-groups').value); $('single-status').textContent = '当前群已确认；恢复后未按麦。'; }
     catch (error) { $('single-status').textContent = `切群未完成：${String(error.message).slice(0, 120)}`; }
   });
   $('single-source').addEventListener('change', render);
   window.addEventListener('blur', event => {
     if (running || !single) return;
-    single.recordLifecycle('window-blur', event); endPress(); single.recordLifecycle('blur-cancelled', event);
+    single.recordLifecycle('window-blur', event); endPress('window-blur'); single.recordLifecycle('blur-cancelled', event);
   });
   window.addEventListener('focus', event => { if (!running && single) single.recordLifecycle('window-focus', event); });
   document.addEventListener('visibilitychange', event => {
@@ -651,11 +719,11 @@ function bootDiagnostics() {
     if (document.hidden) {
       single.recordLifecycle('visibility-hidden', event);
       const previous = {previousPeer: single.audio.peer, previousTrack: single.audio.localStream?.getAudioTracks?.()[0]};
-      endPress(); single.audio.suspend('页面隐藏，采集与旧Peer已关闭。');
+      endPress('page-hidden'); single.audio.suspend('页面隐藏，采集与旧Peer已关闭。');
       single.recordLifecycle('hidden-closed', event, previous);
     } else { single.recordLifecycle('visibility-visible', event); void single.control.refresh(); }
   });
-  window.addEventListener('offline', () => { if (!running && single) { endPress(); single.control.connected = false; single.audio.suspend('离线，采集与旧Peer已关闭。'); } });
+  window.addEventListener('offline', () => { if (!running && single) { endPress('offline'); single.control.connected = false; single.audio.suspend('离线，采集与旧Peer已关闭。'); } });
   window.addEventListener('online', () => { if (!running && single && !document.hidden) void single.control.refresh(); });
   window.addEventListener('pagehide', () => { void closeAll(); });
   render();

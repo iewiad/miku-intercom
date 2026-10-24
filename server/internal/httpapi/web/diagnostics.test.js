@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {pcmRMS, spectrumPeak, assessSamples, summarizeRTP, safeReport, captureStatus, remoteObservation, sourceObservation, rtpDelta, diagnosticSourceOptions, DiagnosticPTTDriver, SingleInitialization, Terminal, loadSyntheticSpeech, syntheticSpeechSource, speechSendDuration, bindDiagnosticPTTPointer} from './diagnostics.js';
+import {pcmRMS, spectrumPeak, assessSamples, summarizeRTP, safeReport, captureStatus, remoteObservation, sourceObservation, rtpDelta, diagnosticSourceOptions, DiagnosticPTTDriver, SingleInitialization, Terminal, loadSyntheticSpeech, syntheticSpeechSource, speechSendDuration, bindDiagnosticPTTPointer, diagnosticSendMessage} from './diagnostics.js';
 import {AudioClient} from './audio.js';
 import {ControlClient} from './app.js';
 
@@ -184,7 +184,7 @@ test('speech WAV validation limits local input before decode and returns clear f
   await assert.rejects(loadSyntheticSpeech(wavFile(), {decodeAudioData: async () => { throw new Error('PRIVATE_DECODER_DETAIL'); }}), error => /解码失败/.test(error.message) && !/PRIVATE/.test(error.message));
   for (const duration of [0, -1, 12.01, Infinity, NaN]) await assert.rejects(loadSyntheticSpeech(wavFile(), {decodeAudioData: async () => ({...buffer, duration})}), /12 秒/);
   for (const numberOfChannels of [0, 3, 1.5]) await assert.rejects(loadSyntheticSpeech(wavFile(), {decodeAudioData: async () => ({...buffer, numberOfChannels})}), /单声道或双声道/);
-  assert.equal(speechSendDuration({duration: 2.1}), 2350); assert.equal(speechSendDuration({duration: 12}), 12000);
+  assert.equal(speechSendDuration({duration: 2.1}), 3100); assert.equal(speechSendDuration({duration: 12}), 13000);
 });
 
 function speechContext(events = []) {
@@ -289,4 +289,84 @@ test('speech RMS envelopes contain only the latest 200 aggregate frames without 
   assert.deepEqual(observation.remote_rms_frames.at(-1), {elapsed_ms: 24900, rms: .249, valid: true});
   assert.equal(JSON.stringify(observation).includes('PRIVATE'), false);
   terminal.sourceKind = 'system_microphone'; assert.equal('remote_rms_frames' in terminal.observation(), false);
+});
+
+function speechDriverHarness({duration = 5.39988, prepare, grant} = {}) {
+  const events = [], context = speechContext(events), source = syntheticSpeechSource(context, {duration});
+  const timers = new Map(); let serial = 0, clock = 0;
+  const client = {pressed: false, floorPhase: 'idle', floorRequest: null,
+    async pressFloor() { this.pressed = true; this.floorPhase = 'acquiring'; if (grant) await grant(); this.floorPhase = 'held'; },
+    cancelFloor() { this.pressed = false; this.floorPhase = 'idle'; events.push('floor-release'); }};
+  const driver = new DiagnosticPTTDriver(client, {duration: speechSendDuration({duration}), sourceDuration: Math.ceil(duration * 1000),
+    drainDuration: 250, timeoutReason: 'source-timeout', now: () => clock,
+    schedule(callback, delay) { const id = ++serial; timers.set(id, {callback, at: clock + delay, delay}); return id; }, cancel: id => timers.delete(id),
+    onGranted: onEnded => source.play(onEnded), onStop: () => source.stop()});
+  return {driver, client, source, context, timers, events, start: () => driver.start({prepare}), setClock: value => { clock = value; },
+    fire(id) { const timer = timers.get(id); assert.ok(timer); clock = timer.at; timer.callback(); }};
+}
+test('speech progress follows preparation and grant, then only natural end plus drain confirms complete send', async () => {
+  let prepared, granted;
+  const h = speechDriverHarness({prepare: () => new Promise(resolve => { prepared = resolve; }), grant: () => new Promise(resolve => { granted = resolve; })});
+  const pending = h.start();
+  assert.equal(h.driver.snapshot().phase, 'preparing'); assert.match(diagnosticSendMessage(h.driver.snapshot(), 'synthetic_speech'), /准备音源/);
+  prepared(); await Promise.resolve();
+  assert.equal(h.driver.snapshot().phase, 'acquiring'); assert.equal(h.context.nodes.length, 0);
+  assert.match(diagnosticSendMessage(h.driver.snapshot(), 'synthetic_speech'), /获权前不会播放/);
+  granted(); await pending;
+  assert.equal(h.driver.snapshot().phase, 'sending'); assert.equal(h.context.nodes.length, 1);
+  h.setClock(4026); assert.equal(h.driver.snapshot().remaining_ms, 1374);
+  assert.match(diagnosticSendMessage(h.driver.snapshot(), 'synthetic_speech'), /约剩 1\.4 秒.*留在本窗口/);
+  h.setClock(5400); h.context.nodes[0].onended();
+  assert.equal(h.driver.snapshot().phase, 'draining'); assert.equal(h.client.pressed, true);
+  assert.match(diagnosticSendMessage(h.driver.snapshot(), 'synthetic_speech'), /排空尾音/);
+  const drain = [...h.timers].find(([, timer]) => timer.delay === 250);
+  h.setClock(5649); assert.equal(h.driver.snapshot().remaining_ms, 1); assert.equal(h.client.pressed, true);
+  h.fire(drain[0]);
+  assert.equal(h.driver.snapshot().stop_reason, 'source-ended'); assert.equal(h.client.pressed, false); assert.equal(h.timers.size, 0);
+  assert.match(diagnosticSendMessage(h.driver.snapshot(), 'synthetic_speech'), /已完整发送.*现在可以切换窗口/);
+  assert.equal(h.driver.snapshot().attempts[0].sending_ms, 5650);
+  assert.equal(h.events.filter(event => event === 'floor-release').length, 1);
+});
+test('blur during the observed partial clip stops immediately and a stale natural end cannot claim completion', async () => {
+  const h = speechDriverHarness(); await h.start(); const staleEnded = h.context.nodes[0].onended;
+  h.setClock(4026);
+  const endPress = bindDiagnosticPTTPointer({addEventListener() {}}, h.client, () => h.driver);
+  endPress('window-blur');
+  assert.equal(h.driver.snapshot().stop_reason, 'window-blur'); assert.equal(h.driver.snapshot().attempts[0].sending_ms, 4026);
+  assert.equal(h.client.pressed, false); assert.equal(h.timers.size, 0); assert.equal(h.context.nodes[0].onended, null);
+  staleEnded(); assert.equal(h.driver.snapshot().stop_reason, 'window-blur');
+  assert.match(diagnosticSendMessage(h.driver.snapshot(), 'synthetic_speech'), /窗口失焦.*未完整发送/);
+  assert.ok(h.events.indexOf('speech-stop') < h.events.indexOf('floor-release'));
+});
+test('speech watchdog never reports completion without natural end and a full drain, including a late ended event', async () => {
+  for (const endedLate of [false, true]) {
+    const h = speechDriverHarness({duration: 12}); await h.start();
+    const watchdog = [...h.timers].find(([, timer]) => timer.delay === 13000);
+    if (endedLate) { h.setClock(12900); h.context.nodes[0].onended(); assert.equal(h.client.pressed, true); }
+    h.fire(watchdog[0]);
+    assert.equal(h.driver.snapshot().stop_reason, 'source-timeout'); assert.equal(h.timers.size, 0); assert.equal(h.client.pressed, false);
+    assert.match(diagnosticSendMessage(h.driver.snapshot(), 'synthetic_speech'), /超时.*未确认完整发送/);
+  }
+});
+test('source stop reasons stay distinct, lost floor stops playback, and diagnostic summaries remain bounded', async () => {
+  const h = speechDriverHarness();
+  for (const reason of ['user-cancelled', 'page-hidden', 'offline', 'media-interrupted', 'group-changed']) {
+    await h.start(); h.driver.stop(reason);
+    assert.equal(h.driver.snapshot().stop_reason, reason); assert.equal(h.timers.size, 0);
+    assert.doesNotMatch(diagnosticSendMessage(h.driver.snapshot(), 'synthetic_speech'), /已完整发送/);
+  }
+  await h.start(); h.client.pressed = false; h.client.floorPhase = 'idle'; h.driver.observeFloor();
+  assert.equal(h.driver.snapshot().stop_reason, 'floor-lost'); assert.equal(h.timers.size, 0);
+  for (let i = 0; i < 35; i++) { await h.start(); h.driver.stop('user-cancelled'); }
+  const snapshot = h.driver.snapshot(); assert.equal(snapshot.attempts.length, 30);
+  assert.deepEqual(Object.keys(snapshot.attempts[0]).sort(), ['ended_at', 'expected_duration_ms', 'requested_at', 'sending_ms', 'stop_reason']);
+  const copy = h.driver.snapshot(); copy.attempts[0].stop_reason = 'MUTATED'; assert.equal(h.driver.snapshot().attempts[0].stop_reason, 'user-cancelled');
+});
+test('non-speech timed capture reports its duration limit rather than claiming a complete speech clip', async () => {
+  let finish;
+  const client = {pressed: false, floorPhase: 'idle', async pressFloor() { this.pressed = true; this.floorPhase = 'held'; }, cancelFloor() { this.pressed = false; }};
+  const driver = new DiagnosticPTTDriver(client, {schedule(callback, delay) { assert.equal(delay, 3000); finish = callback; return 1; }, cancel() {}});
+  await driver.start(); finish();
+  assert.equal(driver.snapshot().stop_reason, 'duration-limit'); assert.match(diagnosticSendMessage(driver.snapshot(), 'system_microphone'), /限时发送上限/);
+  assert.doesNotMatch(diagnosticSendMessage(driver.snapshot(), 'synthetic'), /完整发送/);
 });
