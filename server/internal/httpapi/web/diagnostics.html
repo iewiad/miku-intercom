@@ -20,8 +20,10 @@
 <h2>独立标签页单端模式</h2>
 <p>在两个可见窗口分别打开本页并点击启用；每次启用建立独立测试身份，不共享产品凭据。两端加入相同口令。真实麦克风模式会请求系统权限，使用正常 PTT；页面隐藏、离线或切群会关闭旧采集与 Peer，状态重新确认后保持未按麦。接收数值与按次时间窗保留在报告中。</p>
 <label>测试端代号 <input id="single-name" value="单端A" maxlength="24"></label>
-<label>音源 <select id="single-source"><option value="synthetic">合成测试音（默认）</option><option value="system_microphone">真实系统麦克风</option></select></label>
+<label>音源 <select id="single-source"><option value="synthetic">合成测试音（默认）</option><option value="synthetic_speech">本机合成语音 WAV</option><option value="system_microphone">真实系统麦克风</option></select></label>
 <label>合成频率 <select id="single-frequency"><option value="440">440 Hz</option><option value="997">997 Hz</option><option value="1777">1777 Hz</option></select></label>
+<label id="speech-file-label" hidden>合成语音文件 <input id="single-speech-file" type="file" accept="audio/wav,.wav"></label>
+<p id="speech-file-help" hidden>仅选择本机生成的合成语音 WAV：不超过 2 MiB、12 秒、双声道。文件只在本页内存解码，不上传文件或保存音频。获权后从头发送一次，经真实群音频链路；不代表真人采集或人工听测。</p>
 <button id="enable-single">显式启用所选单端音源</button><br>
 <label>建群名称 <input id="group-name" value="跨标签诊断群" maxlength="32"></label><button id="create-group" disabled>建立测试群并显示口令</button>
 <label>群口令 <input id="group-code" autocomplete="off" maxlength="16"></label><button id="join-group" disabled>加入测试群</button>
@@ -35,6 +37,7 @@
 <p>真实采集默认静音接收。仅采集传输验证无需开启扬声器；如需稍后听测，请使用耳机并显式开始收听。播放被浏览器阻止时可再次点击重试。</p>
 <button id="single-ptt" type="button" disabled aria-pressed="false">按住发送当前音源</button>
 <button id="single-tone" disabled>申请并发送 3 秒合成测试音</button>
+<button id="single-speech" hidden disabled>申请并发送一次合成语音</button>
 <button id="single-timed" hidden disabled>诊断驱动：正常获权后最多发送 3 秒</button>
 <button id="single-cancel" disabled>立即停止发送 / 取消申请</button>
 <p>正常 PTT 松手、取消、失焦立即停发。3 秒按钮是显式开发驱动器，同样通过正常麦权申请；可立即停止，失焦或页面隐藏仍取消。安静环境的 RMS 可为 0，RTP 增长本身不代表真实有声。</p>
