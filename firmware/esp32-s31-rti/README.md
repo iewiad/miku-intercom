@@ -115,6 +115,8 @@ Group startup keeps the output volume already loaded by `board_audio_init`
 instead of forcing a temporary mute. The group UI and `output_volume` UART
 field reflect that applied value; only an explicit user adjustment persists
 a new value.
+Query it after the group UI initializes: an earlier UART reply can precede
+the controller's copy of the loaded audio state.
 
 The following is the historical **PR #10 first-slice** evidence, not validation
 of the current multi-group image. Its application is **2,606,960 B**, SHA256:

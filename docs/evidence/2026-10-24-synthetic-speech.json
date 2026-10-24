@@ -1,7 +1,7 @@
 {
   "date": "2026-10-24",
-  "scope": "one ESP32-S31 and two independently configured visible browser pages, fixed synthetic speech",
-  "status": "in_progress",
+  "scope": "one ESP32-S31 and two independent browser pages; synthetic speech plus near-microphone human listening",
+  "status": "functional_listening_passed",
   "source": {
     "kind": "local macOS TTS WAV",
     "seconds": 5.399875,
@@ -51,10 +51,14 @@
     "source_a_pcm_peak": 0.18386
   },
   "reverse_browser_direction": {
-    "status": "B-to-board human listening passed; A receive report pending"
+    "status": "B-to-A full phrase heard through headphones; B-to-board full phrase heard earlier",
+    "b_to_a_headphone_human_complete_phrase": true,
+    "board_audio_stopped_during_b_to_a_control": true,
+    "external_acoustic_source_played_during_control": false,
+    "latest_receiver_report": "not required for human listening result; pending final collection"
   },
   "board_to_two_browsers": {
-    "status": "in_progress; first A headphone attempt had no audible output",
+    "status": "A and B individually passed near-microphone human listening on current gain image",
     "board_to_a": {
       "human_headphone_result": "no sound",
       "human_builtin_speaker_reference_audible": true,
@@ -108,14 +112,61 @@
         "human_headphone_result": "not supplied"
       },
       "calibrated_source_human_feedback": "all sound perceived from external speaker, echo-like; headphone reception not established",
-      "browser_output_control": "pending B-to-A synthetic send with board audio stopped; removes external acoustic source from this control"
+      "browser_output_control": "B-to-A synthetic phrase fully heard in headphones with board audio stopped; A audible output verified",
+      "human_near_microphone_before_gain": {
+        "application_sha256": "07a30bb329f1c09c996a7b0574d7a024cb042d0a1ba11fb36bb206554369a9af",
+        "local_sound_played": false,
+        "source_distance_instruction_cm": [
+          10,
+          20
+        ],
+        "ptt_duration_ms": 10619,
+        "raw_frames": 529,
+        "raw_rms_peak": 0.013012,
+        "raw_rms_mean": 0.002052,
+        "encoder_frames": 529,
+        "encoder_rms_peak": 0.011395,
+        "encoder_rms_mean": 0.001969,
+        "sent_packets": 529,
+        "human_headphone_result": "audible but too quiet or incomplete",
+        "released_after_test": true
+      },
+      "gain_retest": {
+        "application_sha256": "4c873604df59d5139945833ae4110576a63a2df0a417b26c83199d9383693a4d",
+        "source": "human speech near board microphone",
+        "local_sound_played": false,
+        "ptt_duration_ms": 12578,
+        "raw_frames": 628,
+        "raw_rms_peak": 0.024764,
+        "raw_rms_mean": 0.001317,
+        "encoder_frames": 627,
+        "encoder_rms_peak": 0.174407,
+        "encoder_rms_mean": 0.010326,
+        "sent_packets": 627,
+        "human_headphone_result": "clear volume, complete sentence",
+        "released_after_test": true
+      },
+      "status": "human complete phrase with clear headphone volume passed after bounded uplink gain"
     },
     "board_to_b": {
-      "status": "pending"
+      "status": "human complete phrase with clear headphone volume passed after bounded uplink gain",
+      "application_sha256": "4c873604df59d5139945833ae4110576a63a2df0a417b26c83199d9383693a4d",
+      "source": "human speech near board microphone",
+      "local_sound_played": false,
+      "ptt_duration_ms": 12584,
+      "raw_frames": 628,
+      "raw_rms_peak": 0.005889,
+      "raw_rms_mean": 0.000778,
+      "encoder_frames": 627,
+      "encoder_rms_peak": 0.04505,
+      "encoder_rms_mean": 0.006115,
+      "sent_packets": 626,
+      "human_headphone_result": "clear volume, complete sentence",
+      "released_after_test": true
     }
   },
   "subjective_echo_and_latency": {
-    "status": "pending"
+    "status": "no formal latency, separated-location echo or long-duration quality measurement in this round; complete-phrase listening only"
   },
   "board_capture_levels": {
     "application": {
@@ -190,5 +241,74 @@
       "sent_packets": 340,
       "released_after_test": true
     }
-  }
+  },
+  "current_gain_firmware": {
+    "bytes": 2824208,
+    "sha256": "4c873604df59d5139945833ae4110576a63a2df0a417b26c83199d9383693a4d",
+    "app_offset": "0x10000",
+    "flash_scope": "application only",
+    "group_gain": 8,
+    "peak_limit": 29490,
+    "source_manifest_sha256": "6d79f436ad8db6e045515024922570b0cd0b5bf6bae071e108c0f6d3e18e11aa",
+    "source_base_commit": "f63410fcd5e7905e9ea6073c4400303c2aac8f0c",
+    "source_state": "working tree with gain and complete volume changes, matched by source hashes",
+    "independent_flash_digest_matched": true,
+    "new_group_uplink_gain": 8,
+    "speaker_volume_after_user_release": 38,
+    "speaker_volume_restart_persistence": "passed, retained 38 percent",
+    "source_code_commit_matching_manifest": "ed225fdf995cbda7dad4ac007bbc59290262c3a4",
+    "source_manifest_matches": true
+  },
+  "browser_headphone_listening": {
+    "a_to_b_complete_phrase": true,
+    "b_to_a_complete_phrase": true,
+    "board_audio_stopped_during_each_control": true,
+    "source": "browser-local synthetic WAV via normal floor",
+    "external_acoustic_source_played": false
+  },
+  "current_image_browser_to_board": {
+    "source_a_human_complete_phrase": true,
+    "source_b_human_complete_phrase": true,
+    "source": "local browser synthetic WAV through normal floor, browsers listening-muted",
+    "application_sha256": "4c873604df59d5139945833ae4110576a63a2df0a417b26c83199d9383693a4d",
+    "board_output_volume": 38,
+    "board_uplink_packets": 0,
+    "remote_pcm_peak_across_both_sends": 0.187262
+  },
+  "software_restart_volume_validation": {
+    "expected_volume": 38,
+    "volume_after_restart": 38,
+    "fresh_boot_confirmed": true,
+    "no_volume_command_after_restart": true,
+    "before_source_frames": 5369,
+    "after_source_frames": 0,
+    "before_current_version": 20,
+    "before_memberships": 6,
+    "rx_peak_across_both_browser_sends": 0.187262,
+    "no_board_uplink_during_browser_sends": true,
+    "test_readiness": "waited for audio/controller initialization, not first UART status",
+    "reconnected": true,
+    "group_version_after_restart": 20,
+    "memberships_after_restart": 6,
+    "unpressed_after_restart": true,
+    "http_failures": 0,
+    "ended_at_unix": 1792855595.4970188
+  },
+  "cleanup": {
+    "restored_original_group_name": "后勤组",
+    "normal_guarded_switch": true,
+    "test_group_version": 20,
+    "restored_version": 21,
+    "group_count": 6,
+    "output_volume": 38,
+    "ready_after_restore": true,
+    "pressed": false,
+    "held": false,
+    "tx_after_restore": 0,
+    "http_failures": 1,
+    "board_audio_stopped_after_test": true,
+    "http_failure_scope": "one failure observed during final restoration; normal operation converged to original group/version 21 and audio stopped",
+    "browser_close_reports": "pending user export after stop"
+  },
+  "browser_assets_under_test": "af6111b already-loaded diagnostic pages; later progress UI validated by unit tests, not claimed as manual UI acceptance"
 }
