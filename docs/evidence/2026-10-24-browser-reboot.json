@@ -1,0 +1,821 @@
+{
+  "schema": "shenglu.browser-reboot-validation.v1",
+  "source_revision": "a56923c082e3834b86662f2ce65466669129f2f7",
+  "started_at": "2026-10-24T01:24:08.702Z",
+  "finished_at": "2026-10-24T01:24:55.085Z",
+  "scope": "Local Chrome, three logical terminals in one page, synthetic audio with real WebRTC/Opus. No new system microphone or human listening validation in this run.",
+  "source_kind": "synthetic",
+  "human_listening": "not_performed",
+  "raw_report": {
+    "artifact": "outputs/browser-reboot-matrix.json",
+    "sha256": "e0730d81b36e96e03a3ec54f4d54e52867fef63423d76039ab14f92023dfe1a5"
+  },
+  "automated_tests": {
+    "node_version": "26.3.1",
+    "go_version": "1.27.1 darwin/arm64",
+    "node_tests_passed": 55,
+    "node_tests_failed": 0,
+    "go_top_level_tests_passed": 47,
+    "go_race_passed": true,
+    "go_vet_passed": true
+  },
+  "matrix_status": "passed",
+  "matrix_results": [
+    {
+      "name": "A → B/C 一对多 Opus",
+      "pass": true,
+      "measurements": [
+        {
+          "terminal": "B",
+          "frequency": 440,
+          "pass": true,
+          "samples": 15,
+          "rmsMax": 0.07094,
+          "rmsMean": 0.07082,
+          "expectedFrequency": 440,
+          "matchingSamples": 15,
+          "peakFrequencies": [
+            439
+          ],
+          "opus": true,
+          "packets_delta": 73,
+          "inbound": [
+            {
+              "packetsReceived": 153,
+              "bytesReceived": 7831,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 3.18,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 1,
+          "peer_id": "8254f45c-f05d-407e-9cd1-3eb799cefc91"
+        },
+        {
+          "terminal": "C",
+          "frequency": 440,
+          "pass": true,
+          "samples": 15,
+          "rmsMax": 0.07094,
+          "rmsMean": 0.07083,
+          "expectedFrequency": 440,
+          "matchingSamples": 15,
+          "peakFrequencies": [
+            439
+          ],
+          "opus": true,
+          "packets_delta": 73,
+          "inbound": [
+            {
+              "packetsReceived": 153,
+              "bytesReceived": 7831,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 3.18,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 1,
+          "peer_id": "82959ecc-8bf2-46b9-870d-3d1e513e4e28"
+        }
+      ]
+    },
+    {
+      "name": "B → A/C 双向与换源",
+      "pass": true,
+      "measurements": [
+        {
+          "terminal": "A",
+          "frequency": 997,
+          "pass": true,
+          "samples": 15,
+          "rmsMax": 0.07115,
+          "rmsMean": 0.07063,
+          "expectedFrequency": 997,
+          "matchingSamples": 15,
+          "peakFrequencies": [
+            996
+          ],
+          "opus": true,
+          "packets_delta": 73,
+          "inbound": [
+            {
+              "packetsReceived": 352,
+              "bytesReceived": 8183,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 7.29,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 1,
+          "peer_id": "1be6c3b2-7f76-4352-ae0c-5b69fc1247d2"
+        },
+        {
+          "terminal": "C",
+          "frequency": 997,
+          "pass": true,
+          "samples": 15,
+          "rmsMax": 0.0712,
+          "rmsMean": 0.07062,
+          "expectedFrequency": 997,
+          "matchingSamples": 15,
+          "peakFrequencies": [
+            996
+          ],
+          "opus": true,
+          "packets_delta": 73,
+          "inbound": [
+            {
+              "packetsReceived": 352,
+              "bytesReceived": 15555,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 7.29,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 1,
+          "peer_id": "82959ecc-8bf2-46b9-870d-3d1e513e4e28"
+        }
+      ]
+    },
+    {
+      "name": "松手后排空并连续两秒静默",
+      "pass": true,
+      "measurements": [
+        {
+          "terminal": "A",
+          "frequency": null,
+          "pass": true,
+          "samples": 22,
+          "rmsMax": 0,
+          "rmsMean": 0,
+          "expectedFrequency": null,
+          "peakFrequencies": [],
+          "opus": true,
+          "packets_delta": 106,
+          "inbound": [
+            {
+              "packetsReceived": 514,
+              "bytesReceived": 8669,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 10.64,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 1,
+          "peer_id": "1be6c3b2-7f76-4352-ae0c-5b69fc1247d2"
+        },
+        {
+          "terminal": "C",
+          "frequency": null,
+          "pass": true,
+          "samples": 22,
+          "rmsMax": 0,
+          "rmsMean": 0,
+          "expectedFrequency": null,
+          "peakFrequencies": [],
+          "opus": true,
+          "packets_delta": 106,
+          "inbound": [
+            {
+              "packetsReceived": 514,
+              "bytesReceived": 16041,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 10.64,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 1,
+          "peer_id": "82959ecc-8bf2-46b9-870d-3d1e513e4e28"
+        }
+      ]
+    },
+    {
+      "name": "C 在第二群：A → B，C 隔离",
+      "pass": true,
+      "measurements": [
+        {
+          "terminal": "B",
+          "frequency": 440,
+          "pass": true,
+          "samples": 15,
+          "rmsMax": 0.07073,
+          "rmsMean": 0.07059,
+          "expectedFrequency": 440,
+          "matchingSamples": 15,
+          "peakFrequencies": [
+            439
+          ],
+          "opus": true,
+          "packets_delta": 71,
+          "inbound": [
+            {
+              "packetsReceived": 673,
+              "bytesReceived": 16725,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 13.92,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 1,
+          "peer_id": "8254f45c-f05d-407e-9cd1-3eb799cefc91"
+        },
+        {
+          "terminal": "C",
+          "frequency": null,
+          "pass": true,
+          "samples": 15,
+          "rmsMax": 0,
+          "rmsMean": 0,
+          "expectedFrequency": null,
+          "peakFrequencies": [],
+          "opus": true,
+          "packets_delta": 73,
+          "inbound": [
+            {
+              "packetsReceived": 154,
+              "bytesReceived": 462,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 3.16,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 2,
+          "peer_id": "c5dd0542-d9e0-44a9-8221-a367f770f551"
+        }
+      ]
+    },
+    {
+      "name": "C 在第二群：C → A/B 隔离",
+      "pass": true,
+      "measurements": [
+        {
+          "terminal": "A",
+          "frequency": null,
+          "pass": true,
+          "samples": 15,
+          "rmsMax": 0,
+          "rmsMean": 0,
+          "expectedFrequency": null,
+          "peakFrequencies": [],
+          "opus": true,
+          "packets_delta": 73,
+          "inbound": [
+            {
+              "packetsReceived": 826,
+              "bytesReceived": 9605,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 17.06,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 1,
+          "peer_id": "1be6c3b2-7f76-4352-ae0c-5b69fc1247d2"
+        },
+        {
+          "terminal": "B",
+          "frequency": null,
+          "pass": true,
+          "samples": 15,
+          "rmsMax": 0,
+          "rmsMean": 0,
+          "expectedFrequency": null,
+          "peakFrequencies": [],
+          "opus": true,
+          "packets_delta": 73,
+          "inbound": [
+            {
+              "packetsReceived": 826,
+              "bytesReceived": 17340,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 17.06,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 1,
+          "peer_id": "8254f45c-f05d-407e-9cd1-3eb799cefc91"
+        }
+      ]
+    },
+    {
+      "winner": "A",
+      "loser": "B",
+      "name": "同时抢麦及败方持续发包隔离",
+      "pass": true,
+      "measurements": [
+        {
+          "terminal": "C",
+          "frequency": 440,
+          "pass": true,
+          "samples": 18,
+          "rmsMax": 0.07076,
+          "rmsMean": 0.07064,
+          "expectedFrequency": 440,
+          "matchingSamples": 18,
+          "peakFrequencies": [
+            439
+          ],
+          "opus": true,
+          "packets_delta": 87,
+          "inbound": [
+            {
+              "packetsReceived": 114,
+              "bytesReceived": 8846,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 2.36,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 3,
+          "peer_id": "b77d888f-96f0-492f-b466-4a097c83eb07"
+        }
+      ]
+    },
+    {
+      "pass": true,
+      "loser": "B",
+      "loser_outbound_packets_delta": 110,
+      "name": "赢家静音、败方持续上行：排除主频遮蔽泄漏",
+      "measurements": [
+        {
+          "terminal": "C",
+          "frequency": null,
+          "pass": true,
+          "samples": 22,
+          "rmsMax": 0,
+          "rmsMean": 0,
+          "expectedFrequency": null,
+          "peakFrequencies": [],
+          "opus": true,
+          "packets_delta": 107,
+          "inbound": [
+            {
+              "packetsReceived": 275,
+              "bytesReceived": 9863,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 5.67,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 3,
+          "peer_id": "b77d888f-96f0-492f-b466-4a097c83eb07"
+        }
+      ]
+    },
+    {
+      "pass": true,
+      "positive_baseline": {
+        "terminal": "B",
+        "frequency": 440,
+        "pass": true,
+        "samples": 10,
+        "rmsMax": 0.07093,
+        "rmsMean": 0.06434,
+        "expectedFrequency": 440,
+        "matchingSamples": 10,
+        "peakFrequencies": [
+          439
+        ],
+        "opus": true,
+        "packets_delta": 49,
+        "inbound": [
+          {
+            "packetsReceived": 1182,
+            "bytesReceived": 32518,
+            "totalAudioEnergy": 0,
+            "totalSamplesDuration": 24.4,
+            "codec": "audio/opus",
+            "clockRate": 48000
+          }
+        ],
+        "current_version": 1,
+        "peer_id": "8254f45c-f05d-407e-9cd1-3eb799cefc91"
+      },
+      "source_track_enabled": true,
+      "outbound_packets_delta": 246,
+      "name": "无续租且持续 RTP 上行：到期后两秒静默",
+      "measurements": [
+        {
+          "terminal": "B",
+          "frequency": null,
+          "pass": true,
+          "samples": 22,
+          "rmsMax": 0,
+          "rmsMean": 0,
+          "expectedFrequency": null,
+          "peakFrequencies": [],
+          "opus": true,
+          "packets_delta": 107,
+          "inbound": [
+            {
+              "packetsReceived": 1420,
+              "bytesReceived": 39238,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 29.31,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 1,
+          "peer_id": "8254f45c-f05d-407e-9cd1-3eb799cefc91"
+        },
+        {
+          "terminal": "C",
+          "frequency": null,
+          "pass": true,
+          "samples": 22,
+          "rmsMax": 0,
+          "rmsMean": 0,
+          "expectedFrequency": null,
+          "peakFrequencies": [],
+          "opus": true,
+          "packets_delta": 107,
+          "inbound": [
+            {
+              "packetsReceived": 584,
+              "bytesReceived": 21868,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 12.05,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 3,
+          "peer_id": "b77d888f-96f0-492f-b466-4a097c83eb07"
+        }
+      ]
+    },
+    {
+      "name": "失联到期后其他成员重新获权",
+      "pass": true,
+      "measurements": [
+        {
+          "terminal": "A",
+          "frequency": 997,
+          "pass": true,
+          "samples": 15,
+          "rmsMax": 0.07103,
+          "rmsMean": 0.0706,
+          "expectedFrequency": 997,
+          "matchingSamples": 15,
+          "peakFrequencies": [
+            996
+          ],
+          "opus": true,
+          "packets_delta": 73,
+          "inbound": [
+            {
+              "packetsReceived": 1571,
+              "bytesReceived": 19119,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 32.42,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 1,
+          "peer_id": "1be6c3b2-7f76-4352-ae0c-5b69fc1247d2"
+        },
+        {
+          "terminal": "C",
+          "frequency": 997,
+          "pass": true,
+          "samples": 15,
+          "rmsMax": 0.07095,
+          "rmsMean": 0.07058,
+          "expectedFrequency": 997,
+          "matchingSamples": 15,
+          "peakFrequencies": [
+            996
+          ],
+          "opus": true,
+          "packets_delta": 73,
+          "inbound": [
+            {
+              "packetsReceived": 735,
+              "bytesReceived": 29600,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 15.16,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 3,
+          "peer_id": "b77d888f-96f0-492f-b466-4a097c83eb07"
+        }
+      ]
+    },
+    {
+      "pass": true,
+      "name": "十次切群、旧声音与 Peer 残留",
+      "measurements": [
+        {
+          "index": 1,
+          "elapsed_ms": 1347,
+          "terminal": "C",
+          "frequency": null,
+          "pass": true,
+          "samples": 6,
+          "rmsMax": 0,
+          "rmsMean": 0,
+          "expectedFrequency": null,
+          "peakFrequencies": [],
+          "opus": true,
+          "packets_delta": 30,
+          "inbound": [
+            {
+              "packetsReceived": 59,
+              "bytesReceived": 177,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 1.2,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 4,
+          "peer_id": "29faa49a-22dd-4d31-819c-30f69ad41be4"
+        },
+        {
+          "index": 2,
+          "elapsed_ms": 1363,
+          "terminal": "C",
+          "frequency": 440,
+          "pass": true,
+          "samples": 6,
+          "rmsMax": 0.07066,
+          "rmsMean": 0.07061,
+          "expectedFrequency": 440,
+          "matchingSamples": 6,
+          "peakFrequencies": [
+            439
+          ],
+          "opus": true,
+          "packets_delta": 31,
+          "inbound": [
+            {
+              "packetsReceived": 58,
+              "bytesReceived": 4698,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 1.2,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 5,
+          "peer_id": "6691b611-2484-4444-89a5-2d4dfd7b3bfc"
+        },
+        {
+          "index": 3,
+          "elapsed_ms": 1362,
+          "terminal": "C",
+          "frequency": null,
+          "pass": true,
+          "samples": 6,
+          "rmsMax": 0,
+          "rmsMean": 0,
+          "expectedFrequency": null,
+          "peakFrequencies": [],
+          "opus": true,
+          "packets_delta": 30,
+          "inbound": [
+            {
+              "packetsReceived": 59,
+              "bytesReceived": 177,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 1.2,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 6,
+          "peer_id": "32e91029-cf36-4a0b-a5f8-e08f9d815558"
+        },
+        {
+          "index": 4,
+          "elapsed_ms": 1358,
+          "terminal": "C",
+          "frequency": 440,
+          "pass": true,
+          "samples": 6,
+          "rmsMax": 0.07076,
+          "rmsMean": 0.07068,
+          "expectedFrequency": 440,
+          "matchingSamples": 6,
+          "peakFrequencies": [
+            439
+          ],
+          "opus": true,
+          "packets_delta": 29,
+          "inbound": [
+            {
+              "packetsReceived": 58,
+              "bytesReceived": 4620,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 1.2,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 7,
+          "peer_id": "8eb5f3e8-b072-481f-8e6a-43fc1b471892"
+        },
+        {
+          "index": 5,
+          "elapsed_ms": 1353,
+          "terminal": "C",
+          "frequency": null,
+          "pass": true,
+          "samples": 6,
+          "rmsMax": 0,
+          "rmsMean": 0,
+          "expectedFrequency": null,
+          "peakFrequencies": [],
+          "opus": true,
+          "packets_delta": 29,
+          "inbound": [
+            {
+              "packetsReceived": 58,
+              "bytesReceived": 174,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 1.21,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 8,
+          "peer_id": "a9105c36-64ea-477a-bcb1-c66056b68c62"
+        },
+        {
+          "index": 6,
+          "elapsed_ms": 1369,
+          "terminal": "C",
+          "frequency": 440,
+          "pass": true,
+          "samples": 6,
+          "rmsMax": 0.0708,
+          "rmsMean": 0.07068,
+          "expectedFrequency": 440,
+          "matchingSamples": 6,
+          "peakFrequencies": [
+            439
+          ],
+          "opus": true,
+          "packets_delta": 29,
+          "inbound": [
+            {
+              "packetsReceived": 58,
+              "bytesReceived": 4698,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 1.2,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 9,
+          "peer_id": "7fb31644-4937-4cd2-bc6b-9e39973bb8c2"
+        },
+        {
+          "index": 7,
+          "elapsed_ms": 1357,
+          "terminal": "C",
+          "frequency": null,
+          "pass": true,
+          "samples": 6,
+          "rmsMax": 0,
+          "rmsMean": 0,
+          "expectedFrequency": null,
+          "peakFrequencies": [],
+          "opus": true,
+          "packets_delta": 31,
+          "inbound": [
+            {
+              "packetsReceived": 58,
+              "bytesReceived": 174,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 1.2,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 10,
+          "peer_id": "76c4f8a6-9d01-45ce-ad5a-119811f66e4c"
+        },
+        {
+          "index": 8,
+          "elapsed_ms": 1362,
+          "terminal": "C",
+          "frequency": 440,
+          "pass": true,
+          "samples": 6,
+          "rmsMax": 0.07079,
+          "rmsMean": 0.07067,
+          "expectedFrequency": 440,
+          "matchingSamples": 6,
+          "peakFrequencies": [
+            439
+          ],
+          "opus": true,
+          "packets_delta": 30,
+          "inbound": [
+            {
+              "packetsReceived": 59,
+              "bytesReceived": 4701,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 1.2,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 11,
+          "peer_id": "e7f8a4d6-369d-44ac-a6f6-999cddc9e5ee"
+        },
+        {
+          "index": 9,
+          "elapsed_ms": 1355,
+          "terminal": "C",
+          "frequency": null,
+          "pass": true,
+          "samples": 6,
+          "rmsMax": 0,
+          "rmsMean": 0,
+          "expectedFrequency": null,
+          "peakFrequencies": [],
+          "opus": true,
+          "packets_delta": 29,
+          "inbound": [
+            {
+              "packetsReceived": 58,
+              "bytesReceived": 174,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 1.21,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 12,
+          "peer_id": "ef4de8dc-3cab-438b-99ac-3d63dfd5e95b"
+        },
+        {
+          "index": 10,
+          "elapsed_ms": 1360,
+          "terminal": "C",
+          "frequency": 440,
+          "pass": true,
+          "samples": 6,
+          "rmsMax": 0.07078,
+          "rmsMean": 0.0707,
+          "expectedFrequency": 440,
+          "matchingSamples": 6,
+          "peakFrequencies": [
+            439
+          ],
+          "opus": true,
+          "packets_delta": 29,
+          "inbound": [
+            {
+              "packetsReceived": 58,
+              "bytesReceived": 4620,
+              "totalAudioEnergy": 0,
+              "totalSamplesDuration": 1.21,
+              "codec": "audio/opus",
+              "clockRate": 48000
+            }
+          ],
+          "current_version": 13,
+          "peer_id": "386e1f91-dec9-421b-9034-3141509ed6b4"
+        }
+      ]
+    }
+  ],
+  "resources_at_matrix_completion": [
+    {
+      "terminal": "A",
+      "created_peers": 1,
+      "open_peers": 1
+    },
+    {
+      "terminal": "B",
+      "created_peers": 1,
+      "open_peers": 1
+    },
+    {
+      "terminal": "C",
+      "created_peers": 13,
+      "open_peers": 1
+    }
+  ],
+  "browser_resources_after_close": "not_observed; desktop locked before UI cleanup",
+  "board_used": false,
+  "rta_used": false
+}
