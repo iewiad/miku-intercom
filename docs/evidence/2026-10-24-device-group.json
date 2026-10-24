@@ -1,0 +1,213 @@
+{
+  "schema": "shenglu.device-group.v1",
+  "date": "2026-10-24",
+  "base_revision": "32334f55606607e1efd3a0da1e0b65240966bbc3",
+  "source_manifest_sha256": "1ac9f2fa2be0c276066f203e8b757343b06990391a1f0cfe0d21f31ff8cc9f5a",
+  "scope": "one ESP32-S31-Korvo-1 and one visible Chrome with real microphones; explicit private LAN TLS and WebRTC Opus; numeric capture and transfer only",
+  "recording_saved": false,
+  "human_listening": "not_performed",
+  "browser_playback_muted": true,
+  "board_group_volume": 0,
+  "firmware": {
+    "app_bytes": 2606960,
+    "app_sha256": "a9cd7583a2621dfbab7c894fbd21d7b2b9338dda138bc69994511e307590612b",
+    "offset": "0x10000",
+    "write_scope": "application partition only",
+    "independent_flash_verify": "passed",
+    "nvs_erased": false,
+    "wifi_reconnected": true,
+    "rta_credentials_present": true,
+    "rta_gateway_called": false,
+    "time_sync": "USB UTC after boot; automatic SNTP not implemented"
+  },
+  "directions": [
+    {
+      "direction": "browser->board",
+      "ptt_duration_ms": 3010,
+      "source_pcm": {
+        "total_samples": 30,
+        "valid_samples": 30,
+        "rms_peak": 0.40566,
+        "rms_mean": 0.11996,
+        "rms_latest": 0.18264,
+        "enabled_samples": 30,
+        "live_samples": 30
+      },
+      "enabled_at_grant": true,
+      "enabled_at_end": false,
+      "capture_settings": {
+        "sampleRate": 48000,
+        "channelCount": 1,
+        "latency": 0.01,
+        "echoCancellation": true,
+        "noiseSuppression": true,
+        "autoGainControl": true
+      },
+      "board_cumulative_remote_rms_peak": 0.519934
+    },
+    {
+      "direction": "board->browser",
+      "driver_seconds": 6,
+      "release_elapsed_seconds": 6.046,
+      "sent_packets_at_release": 299,
+      "sent_packets_after_settle": 299,
+      "settle_interval_seconds": 2.683,
+      "pressed_at_release": false,
+      "held_at_release": false,
+      "browser_cumulative_remote_pcm": {
+        "total_samples": 748,
+        "valid_samples": 748,
+        "rms_peak": 0.0075,
+        "rms_mean": 0.00016,
+        "rms_latest": 0,
+        "rolling_window": {
+          "from_ms": 16102,
+          "to_ms": 90803,
+          "sample_limit": 3000
+        }
+      },
+      "browser_cumulative_inbound": [
+        {
+          "packetsReceived": 3588,
+          "bytesReceived": 31979,
+          "totalAudioEnergy": 0,
+          "totalSamplesDuration": 74.76,
+          "codec": "audio/opus",
+          "clockRate": 48000
+        }
+      ],
+      "note": "remote PCM and decoded counts cover the cumulative receive segment, not an exact six-second window; packet count alone is not a sound test"
+    }
+  ],
+  "healthy_watch": {
+    "started_at": "2026-10-24T06:03:37.189301Z",
+    "ended_at": "2026-10-24T06:05:37.450087Z",
+    "duration_seconds": 120.261,
+    "http_requests_from": 7,
+    "http_requests_to": 124,
+    "new_tls_connections": 0,
+    "tls_connections_total": 1,
+    "http_failure_delta": 0,
+    "connected_at_end": true,
+    "note": "a bounded two-minute observation; not a long-term reliability claim"
+  },
+  "memory": {
+    "audio_active_cycles": [
+      {
+        "at": "2026-10-24T06:03:31.758370Z",
+        "internal": 52895,
+        "largest_internal": 31744,
+        "dma": 20887,
+        "largest_dma": 11264,
+        "psram": 15714148,
+        "largest_psram": 15466496
+      },
+      {
+        "at": "2026-10-24T06:06:34.868919Z",
+        "internal": 52799,
+        "largest_internal": 31744,
+        "dma": 20791,
+        "largest_dma": 9728,
+        "psram": 15714316,
+        "largest_psram": 15466496
+      },
+      {
+        "at": "2026-10-24T06:07:15.762852Z",
+        "internal": 52875,
+        "largest_internal": 31744,
+        "dma": 20867,
+        "largest_dma": 11264,
+        "psram": 15714148,
+        "largest_psram": 15466496
+      }
+    ],
+    "stopped_internal_free_bytes": [
+      154459,
+      154467
+    ],
+    "non_dma_group_workspaces": "approximately 24.2 KB explicitly allocated in PSRAM; no internal fallback; driver DMA and AEC DMA arrays retained internally; RTA malloc path unchanged"
+  },
+  "planned_server_restart": {
+    "server_epoch_changed": true,
+    "same_current_group": true,
+    "same_current_version": true,
+    "media_peer_present": true,
+    "new_media_peer": true,
+    "media_phase": "connected",
+    "all_floors_empty": true,
+    "held_before_restart": true,
+    "board_after_loss": {
+      "desired": true,
+      "connected": false,
+      "pressed": false,
+      "held": false,
+      "sent_packets": 1293
+    },
+    "board_after_recovery": {
+      "desired": true,
+      "connected": true,
+      "pressed": false,
+      "held": false,
+      "sent_packets": 0
+    },
+    "http_failures_during_injected_outage": 7,
+    "post_recovery_additional_failures": 0
+  },
+  "cleanup": {
+    "board": {
+      "desired": false,
+      "connected": false,
+      "pressed": false,
+      "held": false,
+      "busy": false,
+      "heap_internal_free": 154467
+    },
+    "browser": [
+      {
+        "terminal": "ESP32 ↔ 浏览器最终回归",
+        "created_peers": 2,
+        "open_peers": 0
+      }
+    ],
+    "capture": {
+      "track_state": "none",
+      "enabled": false,
+      "muted": false,
+      "settings": {}
+    },
+    "panic_observed": false
+  },
+  "earlier_human_voice_observation": {
+    "app_sha256": "7edf380b29aeb3066ad5ff25233668eede9a44ab038981970b9d6ed97f8e800b",
+    "browser_cumulative_remote_rms_peak": 0.03339,
+    "note": "separate earlier image and capture window; user spoke toward board; no recording or listening; not attributed to final PSRAM image"
+  },
+  "software_checks": {
+    "server_go_test_race": "passed, six packages",
+    "server_go_vet": "passed",
+    "server_go_build": "passed",
+    "browser_node_tests": "55/55 passed",
+    "controller_http_and_state_host_tests": "passed",
+    "idf_build": "passed, 38% application partition free"
+  },
+  "limits": [
+    "No human listening or speech clarity verdict",
+    "Only one board and one Chrome tested in this S3 slice",
+    "Board multi-group UI and RTA voice commands remain unimplemented",
+    "No Internet, STUN/TURN, router or second-computer coverage",
+    "USB clock sync required after reboot; development certificates are temporary",
+    "Two-minute healthy observation and planned restart do not establish long-term stability"
+  ],
+  "artifact_sha256": {
+    "device-group-serial-final.json": "a39587ee1113e7a7acbe6280156345e9ade6c53d504a6163afc05216d6acc809",
+    "device-group-browser-final-baseline.json": "18c405148a1a16be2e6db78ecc70dd21261b415e17bf7a683e50c4bb7cd9e936",
+    "device-group-browser-to-board.json": "2e7d28e1b64c9c2e4e73894a3b93ff29e7f24fd35d4a709d19c2f704bf26b4f9",
+    "device-group-board-to-browser.json": "a231530ce5314880cc68ff88ba8f80cae6cdc371327e1c29edcec97a87d22deb",
+    "device-group-browser-recovery.json": "532635a4a5dc7d712d1ea7bd715306d95b255f82c0c232af71d32ad2c110e489",
+    "device-group-browser-final.json": "02f76126d2188c3e823556df7014304aa51b6ef44cfd7cd38b3c7dc7ed3bdc4f",
+    "device-group-recovery-final.json": "980252a5f66ccfa79a861f73d9545400713119da25253c57c4bd8fc452bc0b20",
+    "device-group-source-manifest.json": "1ac9f2fa2be0c276066f203e8b757343b06990391a1f0cfe0d21f31ff8cc9f5a",
+    "device-group-browser-final.png": "9169cb75a1b604833e7aa5baf3053662b45feb727710ea44817ce4345c4790cc",
+    "device-group-board-to-browser-human-before-psram.json": "02f6882c15e4586053f0136862146eb906e87855c2599392dbb43b88e5f49f6a"
+  }
+}

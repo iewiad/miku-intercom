@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"crypto/tls"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/iewiad/miku-intercom/server/internal/control"
+	"github.com/iewiad/miku-intercom/server/internal/lan"
 	"github.com/iewiad/miku-intercom/server/internal/media"
 )
 
@@ -19,8 +21,9 @@ import (
 var web embed.FS
 
 type Server struct {
-	service *control.Service
-	media   *media.Hub
+	service    *control.Service
+	media      *media.Hub
+	deviceHost string
 }
 
 func New(service *control.Service, hubs ...*media.Hub) http.Handler {
@@ -30,6 +33,31 @@ func New(service *control.Service, hubs ...*media.Hub) http.Handler {
 	}
 	return s
 }
+
+// NewDevice exposes only authenticated APIs to an explicitly configured native TLS client.
+func NewDevice(service *control.Service, hub *media.Hub, address string) (http.Handler, error) {
+	if _, err := lan.ParseAddress(address); err != nil {
+		return nil, err
+	}
+	return &Server{service: service, media: hub, deviceHost: address}, nil
+}
+
+// Native clients omit Origin entirely. Inspect every value, including empty and duplicate headers.
+func nativeDeviceRequest(r *http.Request) bool {
+	var sites []string
+	present := false
+	for name, values := range r.Header {
+		if strings.EqualFold(name, "Origin") {
+			return false
+		}
+		if strings.EqualFold(name, "Sec-Fetch-Site") {
+			present = true
+			sites = append(sites, values...)
+		}
+	}
+	return !present || (len(sites) == 1 && (sites[0] == "none" || sites[0] == "same-origin"))
+}
+
 func send(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -106,16 +134,39 @@ func decodeLimit(w http.ResponseWriter, r *http.Request, dst any, limitBytes int
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if !localHost(r.Host) {
-		errorResponse(w, invalid("host_forbidden", "localhost or loopback Host required", 403))
-		return
+	if s.deviceHost != "" {
+		if r.TLS == nil || r.TLS.Version < tls.VersionTLS12 {
+			errorResponse(w, invalid("tls_required", "TLS 1.2 or newer required", 403))
+			return
+		}
+		if r.Host != s.deviceHost {
+			errorResponse(w, invalid("host_forbidden", "configured device Host required", 403))
+			return
+		}
+		if !nativeDeviceRequest(r) {
+			errorResponse(w, invalid("origin_forbidden", "native device request required", 403))
+			return
+		}
+		if r.URL.Path == "/api/v1/devices" {
+			errorResponse(w, invalid("bootstrap_forbidden", "provision device identity through localhost", 403))
+			return
+		}
+		if !strings.HasPrefix(r.URL.Path, "/api/v1/") || r.URL.RawPath != "" {
+			errorResponse(w, invalid("not_found", "resource not found", 404))
+			return
+		}
+	} else {
+		if !localHost(r.Host) {
+			errorResponse(w, invalid("host_forbidden", "localhost or loopback Host required", 403))
+			return
+		}
 	}
 	static := map[string]string{"/": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/audio.js": "audio.js"}
 	if s.media != nil && s.media.DiagnosticsEnabled() {
 		static["/diagnostics"] = "diagnostics.html"
 		static["/diagnostics.js"] = "diagnostics.js"
 	}
-	if file, ok := static[r.URL.Path]; ok {
+	if file, ok := static[r.URL.Path]; ok && s.deviceHost == "" {
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", "GET")
 			errorResponse(w, invalid("method_not_allowed", "method not allowed", 405))
@@ -131,7 +182,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(b)
 		return
 	}
-	if !sameOrigin(r) {
+	if s.deviceHost == "" && !sameOrigin(r) {
 		errorResponse(w, invalid("origin_forbidden", "same-origin request required", 403))
 		return
 	}

@@ -19,6 +19,7 @@ typedef enum {
 } board_transcript_role_t;
 
 typedef void (*board_conversation_action_cb_t)(bool stop, void *context);
+typedef void (*board_ptt_action_cb_t)(bool pressed, void *context);
 typedef void (*board_volume_action_cb_t)(uint8_t volume, bool persist, void *context);
 typedef esp_err_t (*board_wifi_connected_cb_t)(void *context);
 
@@ -36,3 +37,15 @@ esp_err_t board_display_set_transcript(board_transcript_role_t role, const char 
 esp_err_t board_display_commit_transcript_turn(void);
 esp_err_t board_display_reset_transcript(void);
 bool board_display_is_chinese(void);
+
+/** Group intercom uses independent connect and hold-to-talk controls. */
+esp_err_t board_display_show_group(board_conversation_action_cb_t startstop,
+                                   board_ptt_action_cb_t ptt,
+                                   board_volume_action_cb_t volume,
+                                   uint8_t initial_volume,
+                                   void *context);
+esp_err_t board_display_set_group_state(const char *group, const char *detail,
+                                        bool connected, bool speaking);
+
+/** Publish controller intent separately from transport readiness (worker only). */
+esp_err_t board_display_set_group_active(bool active);

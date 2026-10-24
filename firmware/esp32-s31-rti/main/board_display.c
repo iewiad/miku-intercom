@@ -1668,3 +1668,229 @@ esp_err_t board_display_reset_transcript(void)
     bsp_display_unlock();
     return ESP_OK;
 }
+
+/* Group mode is a separate page: it never launches AI profiles or writes the
+ * legacy UI/audio settings. Deleting its PTT button also releases a held press. */
+static lv_obj_t *group_name_label;
+static lv_obj_t *group_detail_label;
+static lv_obj_t *group_status_label;
+static lv_obj_t *group_ptt_button;
+static lv_obj_t *group_ptt_label;
+static lv_obj_t *group_action_label;
+static lv_obj_t *group_volume_label;
+static board_conversation_action_cb_t group_action_callback;
+static board_ptt_action_cb_t group_ptt_callback;
+static board_volume_action_cb_t group_volume_callback;
+static void *group_context;
+static bool group_connected;
+static bool group_pressed;
+static bool group_stop_action;
+
+static void group_cancel_ptt(void)
+{
+    if (group_pressed) {
+        group_pressed = false;
+        if (group_ptt_callback) {
+            group_ptt_callback(false, group_context);
+        }
+    }
+}
+
+static void group_ptt_event_cb(lv_event_t *event)
+{
+    const lv_event_code_t code = lv_event_get_code(event);
+    if (code == LV_EVENT_PRESSED && group_connected && !group_pressed) {
+        group_pressed = true;
+        lv_label_set_text(group_ptt_label, "正在申请麦权");
+        if (group_ptt_callback) {
+            group_ptt_callback(true, group_context);
+        }
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST || code == LV_EVENT_DELETE) {
+        group_cancel_ptt();
+        if (code == LV_EVENT_DELETE) {
+            group_ptt_button = NULL;
+            group_ptt_label = NULL;
+            group_name_label = NULL;
+            group_detail_label = NULL;
+            group_status_label = NULL;
+            group_action_label = NULL;
+            group_volume_label = NULL;
+            group_connected = false;
+        } else {
+            lv_label_set_text(group_ptt_label, group_connected ? "按住说话" : "连接后可发言");
+        }
+    }
+}
+
+static void group_screen_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) == LV_EVENT_SCREEN_UNLOAD_START) {
+        group_cancel_ptt();
+        group_connected = false;
+        if (group_ptt_button) {
+            lv_obj_add_state(group_ptt_button, LV_STATE_DISABLED);
+        }
+    }
+}
+
+static void group_action_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_RELEASED) {
+        return;
+    }
+    group_cancel_ptt();
+    const bool stop = group_stop_action;
+    group_stop_action = !stop;
+    group_connected = false;
+    lv_obj_add_state(group_ptt_button, LV_STATE_DISABLED);
+    lv_label_set_text(group_ptt_label, "连接后可发言");
+    lv_label_set_text(group_action_label, group_stop_action ? "停止连接" : "连接群语音");
+    if (group_action_callback) {
+        group_action_callback(stop, group_context);
+    }
+}
+
+static void group_volume_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_VALUE_CHANGED) {
+        return;
+    }
+    const uint8_t value = (uint8_t)lv_slider_get_value(lv_event_get_target_obj(event));
+    char text[48];
+    snprintf(text, sizeof(text), value ? "收听音量 %u%%" : "收听已静音 %u%%", (unsigned)value);
+    lv_label_set_text(group_volume_label, text);
+    if (group_volume_callback) {
+        group_volume_callback(value, false, group_context);
+    }
+}
+
+static lv_obj_t *group_label(lv_obj_t *parent, const char *text, int x, int y, int width, uint32_t color)
+{
+    lv_obj_t *label = lv_label_create(parent);
+    lv_label_set_text(label, text);
+    lv_obj_set_pos(label, x, y);
+    lv_obj_set_width(label, width);
+    lv_obj_set_style_text_font(label, TRANSCRIPT_FONT, 0);
+    lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
+    return label;
+}
+
+esp_err_t board_display_show_group(board_conversation_action_cb_t startstop,
+                                   board_ptt_action_cb_t ptt,
+                                   board_volume_action_cb_t volume,
+                                   uint8_t initial_volume,
+                                   void *context)
+{
+    if (!bsp_display_lock(1000)) {
+        return ESP_ERR_TIMEOUT;
+    }
+    group_cancel_ptt();
+    lv_obj_t *screen = lv_screen_active();
+    lv_obj_clean(screen);
+    lv_obj_remove_event_cb(screen, group_screen_event_cb);
+    lv_obj_add_event_cb(screen, group_screen_event_cb, LV_EVENT_SCREEN_UNLOAD_START, NULL);
+    group_action_callback = startstop;
+    group_ptt_callback = ptt;
+    group_volume_callback = volume;
+    group_context = context;
+    group_connected = false;
+    group_pressed = false;
+    group_stop_action = false;
+    lv_obj_set_style_bg_color(screen, lv_color_hex(0x071018), 0);
+    lv_obj_set_style_bg_grad_dir(screen, LV_GRAD_DIR_NONE, 0);
+    lv_obj_t *brand = group_label(screen, APP_DISPLAY_NAME, 28, 22, 420, 0xF4FAFC);
+    lv_obj_set_style_text_font(brand, &shenglu_brand_24, 0);
+    group_label(screen, "小组语音，随时同行", 28, 62, 600, 0x8FA6B4);
+    group_name_label = group_label(screen, "尚未加入群组", 28, 112, 744, 0xF4FAFC);
+    group_status_label = group_label(screen, "尚未连接", 28, 150, 744, 0x49E5C2);
+    group_detail_label = group_label(screen, "等待 USB 配置后连接群语音", 28, 188, 744, 0xAABCC7);
+    lv_obj_set_height(group_detail_label, 58);
+    lv_label_set_long_mode(group_detail_label, LV_LABEL_LONG_MODE_WRAP);
+
+    lv_obj_t *action = lv_button_create(screen);
+    lv_obj_set_pos(action, 28, 268);
+    lv_obj_set_size(action, 218, 78);
+    lv_obj_set_style_bg_color(action, lv_color_hex(0x245675), 0);
+    lv_obj_add_event_cb(action, group_action_event_cb, LV_EVENT_RELEASED, NULL);
+    group_action_label = group_label(action, "连接群语音", 0, 0, 190, 0xFFFFFF);
+    lv_obj_set_style_text_align(group_action_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(group_action_label);
+
+    group_ptt_button = lv_button_create(screen);
+    lv_obj_set_pos(group_ptt_button, 270, 268);
+    lv_obj_set_size(group_ptt_button, 502, 78);
+    lv_obj_set_style_bg_color(group_ptt_button, lv_color_hex(0x148A75), 0);
+    lv_obj_add_state(group_ptt_button, LV_STATE_DISABLED);
+    lv_obj_add_event_cb(group_ptt_button, group_ptt_event_cb, LV_EVENT_ALL, NULL);
+    group_ptt_label = group_label(group_ptt_button, "连接后可发言", 0, 0, 470, 0xFFFFFF);
+    lv_obj_set_style_text_align(group_ptt_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(group_ptt_label);
+
+    const uint8_t level = initial_volume <= 100 ? initial_volume : 0;
+    char volume_text[48];
+    snprintf(volume_text, sizeof(volume_text), level ? "收听音量 %u%%" : "收听已静音 %u%%", (unsigned)level);
+    group_volume_label = group_label(screen, volume_text, 28, 378, 230, 0xAABCC7);
+    lv_obj_t *slider = lv_slider_create(screen);
+    lv_obj_set_pos(slider, 270, 386);
+    lv_obj_set_size(slider, 480, 16);
+    lv_slider_set_range(slider, 0, 100);
+    lv_slider_set_value(slider, level, LV_ANIM_OFF);
+    lv_obj_add_event_cb(slider, group_volume_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    group_label(screen, "松手或离开页面立即停止发言", 28, 435, 744, 0x6F8998);
+    bsp_display_unlock();
+    if (volume) {
+        volume(level, false, context);
+    }
+    return ESP_OK;
+}
+
+esp_err_t board_display_set_group_state(const char *group, const char *detail,
+                                        bool connected, bool speaking)
+{
+    if (!bsp_display_lock(1000)) {
+        return ESP_ERR_TIMEOUT;
+    }
+    if (!group_ptt_button || !group_status_label || !group_name_label || !group_detail_label) {
+        bsp_display_unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
+    connected = connected && group_stop_action;
+    if (!connected) {
+        group_cancel_ptt();
+    }
+    group_connected = connected;
+    if (connected) {
+        lv_obj_remove_state(group_ptt_button, LV_STATE_DISABLED);
+    } else {
+        lv_obj_add_state(group_ptt_button, LV_STATE_DISABLED);
+    }
+    lv_label_set_text(group_name_label, group && group[0] ? group : "尚未加入群组");
+    lv_label_set_text(group_detail_label, detail ? detail : "");
+    lv_label_set_text(group_status_label, !connected ? (group_stop_action ? "尚未连接" : "已停止") : speaking ? "持有麦权，正在发言" : "群语音已就绪");
+    lv_label_set_text(group_ptt_label, !connected ? "连接后可发言" : speaking ? "松手停止发言" : group_pressed ? "正在申请麦权" : "按住说话");
+    lv_label_set_text(group_action_label, group_stop_action ? "停止连接" : "连接群语音");
+    bsp_display_unlock();
+    return ESP_OK;
+}
+
+esp_err_t board_display_set_group_active(bool active)
+{
+    if (!bsp_display_lock(1000)) {
+        return ESP_ERR_TIMEOUT;
+    }
+    if (!group_ptt_button || !group_action_label) {
+        bsp_display_unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
+    group_stop_action = active;
+    if (!active) {
+        group_cancel_ptt();
+        group_connected = false;
+        lv_obj_add_state(group_ptt_button, LV_STATE_DISABLED);
+        lv_label_set_text(group_ptt_label, "连接后可发言");
+        lv_label_set_text(group_status_label, "已停止");
+    }
+    lv_label_set_text(group_action_label, active ? "停止连接" : "连接群语音");
+    bsp_display_unlock();
+    return ESP_OK;
+}
