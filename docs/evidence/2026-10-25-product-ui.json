@@ -1,0 +1,146 @@
+{
+  "date": "2026-10-25",
+  "slice": "008 product UI and interaction",
+  "status": "host_build_flash_and_user_display_checks_passed",
+  "base": {
+    "pull_request": 13,
+    "commit": "d3c7337ea5dbeaed419ba33328dd5f0752ba3985"
+  },
+  "source_commit": "5ed8c620175d3e7f0788d014d1c0f99990ec24b4",
+  "browser": {
+    "themes": "system light/dark; solid fallback, reduced-motion/transparency and contrast rules",
+    "primary": "authoritative current group, actual control/media status, push-to-talk",
+    "secondary_task_panel": "opening synchronously cancels current PTT and rejects late grants; closing never enables capture or presses",
+    "existing_cleanup_and_operation_confirmation_preserved": true,
+    "unknown_catalog_distinct_from_confirmed_empty": true,
+    "user_display_check": "new UI and Add group entry displayed normally; no audio connection requested",
+    "actual_browser_automation_used": false,
+    "visual_check_scope": "user confirmation of normal display at their current viewport; all themes, 320px layout and assistive modes not separately observed",
+    "runtime_started": true,
+    "runtime_url": "http://127.0.0.1:18792/",
+    "original_snapshots_privately_backed_up": true,
+    "data_reset": false,
+    "stale_locks": "both previous owner processes verified absent; lock directories retained privately before restart",
+    "pending_rta_journal_records_before_restart": 0
+  },
+  "device": {
+    "application": {
+      "code_commit": "5ed8c620175d3e7f0788d014d1c0f99990ec24b4",
+      "bytes": 3474528,
+      "sha256": "5eacfdc09c49162214df5d0ada8e42ca19c8b25e55a7ad784672f59c57e72949",
+      "application_offset": "0x10000",
+      "partition_bytes": 4194304,
+      "partition_free_bytes": 719776,
+      "static_dram_sections": {
+        ".dram0.data": {
+          "before": 31648,
+          "after": 31648,
+          "delta": 0
+        },
+        ".dram0.bss": {
+          "before": 58664,
+          "after": 58664,
+          "delta": 0
+        }
+      },
+      "source_manifest_sha256": "6d4f358896ccaf051214be955e5bf9e451d2f22179b6abeafe5d754b5e5aab63",
+      "default_group_mode": true,
+      "image_version": "v0-61-g5ed8c62"
+    },
+    "app_only_write": true,
+    "nvs_erased": false,
+    "partition_table_written": false,
+    "independent_flash_digest_verified": true,
+    "startup": {
+      "version_seen": true,
+      "fatal_observed": false,
+      "configuration_present": true,
+      "serial_closed": true,
+      "final_status": {
+        "configured": true,
+        "desired": false,
+        "connected": false,
+        "pressed": false,
+        "held": false,
+        "busy": false,
+        "source_frames": 0,
+        "sent_packets": 0,
+        "received_packets": 0,
+        "output_volume": 38,
+        "heap_internal_free": 144447,
+        "http_requests": 0,
+        "http_failures": 0,
+        "catalog_known": false
+      }
+    },
+    "user_display_check": "home layout complete, no overlapping text, clipping or missing-glyph boxes observed",
+    "user_display_check_scope": "main screen only; no manual touch flow or audio test requested for this image",
+    "runtime_heap_scope": "single initialized stopped-mode observation, not an active-audio or long-duration memory result"
+  },
+  "lvgl_host": {
+    "production_constructors_and_render_controls": true,
+    "framebuffer_pixels": true,
+    "physical_lcd_capture": false,
+    "preview": "docs/images/product-ui-board.png",
+    "preview_sha256": "80f32fc678e4f21e59e9f40ab6660a733954c724e30a56572b3f370fa2097fa6",
+    "states": [
+      "connecting",
+      "ready",
+      "speaking",
+      "long-name",
+      "group-list",
+      "join",
+      "voice"
+    ],
+    "coverage": [
+      "bounded 800x480 controls and labels",
+      "32 and 42 Chinese-character ellipsis stress",
+      "real pointer PTT release",
+      "dropdown and command-busy gates",
+      "44px effective slider target edges",
+      "loaded volume retained; one save on release",
+      "old keyboard anchor mutations rejected"
+    ],
+    "doubles": "controller, worker, catalog publications and network boundaries remain fixture data"
+  },
+  "fonts": {
+    "source": "local LVGL-bundled SourceHanSansSC-Normal.otf",
+    "license": "SIL OFL 1.1 with Adobe notice",
+    "converter": "local lv_font_conv 1.5.3; no download",
+    "fixed_ui": {
+      "pixels": 24,
+      "bits_per_pixel": 4,
+      "ascii_glyphs": 95,
+      "non_ascii_glyphs": 137
+    },
+    "dynamic_group_name": {
+      "pixels": 20,
+      "bits_per_pixel": 2,
+      "original_symbols": 7445,
+      "ascii_glyphs": 95,
+      "same_coverage_as_existing_16px": true,
+      "emoji_coverage_added": false
+    }
+  },
+  "checks": {
+    "unified_host_steps_passed": 21,
+    "node_tests_passed": 109,
+    "python_tool_tests_passed": 14,
+    "firmware_host_suites": 16,
+    "go_race_vet_build": "passed",
+    "idf_full_build_and_size": "passed",
+    "independent_source_and_visual_review": "passed"
+  },
+  "agent_audio_activity": {
+    "new_listening_test": false,
+    "microphone_request": false,
+    "sound_playback": false,
+    "rta_session_create": false
+  },
+  "limits": [
+    "Browser display confirmation is not automated pixel or accessibility-mode acceptance.",
+    "LVGL fixture images are not physical LCD captures.",
+    "This UI image did not repeat the earlier six-direction listening test; prior listening evidence remains bound to its original image.",
+    "Full demo, repeated spoken switching, echo/latency and long-duration testing retain independent pending acceptance."
+  ]
+}

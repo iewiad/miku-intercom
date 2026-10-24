@@ -3,83 +3,95 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#edf5f6" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b141c" media="(prefers-color-scheme: dark)">
   <title>声路同行 · 小组语音协作</title>
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <div class="demo-banner"><span class="demo-dot" aria-hidden="true"></span>本机浏览器群对讲 · 音频需手动启用</div>
-  <header class="page-header">
+  <a class="skip-link" href="#main-content">跳到对讲</a>
+  <header class="page-header glass">
     <a class="brand" href="/" aria-label="声路同行首页"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>声路同行<small>让协作，在同一个频道</small></span></a>
     <div class="identity-chip" id="identity-chip" hidden><span class="avatar" aria-hidden="true">我</span><span id="identity-name"></span></div>
   </header>
-  <main>
-    <section id="welcome" class="welcome-card">
-      <span class="eyebrow">小组即时协作</span>
-      <h1>先组个群，<br>一起走下一程。</h1>
-      <p class="intro">快速组队，按住说话。启用音频后，和当前群的伙伴直接交流。</p>
+  <main id="main-content">
+    <section id="welcome" class="welcome-card panel" aria-labelledby="welcome-title">
+      <span class="eyebrow">小组语音协作</span>
+      <h1 id="welcome-title">一句话的距离，<br>就能找到彼此。</h1>
+      <p class="intro">和伙伴加入同一个群，按住说话，松开结束。</p>
       <form id="identity-form" class="identity-form">
         <label for="nickname">怎么称呼你</label>
-        <div class="input-row"><input id="nickname" name="nickname" placeholder="输入一个昵称" minlength="1" maxlength="64" required autocomplete="nickname"><button class="button primary" id="identity-submit" type="submit">建立本机身份 <span aria-hidden="true">↗</span></button></div>
+        <div class="input-row"><input id="nickname" name="nickname" placeholder="输入你的昵称" minlength="1" maxlength="64" required autocomplete="nickname"><button class="button primary" id="identity-submit" type="submit">开始使用 <span aria-hidden="true">↗</span></button></div>
       </form>
-      <p class="fine-print">身份凭据仅保存在此浏览器的本机存储中。昵称用于展示，不是登录凭据。</p>
-      <div class="welcome-steps"><span><b>01</b> 建群或入群</span><span><b>02</b> 选择当前群</span><span><b>03</b> 按住说话</span></div>
+      <p class="fine-print">昵称会展示给同群伙伴，这台设备会记住你。</p>
+      <div class="welcome-steps"><span><b>01</b> 加入群组</span><span><b>02</b> 连接语音</span><span><b>03</b> 按住说话</span></div>
     </section>
     <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
-    <section id="lock-panel" class="lock-panel" hidden>
-      <div><strong id="lock-title">此标签页已暂停操作</strong><p id="lock-description"></p></div><button id="takeover" type="button" class="button secondary">改用当前标签页</button>
+    <section id="lock-panel" class="lock-panel panel" hidden>
+      <div><strong id="lock-title">此页面已暂停</strong><p id="lock-description"></p></div><button id="takeover" type="button" class="button secondary">在这里继续</button>
     </section>
     <section id="workspace" class="workspace" hidden>
-      <aside class="sidebar">
-        <section class="panel groups-panel">
-          <div class="section-heading"><h2>已加入的群</h2><span class="count" id="group-count">0 个</span></div>
-          <label for="group-filter" class="group-filter-label">按群名或职责筛选</label>
-          <input id="group-filter" type="search" placeholder="输入群名或职责关键词" maxlength="512" autocomplete="off" spellcheck="false" aria-describedby="group-filter-help group-filter-status">
-          <p id="group-filter-help" class="field-help">仅筛选当前列表，仍需手动选择“进入”。</p>
-          <p id="group-filter-status" class="field-help" role="status" aria-live="polite">仅筛选已加入群的列表</p>
-          <ul class="group-list" id="group-list" aria-label="已加入的群"></ul>
-          <div id="empty-groups" class="empty-state"><span aria-hidden="true">◎</span><p>第一段同行，从一个群开始。</p><small>创建群，或向伙伴要一个口令。</small></div>
-          <div id="empty-filter" class="empty-state" hidden><p>没有匹配的群</p><small>试试群名或职责中的其他文字，或清空筛选。</small></div>
-          <div class="panel-divider"></div>
-          <form id="create-form" class="compact-form">
-            <label for="create-name">创建新群</label><div class="input-row"><input id="create-name" placeholder="例如：全员群" maxlength="64" required autocomplete="off"><button id="create-group" class="button secondary" type="submit">创建</button></div>
-            <label for="create-purpose" class="purpose-label">职责简介（可选）</label>
-            <input id="create-purpose" placeholder="例如：设备排障、物资协助" maxlength="512" autocomplete="off" aria-describedby="create-purpose-help">
-            <p id="create-purpose-help" class="field-help">最多 256 个字符，简要说明这个群能协助什么。</p>
-          </form>
-          <form id="join-form" class="compact-form">
-            <label for="join-code">用口令加入</label><div class="input-row"><input id="join-code" class="code-input" placeholder="8 位入群口令" maxlength="24" required autocomplete="off" autocapitalize="characters" spellcheck="false"><button id="join-group" class="button secondary" type="submit">加入</button></div>
-          </form>
-        </section>
-        <section class="share-card" id="share-card" hidden>
-          <span class="eyebrow">邀请伙伴同行</span><h3 id="share-name"></h3><div class="share-line"><code id="share-code"></code><button id="copy-code" class="copy-button" type="button">复制</button></div><p>请保存并私下分享此口令，刷新后不再展示。</p>
-        </section>
-      </aside>
-      <section class="panel channel-panel">
-        <div class="channel-top"><span class="eyebrow">当前频道</span><button class="text-button" type="button" id="refresh-state">刷新状态 <span aria-hidden="true">↻</span></button></div>
-        <h1 id="current-name">还没有当前群</h1><p id="current-detail" class="channel-detail">创建群或输入口令，启用音频后开始对讲</p>
+      <section id="channel-panel" class="panel channel-panel" aria-labelledby="current-name">
+        <div class="channel-top"><span class="eyebrow">当前群组</span><button class="icon-button" type="button" id="refresh-state" aria-label="刷新群组状态"><span aria-hidden="true">↻</span><span>刷新</span></button></div>
+        <h1 id="current-name" tabindex="-1">你的第一个群组</h1>
+        <p id="current-detail" class="channel-detail">让要一起协作的伙伴，来到同一个频道</p>
+        <p id="current-purpose" class="current-purpose" hidden></p>
+        <div id="floor-status" class="floor-status" role="status" aria-live="polite" aria-atomic="true"><span class="status-dot" aria-hidden="true"></span><strong id="floor-label">先加入一个群</strong><p id="floor-description">创建你的小组，或输入伙伴分享的口令。</p></div>
+        <div id="empty-actions" class="empty-actions"><button id="empty-create" type="button" class="button primary">创建群组</button><button id="empty-join" type="button" class="button secondary">用口令加入</button></div>
         <div class="audio-controls">
-          <span id="audio-status" class="audio-status" role="status">未启用音频</span>
-          <div class="audio-actions"><button id="audio-enable" class="button primary" type="button">启用音频</button><button id="audio-disable" class="button secondary" type="button" hidden>关闭音频</button><button id="audio-play" class="button primary" type="button" hidden>点击开始收听</button></div>
-          <label class="listen-toggle"><input type="checkbox" id="listen-muted" disabled>收听静音</label>
-          <p id="audio-message">建议戴耳机，避免同机多端播放造成回声。</p>
+          <div class="audio-actions"><button id="audio-enable" class="button primary" type="button">连接群语音</button><button id="audio-disable" class="button secondary" type="button" hidden>断开语音</button><button id="audio-play" class="button primary" type="button" hidden>开始收听</button></div>
+          <span id="audio-status" class="audio-status" role="status">语音未连接</span>
+          <p id="audio-message">建议戴耳机，让彼此的声音更清楚。</p>
           <audio id="remote-audio" autoplay playsinline hidden></audio>
         </div>
-        <div class="voice-controls">
-          <div class="audio-actions"><button id="voice-start" class="button secondary" type="button" disabled>语音切群</button><button id="voice-cancel" class="button secondary" type="button" hidden>取消指令</button><button id="voice-check" class="button secondary" type="button" hidden>重试检查语音状态</button></div>
-          <p id="voice-status" role="status" aria-live="polite">正在检查语音切群。</p>
+        <div class="ptt-area"><button type="button" id="ptt" class="ptt-button" aria-pressed="false" aria-describedby="ptt-hint" disabled><span class="ptt-icon" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><strong id="ptt-title">按住说话</strong><small id="ptt-hint">加入群组后即可连接</small></button></div>
+        <div class="conversation-tools glass">
+          <label class="listen-toggle"><input type="checkbox" id="listen-muted" disabled><span>收听静音</span></label>
+          <button id="voice-start" class="button quiet" type="button" disabled>语音切群 <span aria-hidden="true">↗</span></button>
         </div>
-        <div class="floor-status"><span class="status-dot" aria-hidden="true"></span><strong id="floor-label">未按麦</strong><p id="floor-description">松手、失焦或离开页面都会结束申请与持有</p></div>
-        <div class="ptt-area"><button type="button" id="ptt" class="ptt-button" aria-pressed="false" disabled><span class="ptt-icon" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><strong id="ptt-title">按住说话</strong><small id="ptt-hint">入群后可用</small></button></div>
-        <div class="control-note"><span aria-hidden="true">ⓘ</span><p>只有获权且仍按住时才发送麦克风声音，松手立即停发。</p></div>
-        <button type="button" class="button secondary retry-switch" id="retry-switch" hidden>继续确认同一次切群</button>
-        <div class="channel-bottom"><span><i class="sync-dot" aria-hidden="true"></i><span id="sync-label">本机演示</span></span><span>成员数为已加入人数</span></div>
+        <div class="voice-controls">
+          <div class="audio-actions"><button id="voice-cancel" class="button secondary" type="button" hidden>取消语音切群</button><button id="voice-check" class="button secondary" type="button" hidden>继续恢复</button></div>
+          <p id="voice-status" role="status" aria-live="polite">正在准备语音切群。</p>
+        </div>
+        <button type="button" class="button secondary retry-switch" id="retry-switch" hidden>继续连接</button>
+        <div class="channel-bottom"><span><i class="sync-dot" aria-hidden="true"></i><span id="sync-label">正在获取群组</span></span><span>松开、切走页面即停止发言</span></div>
       </section>
+      <aside class="sidebar" aria-label="群组">
+        <section class="panel groups-panel">
+          <div class="section-heading"><div><h2>我的群组</h2><span class="count" id="group-count">0 个</span></div><button id="add-group-open" class="button secondary" type="button" aria-controls="add-group-panel" aria-expanded="false"><span aria-hidden="true">＋</span> 添加群组</button></div>
+          <label for="group-filter" class="group-filter-label">按群名或职责筛选</label>
+          <input id="group-filter" type="search" placeholder="搜索已加入的群" maxlength="512" autocomplete="off" spellcheck="false" aria-describedby="group-filter-help group-filter-status">
+          <p id="group-filter-help" class="field-help">仅筛选列表，仍需手动选择“进入”。</p>
+          <p id="group-filter-status" class="field-help" role="status" aria-live="polite">仅筛选已加入群的列表</p>
+          <ul class="group-list" id="group-list" aria-label="已加入的群"></ul>
+          <div id="empty-groups" class="empty-state"><span aria-hidden="true">◎</span><p>还没有加入的群</p><small>创建小组，或用伙伴的口令加入。</small></div>
+          <div id="empty-filter" class="empty-state" hidden><p>没有匹配的群</p><small>换个关键词，或清空筛选。</small></div>
+          <p class="field-help member-note">群内人数为已加入成员，不代表正在收听的人数。</p>
+        </section>
+        <section id="add-group-panel" class="panel add-group-panel" aria-labelledby="add-group-title" hidden>
+          <div class="section-heading"><h2 id="add-group-title">添加群组</h2><button id="add-group-close" type="button" class="icon-button" aria-label="关闭添加群组">关闭 <span aria-hidden="true">×</span></button></div>
+          <div class="form-modes glass" role="group" aria-label="添加方式"><button id="join-mode" type="button" aria-pressed="true">用口令加入</button><button id="create-mode" type="button" aria-pressed="false">创建新群</button></div>
+          <p id="add-group-status" class="form-error" role="alert" hidden></p>
+          <form id="join-form" class="compact-form">
+            <label for="join-code">伙伴分享的群口令</label><input id="join-code" class="code-input" placeholder="输入 8 位口令" maxlength="24" required autocomplete="off" autocapitalize="characters" spellcheck="false" aria-describedby="join-help">
+            <p id="join-help" class="field-help">加入后，可以从群列表选择要进入的群。</p><button id="join-group" class="button primary form-submit" type="submit">加入群组</button>
+          </form>
+          <form id="create-form" class="compact-form" hidden>
+            <label for="create-name">群组名称</label><input id="create-name" placeholder="例如：周末同行" maxlength="64" required autocomplete="off">
+            <label for="create-purpose" class="purpose-label">职责简介 <span>可选</span></label><input id="create-purpose" placeholder="例如：设备排障、物资协助" maxlength="512" autocomplete="off" aria-describedby="create-purpose-help">
+            <p id="create-purpose-help" class="field-help">最多 256 个字符，说明这个群能协助什么。</p><button id="create-group" class="button primary form-submit" type="submit">创建群组</button>
+          </form>
+          <p class="field-help task-note">添加期间暂停发言；关闭面板后可返回对讲操作。也可按 Esc 返回。</p>
+        </section>
+        <section class="share-card panel" id="share-card" aria-labelledby="share-name" hidden>
+          <span class="eyebrow">邀请伙伴</span><h2 id="share-name"></h2><div class="share-line"><code id="share-code"></code><button id="copy-code" class="button secondary" type="button">复制口令</button></div><p>口令只显示这一次，请保存到本机并私下分享。刷新页面后不会再次显示。</p>
+        </section>
+      </aside>
     </section>
-    <p class="browser-tip">两个成员测试，请使用两个独立浏览器配置或隐私窗口；同一浏览器的多个标签页会共享身份。</p>
   </main>
-  <footer><span>声路同行 · Miku Intercom</span><span>先连接彼此，再出发。</span></footer>
-  <noscript><p>请启用 JavaScript 以使用本机浏览器群对讲。</p></noscript>
+  <footer><span>声路同行</span><span>按住说话，松开结束。</span></footer>
+  <noscript><p>请启用 JavaScript 以使用群组对讲。</p></noscript>
 </body>
 </html>

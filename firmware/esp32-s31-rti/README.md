@@ -10,18 +10,24 @@ acceptance. PR #10 is merged and its first-slice evidence remains independent.
 validated numerically for this run, including ten consecutive switches and
 soft-reboot recovery. The user confirmed display contents; switching was mainly
 driven through the same controller via serial, not a complete touch-flow test.
-This branch adds the join-code keyboard and explicit RTA voice switching.
-Human listening, full touch interaction, repeated spoken switching and actual
-power-loss recovery retain independent acceptance. See
+The join-code keyboard and explicit RTA voice switching are merged in PR #12.
+Touch join, two spoken switches, cancellation, six-direction listening and final
+browser closeout reports have separate evidence. The product-UI refresh changes
+LVGL presentation and fonts; its host rendering, build, flash and physical-screen
+checks do not inherit listening acceptance from an older image. Repeated spoken
+switching and actual power-loss recovery retain independent acceptance. See
 [the S3 LAN contract](../../docs/specs/004-device-lan.md) and
 [the evidence log](../../docs/acceptance.md) for scope and actual results.
 
 The boot screen and main interface display the application name **声路同行**.
 The boot title uses a 48 px Chinese font, and the main header uses a 24 px font;
-both subsets contain only the four application-name characters. The rest of the
-Chinese interface continues to use the existing 16 px GB2312 font.
+both subsets contain only the four application-name characters. The product
+group page uses a separate 24 px subset for fixed actions and a 20 px / 2 bpp font
+for the authoritative group name, with the same GB2312 coverage as the existing
+16 px font. Other Chinese text retains the 16 px font; arbitrary Unicode/emoji
+coverage is not added. Long names use a bounded single-line ellipsis.
 
-The checked-in `shenglu_brand_24.c` and `shenglu_brand_48.c` were generated with
+The checked-in brand fonts and `shenglu_ui_24.c` / `shenglu_group_20_gb2312.c` were generated with
 `lv_font_conv@1.5.3`, using the SourceHanSansSC-Normal font bundled with LVGL.
 Their generation commands are recorded in each file header. Font compilation
 does not require Node.js. These derived fonts retain the SIL Open Font License
@@ -70,9 +76,10 @@ rebuild and update only the application region. The original `rti_auth`
 credentials and touch Wi-Fi setup belong to this fallback. This is a deliberate
 build choice, not an automatic fallback from a group connection failure.
 
-Group mode starts speaker output at zero without persisting that change to the
-saved volume. Numerical transport acceptance and later human listening are
-separate steps.
+Group mode loads the saved speaker volume. The slider applies changes live and
+saves the final value once on release; its effective touch height is at least
+44 px in the product-UI layout. Numerical transport, UI host rendering and human
+listening remain separate acceptance steps.
 
 ## Group session resources and current evidence
 

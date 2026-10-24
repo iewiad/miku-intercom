@@ -14,6 +14,8 @@ idf_component_register(
         "rti_font_source_han_sans_sc_16_gb2312.c"
         "shenglu_brand_24.c"
         "shenglu_brand_48.c"
+        "shenglu_ui_24.c"
+        "shenglu_group_20_gb2312.c"
         "wifi_manager.c"
         "wifi_serial_cli.c"
         "rti_session.c"

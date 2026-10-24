@@ -79,6 +79,8 @@ static char transcript_timeline[TRANSCRIPT_TIMELINE_MAX];
 LV_FONT_DECLARE(rti_font_source_han_sans_sc_16_gb2312);
 LV_FONT_DECLARE(shenglu_brand_24);
 LV_FONT_DECLARE(shenglu_brand_48);
+LV_FONT_DECLARE(shenglu_ui_24);
+LV_FONT_DECLARE(shenglu_group_20_gb2312);
 #define TRANSCRIPT_FONT (&rti_font_source_han_sans_sc_16_gb2312)
 
 /* Keep digits visible in both text modes so SSIDs/passwords never need a
@@ -1831,7 +1833,7 @@ static void group_render_controls(void)
     } else {
         lv_obj_add_state(group_switch_button, LV_STATE_DISABLED);
     }
-    lv_label_set_text(group_switch_label, group_is_switching() ? "切换中" : "切换群组");
+    lv_label_set_text(group_switch_label, group_is_switching() ? "切换中" : "确认切换");
     group_connected = group_transport_ready && group_stop_action &&
                       group_current_index() >= 0 && !group_is_switching() && !selecting &&
                       !group_command_busy() && group_modal == GROUP_MODAL_NONE;
@@ -1847,15 +1849,15 @@ static void group_render_controls(void)
                       group_command_pending ? "正在提交操作" :
                       group_is_switching() ? "正在切换群组" :
                       !group_stop_action ? "已停止" :
-                      !group_connected ? "群音频尚未就绪" :
-                      group_speaking ? "持有麦权，正在发言" : "群语音已就绪");
+                      !group_connected ? "暂不能发言" :
+                      group_speaking ? "正在发言" : "群语音已就绪");
     lv_label_set_text(group_ptt_label,
                       group_command_busy() ? "操作完成后可发言" :
                       group_modal != GROUP_MODAL_NONE ? "关闭窗口后可发言" :
                       group_is_switching() ? "切换完成后可发言" :
                       !group_connected ? "连接后可发言" :
                       group_speaking ? "松手停止发言" :
-                      group_pressed ? "正在申请麦权" : "按住说话");
+                      group_pressed ? "等待发言" : "按住说话");
 }
 
 static void group_render_current(void)
@@ -1882,7 +1884,7 @@ static void group_ptt_event_cb(lv_event_t *event)
     const lv_event_code_t code = lv_event_get_code(event);
     if (code == LV_EVENT_PRESSED && group_connected && !group_pressed) {
         group_pressed = true;
-        lv_label_set_text(group_ptt_label, "正在申请麦权");
+        lv_label_set_text(group_ptt_label, "等待发言");
         if (group_ptt_callback) {
             group_ptt_callback(true, group_context);
         }
@@ -2025,6 +2027,33 @@ static lv_obj_t *group_label(lv_obj_t *parent, const char *text, int x, int y, i
     lv_obj_set_width(label, width);
     lv_obj_set_style_text_font(label, TRANSCRIPT_FONT, 0);
     lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
+    return label;
+}
+
+/* Flat gradients and a single edge highlight keep this glass-inspired surface
+ * inexpensive: no blur layer, image asset, or off-screen framebuffer. */
+static void group_glass_style(lv_obj_t *object, uint32_t color, int radius)
+{
+    lv_obj_set_style_bg_color(object, lv_color_hex(color), 0);
+    lv_obj_set_style_bg_opa(object, LV_OPA_90, 0);
+    lv_obj_set_style_border_color(object, lv_color_hex(0xA5E9E4), 0);
+    lv_obj_set_style_border_opa(object, LV_OPA_20, 0);
+    lv_obj_set_style_border_width(object, 1, 0);
+    lv_obj_set_style_radius(object, radius, 0);
+    lv_obj_set_style_shadow_width(object, 0, 0);
+    lv_obj_set_style_pad_all(object, 0, 0);
+    lv_obj_set_style_bg_color(object, lv_color_hex(0x15313D), LV_STATE_DISABLED);
+    lv_obj_set_style_bg_opa(object, LV_OPA_COVER, LV_STATE_DISABLED);
+    lv_obj_set_style_opa(object, LV_OPA_70, LV_STATE_DISABLED);
+    lv_obj_set_style_color_filter_opa(object, LV_OPA_TRANSP, LV_STATE_DISABLED);
+    lv_obj_remove_flag(object, LV_OBJ_FLAG_SCROLLABLE);
+}
+
+static lv_obj_t *group_control_label(lv_obj_t *parent, const char *text,
+                                      int x, int y, int width, uint32_t color)
+{
+    lv_obj_t *label = group_label(parent, text, x, y, width, color);
+    lv_obj_set_style_text_font(label, &shenglu_ui_24, 0);
     return label;
 }
 
@@ -2239,9 +2268,9 @@ static lv_obj_t *group_command_button(lv_obj_t *parent, const char *text,
     lv_obj_t *button = lv_button_create(parent);
     lv_obj_set_pos(button, x, y);
     lv_obj_set_size(button, width, 52);
-    lv_obj_set_style_bg_color(button, lv_color_hex(0x245675), 0);
+    group_glass_style(button, 0x173B48, 16);
     lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *label = group_label(button, text, 0, 0, width - 20, 0xFFFFFF);
+    lv_obj_t *label = group_control_label(button, text, 0, 0, width - 20, 0xECFBFA);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_center(label);
     if (label_out) {
@@ -2263,7 +2292,7 @@ static lv_obj_t *group_create_command_overlay(group_modal_t modal)
     lv_obj_set_style_pad_all(group_command_overlay, 0, 0);
     lv_obj_set_style_radius(group_command_overlay, 0, 0);
     lv_obj_set_style_border_width(group_command_overlay, 0, 0);
-    lv_obj_set_style_bg_color(group_command_overlay, lv_color_hex(0x071018), 0);
+    lv_obj_set_style_bg_color(group_command_overlay, lv_color_hex(0x07141C), 0);
     lv_obj_add_event_cb(group_command_overlay, group_modal_delete_event_cb, LV_EVENT_DELETE, NULL);
     group_render_controls();
     return group_command_overlay;
@@ -2276,7 +2305,7 @@ static void group_join_open_event_cb(lv_event_t *event)
         return;
     }
     lv_obj_t *overlay = group_create_command_overlay(GROUP_MODAL_JOIN);
-    group_command_title = group_label(overlay, "口令加入群组", 28, 16, 550, 0xF4FAFC);
+    group_command_title = group_control_label(overlay, "口令加入群组", 28, 12, 550, 0xECFBFA);
     group_command_detail = group_label(overlay, "输入群主分享的 8 位字母数字口令", 28, 54, 540, 0xAABCC7);
     group_command_cancel = group_command_button(overlay, "取消", 624, 12, 148,
                                                 group_command_cancel_event_cb, NULL);
@@ -2286,6 +2315,10 @@ static void group_join_open_event_cb(lv_event_t *event)
     lv_textarea_set_accepted_chars(group_join_textarea, "ABCDEFGHJKLMNPQRSTUVWXYZ23456789");
     lv_textarea_set_placeholder_text(group_join_textarea, "8 位入群口令");
     lv_obj_set_style_text_font(group_join_textarea, TRANSCRIPT_FONT, 0);
+    lv_obj_set_style_text_color(group_join_textarea, lv_color_hex(0xECFBFA), 0);
+    lv_obj_set_style_text_color(group_join_textarea, lv_color_hex(0xADC9D2), LV_PART_TEXTAREA_PLACEHOLDER);
+    lv_obj_set_style_bg_color(group_join_textarea, lv_color_hex(0x102F3A), 0);
+    lv_obj_set_style_border_color(group_join_textarea, lv_color_hex(0x5EBAB5), 0);
     lv_obj_set_pos(group_join_textarea, 28, 98);
     lv_obj_set_size(group_join_textarea, 550, 56);
     group_command_submit = group_command_button(overlay, "确认加入", 600, 100, 172,
@@ -2301,6 +2334,14 @@ static void group_join_open_event_cb(lv_event_t *event)
     lv_obj_set_style_text_font(keyboard, &lv_font_montserrat_20, LV_PART_ITEMS);
     lv_obj_set_style_pad_row(keyboard, 4, 0);
     lv_obj_set_style_pad_column(keyboard, 4, 0);
+    lv_obj_set_style_bg_color(keyboard, lv_color_hex(0x07141C), 0);
+    lv_obj_set_style_border_width(keyboard, 0, 0);
+    lv_obj_set_style_bg_color(keyboard, lv_color_hex(0x153743), LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(keyboard, lv_color_hex(0x214B55), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(keyboard, lv_color_hex(0x246B6A), LV_PART_ITEMS | LV_STATE_PRESSED);
+    lv_obj_set_style_text_color(keyboard, lv_color_hex(0xECFBFA), LV_PART_ITEMS);
+    lv_obj_set_style_text_color(keyboard, lv_color_hex(0xECFBFA), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_radius(keyboard, 10, LV_PART_ITEMS);
     lv_obj_add_event_cb(keyboard, group_join_keyboard_event_cb, LV_EVENT_READY, NULL);
     lv_obj_add_event_cb(keyboard, group_join_keyboard_event_cb, LV_EVENT_CANCEL, NULL);
 }
@@ -2312,7 +2353,7 @@ static void group_voice_open_event_cb(lv_event_t *event)
         return;
     }
     lv_obj_t *overlay = group_create_command_overlay(GROUP_MODAL_VOICE);
-    group_command_title = group_label(overlay, "准备语音切群", 48, 54, 704, 0xF4FAFC);
+    group_command_title = group_control_label(overlay, "准备语音切群", 48, 48, 704, 0xECFBFA);
     group_command_detail = group_label(overlay, "", 48, 122, 704, 0xAABCC7);
     lv_obj_set_height(group_command_detail, 154);
     lv_label_set_long_mode(group_command_detail, LV_LABEL_LONG_MODE_WRAP);
@@ -2360,36 +2401,86 @@ esp_err_t board_display_show_group(board_conversation_action_cb_t startstop,
     group_voice_submitted = false;
     group_command_revision = 0;
     group_command_detail_text[0] = 0;
-    lv_obj_set_style_bg_color(screen, lv_color_hex(0x071018), 0);
-    lv_obj_set_style_bg_grad_dir(screen, LV_GRAD_DIR_NONE, 0);
-    lv_obj_t *brand = group_label(screen, APP_DISPLAY_NAME, 28, 22, 420, 0xF4FAFC);
+    lv_obj_set_style_bg_color(screen, lv_color_hex(0x07141C), 0);
+    lv_obj_set_style_bg_grad_color(screen, lv_color_hex(0x102C35), 0);
+    lv_obj_set_style_bg_grad_dir(screen, LV_GRAD_DIR_VER, 0);
+    lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *brand = group_label(screen, APP_DISPLAY_NAME, 28, 14, 120, 0x91EEE0);
     lv_obj_set_style_text_font(brand, &shenglu_brand_24, 0);
-    group_join_button = lv_button_create(screen);
-    lv_obj_set_pos(group_join_button, 450, 16);
-    lv_obj_set_size(group_join_button, 150, 44);
-    lv_obj_set_style_bg_color(group_join_button, lv_color_hex(0x245675), 0);
-    lv_obj_add_event_cb(group_join_button, group_join_open_event_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *join_label = group_label(group_join_button, "加入群组", 0, 0, 130, 0xFFFFFF);
-    lv_obj_set_style_text_align(join_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_center(join_label);
-    group_voice_button = lv_button_create(screen);
-    lv_obj_set_pos(group_voice_button, 618, 16);
-    lv_obj_set_size(group_voice_button, 154, 44);
-    lv_obj_set_style_bg_color(group_voice_button, lv_color_hex(0x245675), 0);
-    lv_obj_add_event_cb(group_voice_button, group_voice_open_event_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *voice_label = group_label(group_voice_button, "语音切群", 0, 0, 134, 0xFFFFFF);
-    lv_obj_set_style_text_align(voice_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_center(voice_label);
-    group_name_label = group_label(screen, "当前群：尚未同步", 28, 70, 744, 0xF4FAFC);
+    group_label(screen, "小组即时协作", 166, 25, 210, 0xADC9D2);
+    lv_obj_t *action = lv_button_create(screen);
+    lv_obj_set_pos(action, 602, 12);
+    lv_obj_set_size(action, 170, 44);
+    group_glass_style(action, 0x183A46, 14);
+    lv_obj_add_event_cb(action, group_action_event_cb, LV_EVENT_RELEASED, NULL);
+    group_action_label = group_control_label(action, "连接群语音", 0, 0, 150, 0xECFBFA);
+    lv_obj_set_style_text_align(group_action_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(group_action_label);
+
+    lv_obj_t *current_card = lv_obj_create(screen);
+    lv_obj_set_pos(current_card, 28, 76);
+    lv_obj_set_size(current_card, 744, 108);
+    group_glass_style(current_card, 0x102A35, 20);
+    lv_obj_remove_flag(current_card, LV_OBJ_FLAG_CLICKABLE);
+    group_status_label = group_label(screen, "已停止", 520, 90, 232, 0x91EEE0);
+    lv_obj_set_style_text_align(group_status_label, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_bg_color(group_status_label, lv_color_hex(0x123E43), 0);
+    lv_obj_set_style_bg_opa(group_status_label, LV_OPA_60, 0);
+    lv_obj_set_style_radius(group_status_label, 10, 0);
+    lv_obj_set_style_pad_hor(group_status_label, 8, 0);
+    lv_obj_set_style_pad_ver(group_status_label, 4, 0);
+    lv_obj_set_height(group_status_label, 30);
+    group_name_label = group_label(screen, "当前群：尚未同步", 48, 88, 448, 0xF1FAFC);
+    lv_obj_set_style_text_font(group_name_label, &shenglu_group_20_gb2312, 0);
+    lv_obj_set_height(group_name_label, 32);
     lv_label_set_long_mode(group_name_label, LV_LABEL_LONG_MODE_DOTS);
+    group_detail_label = group_label(screen, "连接后，选择已加入的群组开始对讲", 48, 135, 704, 0xADC9D2);
+    lv_obj_set_height(group_detail_label, 42);
+    lv_label_set_long_mode(group_detail_label, LV_LABEL_LONG_MODE_WRAP);
+
+    group_ptt_button = lv_button_create(screen);
+    lv_obj_set_pos(group_ptt_button, 28, 198);
+    lv_obj_set_size(group_ptt_button, 500, 150);
+    group_glass_style(group_ptt_button, 0x155B5D, 24);
+    lv_obj_set_style_bg_grad_color(group_ptt_button, lv_color_hex(0x103D47), 0);
+    lv_obj_set_style_bg_grad_dir(group_ptt_button, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_border_opa(group_ptt_button, LV_OPA_50, 0);
+    lv_obj_set_style_bg_color(group_ptt_button, lv_color_hex(0x207C77), LV_STATE_PRESSED);
+    lv_obj_add_state(group_ptt_button, LV_STATE_DISABLED);
+    lv_obj_add_event_cb(group_ptt_button, group_ptt_event_cb, LV_EVENT_ALL, NULL);
+    group_ptt_label = group_control_label(group_ptt_button, "连接后可发言", 0, 0, 460, 0xF3FFFD);
+    lv_obj_set_style_text_align(group_ptt_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(group_ptt_label, LV_ALIGN_CENTER, 0, -16);
+    lv_obj_t *ptt_hint = group_label(group_ptt_button, "按住发送，松手结束", 0, 0, 460, 0xC2E9E4);
+    lv_obj_set_style_text_align(ptt_hint, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(ptt_hint, LV_ALIGN_BOTTOM_MID, 0, -22);
+
+    group_voice_button = lv_button_create(screen);
+    lv_obj_set_pos(group_voice_button, 548, 198);
+    lv_obj_set_size(group_voice_button, 224, 68);
+    group_glass_style(group_voice_button, 0x153743, 18);
+    lv_obj_add_event_cb(group_voice_button, group_voice_open_event_cb, LV_EVENT_CLICKED, NULL);
+    group_control_label(group_voice_button, "语音切群", 16, 4, 192, 0xECFBFA);
+    group_label(group_voice_button, "说出完整群名", 16, 42, 192, 0xADC9D2);
+    group_join_button = lv_button_create(screen);
+    lv_obj_set_pos(group_join_button, 548, 280);
+    lv_obj_set_size(group_join_button, 224, 68);
+    group_glass_style(group_join_button, 0x153743, 18);
+    lv_obj_add_event_cb(group_join_button, group_join_open_event_cb, LV_EVENT_CLICKED, NULL);
+    group_control_label(group_join_button, "加入群组", 16, 4, 192, 0xECFBFA);
+    group_label(group_join_button, "输入 8 位口令", 16, 42, 192, 0xADC9D2);
+
     group_dropdown = lv_dropdown_create(screen);
-    lv_obj_set_pos(group_dropdown, 28, 108);
-    lv_obj_set_size(group_dropdown, 568, 52);
+    lv_obj_set_pos(group_dropdown, 28, 370);
+    lv_obj_set_size(group_dropdown, 576, 48);
+    group_glass_style(group_dropdown, 0x15313D, 14);
+    lv_obj_set_style_pad_hor(group_dropdown, 14, 0);
+    lv_obj_set_style_pad_ver(group_dropdown, 11, 0);
     lv_obj_set_style_text_font(group_dropdown, TRANSCRIPT_FONT, LV_PART_MAIN);
     lv_obj_set_style_text_font(group_dropdown, TRANSCRIPT_FONT, LV_PART_SELECTED);
-    lv_obj_set_style_text_color(group_dropdown, lv_color_hex(0xF4FAFC), 0);
-    lv_obj_set_style_bg_color(group_dropdown, lv_color_hex(0x152934), 0);
+    lv_obj_set_style_text_color(group_dropdown, lv_color_hex(0xF1FAFC), 0);
     lv_dropdown_set_symbol(group_dropdown, "v");
+    lv_dropdown_set_dir(group_dropdown, LV_DIR_TOP);
     lv_dropdown_set_options_static(group_dropdown, "群列表尚未同步");
     lv_dropdown_set_text_static(group_dropdown, "群列表尚未同步");
     lv_obj_add_state(group_dropdown, LV_STATE_DISABLED);
@@ -2397,54 +2488,35 @@ esp_err_t board_display_show_group(board_conversation_action_cb_t startstop,
     lv_obj_set_style_text_font(list, TRANSCRIPT_FONT, 0);
     lv_obj_set_style_text_line_space(list, 22, 0);
     lv_obj_set_style_max_height(list, 220, 0);
-    lv_obj_set_style_bg_color(list, lv_color_hex(0x152934), 0);
-    lv_obj_set_style_text_color(list, lv_color_hex(0xF4FAFC), 0);
-    lv_obj_set_style_bg_color(list, lv_color_hex(0x245675), LV_PART_SELECTED);
+    lv_obj_set_style_bg_color(list, lv_color_hex(0x15313D), 0);
+    lv_obj_set_style_text_color(list, lv_color_hex(0xF1FAFC), 0);
+    lv_obj_set_style_bg_color(list, lv_color_hex(0x28646A), LV_PART_SELECTED);
     lv_obj_add_event_cb(group_dropdown, group_dropdown_event_cb, LV_EVENT_ALL, NULL);
     group_switch_button = lv_button_create(screen);
-    lv_obj_set_pos(group_switch_button, 612, 108);
-    lv_obj_set_size(group_switch_button, 160, 52);
-    lv_obj_set_style_bg_color(group_switch_button, lv_color_hex(0x245675), 0);
+    lv_obj_set_pos(group_switch_button, 620, 370);
+    lv_obj_set_size(group_switch_button, 152, 48);
+    group_glass_style(group_switch_button, 0x173B48, 14);
     lv_obj_add_state(group_switch_button, LV_STATE_DISABLED);
     lv_obj_add_event_cb(group_switch_button, group_switch_event_cb, LV_EVENT_CLICKED, NULL);
-    group_switch_label = group_label(group_switch_button, "切换群组", 0, 0, 140, 0xFFFFFF);
+    group_switch_label = group_control_label(group_switch_button, "确认切换", 0, 0, 132, 0xECFBFA);
     lv_obj_set_style_text_align(group_switch_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_center(group_switch_label);
-    group_status_label = group_label(screen, "已停止", 28, 176, 744, 0x49E5C2);
-    group_detail_label = group_label(screen, "等待 USB 配置后连接群语音", 28, 208, 744, 0xAABCC7);
-    lv_obj_set_height(group_detail_label, 42);
-    lv_label_set_long_mode(group_detail_label, LV_LABEL_LONG_MODE_WRAP);
-
-    lv_obj_t *action = lv_button_create(screen);
-    lv_obj_set_pos(action, 28, 268);
-    lv_obj_set_size(action, 218, 78);
-    lv_obj_set_style_bg_color(action, lv_color_hex(0x245675), 0);
-    lv_obj_add_event_cb(action, group_action_event_cb, LV_EVENT_RELEASED, NULL);
-    group_action_label = group_label(action, "连接群语音", 0, 0, 190, 0xFFFFFF);
-    lv_obj_set_style_text_align(group_action_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_center(group_action_label);
-    group_ptt_button = lv_button_create(screen);
-    lv_obj_set_pos(group_ptt_button, 270, 268);
-    lv_obj_set_size(group_ptt_button, 502, 78);
-    lv_obj_set_style_bg_color(group_ptt_button, lv_color_hex(0x148A75), 0);
-    lv_obj_add_state(group_ptt_button, LV_STATE_DISABLED);
-    lv_obj_add_event_cb(group_ptt_button, group_ptt_event_cb, LV_EVENT_ALL, NULL);
-    group_ptt_label = group_label(group_ptt_button, "连接后可发言", 0, 0, 470, 0xFFFFFF);
-    lv_obj_set_style_text_align(group_ptt_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_center(group_ptt_label);
 
     const uint8_t level = initial_volume <= 100 ? initial_volume : 0;
     char volume_text[48];
     snprintf(volume_text, sizeof(volume_text), level ? "收听音量 %u%%" : "收听已静音 %u%%", (unsigned)level);
-    group_volume_label = group_label(screen, volume_text, 28, 378, 230, 0xAABCC7);
+    group_volume_label = group_label(screen, volume_text, 28, 442, 220, 0xADC9D2);
     lv_obj_t *slider = lv_slider_create(screen);
-    lv_obj_set_pos(slider, 270, 386);
-    lv_obj_set_size(slider, 480, 16);
+    lv_obj_set_pos(slider, 272, 446);
+    lv_obj_set_size(slider, 480, 10);
+    lv_obj_set_ext_click_area(slider, 17); /* 44px effective height, inside screen. */
+    lv_obj_set_style_bg_color(slider, lv_color_hex(0x284853), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(slider, lv_color_hex(0x75DFD0), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(slider, lv_color_hex(0xD9FFF7), LV_PART_KNOB);
     lv_slider_set_range(slider, 0, 100);
     lv_slider_set_value(slider, level, LV_ANIM_OFF);
     lv_obj_add_event_cb(slider, group_volume_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_add_event_cb(slider, group_volume_event_cb, LV_EVENT_RELEASED, NULL);
-    group_label(screen, "先选择群组，再点击切换；松手停止发言", 28, 435, 744, 0x6F8998);
     group_render_controls();
     bsp_display_unlock();
     if (volume) {

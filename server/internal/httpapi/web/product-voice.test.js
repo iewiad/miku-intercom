@@ -37,8 +37,9 @@ test('actual boot/render and audio-off button replace READY status after termina
    return{ok:true,status:200,json:async()=>result};
   });
   await import(`./app.js?product-render-review=${Date.now()}`);await flush();
-  $('audio-enable').dispatch('click');await flush();assert.equal($('audio-status').textContent,'可收听');
+  $('audio-enable').dispatch('click');await flush();assert.equal($('audio-status').dataset.phase,'ready');
   $('voice-start').dispatch('click');await flush();assert.match($('voice-status').textContent,/请说/);assert.equal(streams.at(-1).getAudioTracks()[0].enabled,true);
+  assert.equal($('add-group-open').disabled,true);$('add-group-open').dispatch('click');assert.equal($('add-group-panel').hidden,true);
   $('audio-disable').dispatch('click');assert.equal(streams.at(-1).getAudioTracks()[0].enabled,false);assert.doesNotMatch($('voice-status').textContent,/请说/);
   await flush();assert.equal($('voice-start').disabled,false);assert.equal($('audio-enable').hidden,false);assert.match($('voice-status').textContent,/已关闭/);assert.doesNotMatch($('voice-status').textContent,/请说/);
   // Ambient speech can finish a real ASR turn without being a command. Its
