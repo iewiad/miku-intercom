@@ -14,7 +14,10 @@ The join-code keyboard and explicit RTA voice switching are merged in PR #12.
 Touch join, two spoken switches, cancellation, six-direction listening and final
 browser closeout reports have separate evidence. The product-UI refresh changes
 LVGL presentation and fonts; its host rendering, build, flash and physical-screen
-checks do not inherit listening acceptance from an older image. Repeated spoken
+checks do not inherit listening acceptance from an older image. The subsequent
+`71ccf1ef…15c1c` worker-reservation image has its own six-direction human listening,
+touch cancellation and stop/reconnect evidence. Human voice-target misses and two
+recoverable channel waits remain recorded limitations. Repeated spoken
 switching and actual power-loss recovery retain independent acceptance. See
 [the S3 LAN contract](../../docs/specs/004-device-lan.md) and
 [the evidence log](../../docs/acceptance.md) for scope and actual results.
@@ -97,6 +100,13 @@ use PSRAM, with no fallback to internal heap. Allocation failure takes the clean
 path. I2S driver buffers still use DMA; AEC DMA_ATTR arrays remain internal.
 This does not move every audio allocation into PSRAM, and the RTA mode's original
 `malloc` path for these workspaces is unchanged.
+
+The 20 KiB internal peer-loop stack is reserved before `esp_peer_open`, while a
+contiguous block is still available. The task waits at a startup event gate until
+the peer and required data worker are initialized. Stop or partial startup failure
+sets `running=false`, releases that gate and uses the existing retirement protocol.
+WithCaps ownership and stack capacity are unchanged. Credential-free failure-stage
+and final stack-headroom logs distinguish startup allocation from HTTP failures.
 
 `INTERCOM_STATUS` includes the latest granted PTT window as `ptt_id`,
 `ptt_start_us` and `ptt_end_us` (device uptime microseconds; end is zero while
@@ -391,13 +401,13 @@ audio transport or long-running stability.
 
 ## Board-free multi-group regressions
 
-From the repository root, with Python 3 and `cc` (`--sanitize` applies only to
-the journal runner):
+From the repository root, with Python 3 and `cc`:
 
 ```bash
 python3 firmware/esp32-s31-rti/tests/run_group_cli.py
 python3 firmware/esp32-s31-rti/tests/run_group_media_gate.py
 python3 firmware/esp32-s31-rti/tests/run_group_audio_level.py
+python3 firmware/esp32-s31-rti/tests/run_peer_startup.py --sanitize
 python3 firmware/esp32-s31-rti/tests/run_group_journal.py --sanitize
 python3 firmware/esp32-s31-rti/tests/run_switch_resolver.py
 ```
@@ -405,6 +415,10 @@ python3 firmware/esp32-s31-rti/tests/run_switch_resolver.py
 - CLI: actual C parser/dispatcher and Python tool, strict numeric/ID/framing
   bounds, fragmented allowlisted catalogs, credential isolation, modem-line
   setup and request-only acknowledgement; UART/controller are doubles.
+- Peer startup: production allocation/gate/stop functions with a threaded SDK
+  double; covers internal-stack reservation, partial failures, repeated group/
+  command cycles and retained-owner cleanup under ASan/UBSan. It does not prove
+  actual RTOS scheduling, contiguous hardware heap capacity or listening quality.
 - Media gate: production send/receive predicates and packet ingress, irreversible
   suspension, late grants/packets, expiry and legacy RTA isolation. It does not
   execute playback_task's dequeue/decode/I2S call sites or real concurrency.
