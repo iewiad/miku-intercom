@@ -197,6 +197,7 @@ static portMUX_TYPE group_state_lock = portMUX_INITIALIZER_UNLOCKED;
 static bool group_mode_active;
 static bool group_transport_connected;
 static bool group_audio_ready;
+static bool group_media_suspended;
 static bool group_send_enabled;
 static int64_t group_send_expires_at_us;
 static uint32_t group_send_epoch;
@@ -207,7 +208,7 @@ void webrtc_peer_group_set_sending(bool enabled, int64_t expires_at_us)
     const int64_t now = esp_timer_get_time();
     portENTER_CRITICAL(&group_state_lock);
     const bool allow = enabled && group_mode_active && group_transport_connected &&
-                       group_audio_ready && expires_at_us > now;
+                       group_audio_ready && !group_media_suspended && expires_at_us > now;
     if (allow != group_send_enabled) {
         ++group_send_epoch;
     }
@@ -226,7 +227,7 @@ static bool group_sending_allowed(uint32_t *epoch)
         ++group_send_epoch;
     }
     const bool allowed = group_mode_active && group_transport_connected &&
-                         group_audio_ready && group_send_enabled;
+                         group_audio_ready && !group_media_suspended && group_send_enabled;
     if (epoch != NULL) {
         *epoch = group_send_epoch;
     }
@@ -237,9 +238,32 @@ static bool group_sending_allowed(uint32_t *epoch)
 bool webrtc_peer_group_connected(void)
 {
     portENTER_CRITICAL(&group_state_lock);
-    const bool connected = group_mode_active && group_transport_connected && group_audio_ready;
+    const bool connected = group_mode_active && group_transport_connected && group_audio_ready &&
+                           !group_media_suspended;
     portEXIT_CRITICAL(&group_state_lock);
     return connected;
+}
+
+void webrtc_peer_group_suspend_media(void)
+{
+    // UI callbacks may call this while the lifecycle worker is awaiting HTTP.
+    // The gate cannot be reopened on this Peer; only a new group start resets it.
+    portENTER_CRITICAL(&group_state_lock);
+    if (group_mode_active) {
+        group_media_suspended = true;
+        group_send_enabled = false;
+        group_send_expires_at_us = 0;
+        ++group_send_epoch;
+    }
+    portEXIT_CRITICAL(&group_state_lock);
+}
+
+static bool group_receiving_allowed(void)
+{
+    portENTER_CRITICAL(&group_state_lock);
+    const bool allowed = group_mode_active && !group_media_suspended;
+    portEXIT_CRITICAL(&group_state_lock);
+    return allowed;
 }
 
 void webrtc_peer_group_get_stats(webrtc_group_stats_t *stats)
@@ -256,6 +280,7 @@ static void group_mark_unavailable(void)
 {
     portENTER_CRITICAL(&group_state_lock);
     group_audio_ready = false;
+    group_media_suspended = true;
     group_transport_connected = false;
     group_send_enabled = false;
     group_send_expires_at_us = 0;
@@ -1112,7 +1137,8 @@ static int peer_audio_data_handler(esp_peer_audio_frame_t *frame, void *ctx)
 {
     (void)ctx;
     if (!rtc.audio_running || frame == NULL || frame->data == NULL || frame->size <= 0 ||
-        frame->size > RTC_OPUS_PACKET_MAX || rtc.playback_queue == NULL) {
+        frame->size > RTC_OPUS_PACKET_MAX || rtc.playback_queue == NULL ||
+        (rtc.group_mode && !group_receiving_allowed())) {
         return 0;
     }
     const int64_t received_us = esp_timer_get_time();
@@ -1807,6 +1833,11 @@ static void playback_task(void *arg)
             xQueueReceive(rtc.playback_queue, packet, pdMS_TO_TICKS(20)) == pdTRUE;
         uint32_t plc_to_play = 0;
         uint32_t fec_to_play = 0;
+        if (rtc.group_mode && have_packet && !group_receiving_allowed()) {
+            // Discard queued old-group packets while the worker retires this
+            // Peer; do not decode them or leave them for a later group start.
+            continue;
+        }
         if (rtc.group_mode && !have_packet) {
             // A PTT burst can be shorter than the old 240 ms AI prebuffer.
             // Silence between speakers is intentional, not packet-loss audio.
@@ -1908,6 +1939,9 @@ static void playback_task(void *arg)
                 }
                 continue;
             }
+            if (rtc.group_mode && !group_receiving_allowed()) {
+                continue;
+            }
             const size_t sample_count = (size_t)frame_count * RTC_CAPTURE_CHANNELS;
             const size_t decoded_size = sample_count * sizeof(int16_t);
             const int16_t *decoded_pcm = (const int16_t *)pcm;
@@ -1954,6 +1988,11 @@ static void playback_task(void *arg)
             // Group packets can contain 2.5..120 ms of PCM. Blocking codec/I2S
             // writes provide the sample clock; a fixed 20 ms task delay would
             // stretch short packets and overlap long packets.
+            // Recheck admission immediately before handing PCM to I2S. A
+            // write already admitted into the hardware cannot be retracted.
+            if (rtc.group_mode && !group_receiving_allowed()) {
+                continue;
+            }
             queue_playback_reference((const int16_t *)pcm, (size_t)frame_count,
                                      RTC_CAPTURE_CHANNELS, reference_mono);
             if (esp_codec_dev_write(rtc.audio.speaker, pcm, (int)decoded_size) != 0) {
@@ -2360,6 +2399,7 @@ static esp_err_t start_peer(const rti_session_t *session, const board_audio_t *a
         group_mode_active = true;
         group_transport_connected = false;
         group_audio_ready = false;
+        group_media_suspended = false;
         group_send_enabled = false;
         group_send_expires_at_us = 0;
         ++group_send_epoch;

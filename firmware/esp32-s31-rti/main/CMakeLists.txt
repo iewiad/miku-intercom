@@ -7,6 +7,7 @@ idf_component_register(
         "rti_credentials.c"
         "group_config.c"
         "group_controller.c"
+        "group_switch_journal.c"
         "rti_controller.c"
         "rti_font_source_han_sans_sc_16_gb2312.c"
         "shenglu_brand_24.c"
