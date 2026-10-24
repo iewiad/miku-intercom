@@ -28,6 +28,7 @@ HOST_SUITES = (
     ("run_group_cli.py", ()),
     ("run_group_media_gate.py", ()),
     ("run_group_audio_level.py", ()),
+    ("run_peer_startup.py", ("--sanitize",)),
     ("run_group_journal.py", ("--sanitize",)),
     ("run_switch_resolver.py", ("--cjson-dir",)),
     ("run_group_commands.py", ()),

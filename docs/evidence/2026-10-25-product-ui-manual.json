@@ -1,0 +1,85 @@
+{
+  "date": "2026-10-25",
+  "status": "fix_host_verified_device_retest_pending",
+  "merged_main_commit": "e1f825ce0f303148e3fcb2203224d9a338cfc40f",
+  "merged_pull_requests": [
+    13,
+    14
+  ],
+  "initial_application": {
+    "code_commit": "5ed8c620175d3e7f0788d014d1c0f99990ec24b4",
+    "runtime_sources_equal_merged_main": true,
+    "bytes": 3474528,
+    "sha256": "5eacfdc09c49162214df5d0ada8e42ca19c8b25e55a7ad784672f59c57e72949"
+  },
+  "initial_manual_checks": {
+    "board_touch_connect": "user confirmed current group and ready; fresh UART connected and unpressed",
+    "board_release_and_slide": "user confirmed both stop paths; observer saw granted windows then stable sent packet count and unpressed",
+    "board_explicit_switch_and_return": "selection alone retained current group; follow-up confirmed return; authoritative version 21 to 23 and original group restored",
+    "board_join_keyboard": "short-code validation, bottom-row backspace/cancel and empty input on reopen confirmed",
+    "browser_create_panel": "user confirmed Esc return, group creation, displayed invitation and success collapse; no audio connected",
+    "board_new_membership": "user confirmed new group; count 6 to 7, current group and version 23 unchanged, ready and unpressed",
+    "board_voice_cancel": "preparation cancel and post-ready cancel confirmed; same group and version 23, ready and unpressed",
+    "browser_join_panel": "user confirmed separate localhost B, short-code failure retains input, valid join collapses form and current target correct; audio not connected",
+    "browser_filter_and_enter": "user confirmed purpose match, no-result filter preserves current group, clear restores list; A/B explicitly entered target; audio not connected"
+  },
+  "initial_spoken_switch_failure": {
+    "user_initial_report": "recognition failed or not switched",
+    "user_screen_confirmation": "target group displayed; group connection failed",
+    "authoritative_version_before": 23,
+    "authoritative_version_after": 24,
+    "switch_pending": false,
+    "connected": false,
+    "pressed": false,
+    "held": false,
+    "command_phase": "recovering",
+    "repeated_connect_error": "ESP_ERR_NO_MEM",
+    "last_http_status": 200,
+    "http_status_scope": "last completed control request, not proof of SDP or media connection success",
+    "failure_stage_logged": false,
+    "allocation_stage_inference": "after peer_open, largest internal block is smaller than required 20480-byte peer worker stack",
+    "heap_cycles": [
+      {
+        "cycle": 110,
+        "start_internal": 109379,
+        "start_largest_internal": 33792,
+        "after_peer_open_internal": 58771,
+        "after_peer_open_largest_internal": 17408,
+        "stop_internal": 111743,
+        "stop_largest_internal": 40960,
+        "stop_psram": 15886168
+      },
+      {
+        "cycle": 111,
+        "start_internal": 111935,
+        "start_largest_internal": 40960,
+        "after_peer_open_internal": 62595,
+        "after_peer_open_largest_internal": 17408,
+        "stop_internal": 111715,
+        "stop_largest_internal": 40960,
+        "stop_psram": 15886168
+      }
+    ],
+    "scope": "two sampled retry cycles support contiguous internal heap shortage; no long-term leak conclusion",
+    "retry_stopped_explicitly": true,
+    "observer_interruption": "first observer exited after a temporary second UART reader; observation resumed with a sole reader and raw 115200 configuration",
+    "audio_or_transcript_saved": false
+  },
+  "pending": [
+    "clean-source final build, application flash and independent verification",
+    "repeat voice-to-group media recovery on the fixed image",
+    "complete remaining physical UI flows and new-image listening",
+    "stop and verify all actual test endpoints"
+  ],
+  "fix": {
+    "description": "reserve unchanged 20480-byte internal peer worker before peer_open; EventGroup startup barrier; stop wakes parked worker and retains original ownership/retirement protocol",
+    "host_checks_passed": 22,
+    "node_tests": 109,
+    "python_tests": 14,
+    "firmware_host_suites": 17,
+    "new_threaded_startup_scenarios": 12,
+    "asan_ubsan": true,
+    "independent_review": "passed",
+    "idf_build": "passed before clean commit build; final image identity pending"
+  }
+}
