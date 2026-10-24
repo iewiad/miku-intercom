@@ -106,7 +106,9 @@
         "board_released_after_test": true,
         "classification": "very low decoded signal; source processing and acoustic level under investigation",
         "human_headphone_result": "not supplied"
-      }
+      },
+      "calibrated_source_human_feedback": "all sound perceived from external speaker, echo-like; headphone reception not established",
+      "browser_output_control": "pending B-to-A synthetic send with board audio stopped; removes external acoustic source from this control"
     },
     "board_to_b": {
       "status": "pending"
@@ -168,6 +170,25 @@
         "http_failures": 0
       }
     ],
-    "interpretation": "No large raw-to-encoder mean reduction in these windows. Current acoustic input is low; source-level calibration pending. Counts and PCM aggregates do not prove phrase intelligibility."
+    "interpretation": "No large raw-to-encoder mean reduction in the measured windows. Acoustic stimulus attribution and browser audible output still require isolated controls; no phrase intelligibility claim.",
+    "calibrated_source_window": {
+      "player_volume": 0.5,
+      "temporary_builtin_hardware_volume": 0.55,
+      "original_builtin_hardware_volume": 0.3125,
+      "restored_builtin_hardware_volume": 0.3125,
+      "restore_verified": true,
+      "default_output_unchanged": true,
+      "default_system_output_unchanged": true,
+      "source_speaker_separate_from_default_output": true,
+      "duration_ms": 6861,
+      "raw_frames": 341,
+      "raw_rms_peak": 0.008523,
+      "raw_rms_mean": 0.001445,
+      "encoder_frames": 340,
+      "encoder_rms_peak": 0.008436,
+      "encoder_rms_mean": 0.001412,
+      "sent_packets": 340,
+      "released_after_test": true
+    }
   }
 }
