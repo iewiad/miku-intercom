@@ -58,6 +58,10 @@
           <p id="audio-message">建议戴耳机，避免同机多端播放造成回声。</p>
           <audio id="remote-audio" autoplay playsinline hidden></audio>
         </div>
+        <div class="voice-controls">
+          <div class="audio-actions"><button id="voice-start" class="button secondary" type="button" disabled>语音切群</button><button id="voice-cancel" class="button secondary" type="button" hidden>取消指令</button><button id="voice-check" class="button secondary" type="button" hidden>重试检查语音状态</button></div>
+          <p id="voice-status" role="status" aria-live="polite">正在检查语音切群。</p>
+        </div>
         <div class="floor-status"><span class="status-dot" aria-hidden="true"></span><strong id="floor-label">未按麦</strong><p id="floor-description">松手、失焦或离开页面都会结束申请与持有</p></div>
         <div class="ptt-area"><button type="button" id="ptt" class="ptt-button" aria-pressed="false" disabled><span class="ptt-icon" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><strong id="ptt-title">按住说话</strong><small id="ptt-hint">入群后可用</small></button></div>
         <div class="control-note"><span aria-hidden="true">ⓘ</span><p>只有获权且仍按住时才发送麦克风声音，松手立即停发。</p></div>

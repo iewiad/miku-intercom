@@ -6,6 +6,7 @@
 #include "esp_err.h"
 #include "board_audio.h"
 #include "rti_session.h"
+#include "rta_command_events.h"
 
 /** Run an offline create/process/destroy smoke test for the S31 AEC library. */
 esp_err_t webrtc_peer_aec_self_test(void);
@@ -15,6 +16,38 @@ esp_err_t webrtc_peer_prepare(void);
 
 /** Establish the RTI PeerConnection, exchange SDP, and open `oai-events`. */
 esp_err_t webrtc_peer_start(const rti_session_t *session, const board_audio_t *audio);
+
+/** Transcription-only, single-Peer command session. Worker-only serialized start.
+ * READY follows session.updated and audio initialization. FINAL closes capture
+ * and media admission before callback, occurs at most once, and is never logged.
+ * Before READY, only generated Opus silence may prime RTC; no mic read occurs.
+ * Commands reject CONFIG_MIKU_RTI_OFFICIAL_CAPTURE_AEC, whose background source
+ * can acquire independently of the read gate. Ordinary RTA is unaffected.
+ * The owner bounds the session duration and stops the Peer before group restore.
+ */
+esp_err_t webrtc_peer_start_command(const rti_session_t *session, const board_audio_t *audio,
+                                     uint32_t generation, webrtc_command_event_cb_t callback,
+                                     void *context);
+/** UI-safe, no allocation, I/O or wait: closes command capture/media/event admission.
+ * An already executing codec read/network send cannot be retracted. Only the
+ * lifecycle worker may subsequently call webrtc_peer_stop().
+ */
+void webrtc_peer_command_cancel(void);
+
+typedef struct {
+    uint64_t bootstrap_admitted;
+    uint64_t bootstrap_sent;
+    uint64_t microphone_reads;
+    uint64_t audio_sent;
+    uint32_t data_frames;
+    uint32_t data_events;
+} webrtc_command_stats_t;
+/** Per-command-start diagnostics, retained after stop. Bootstrap is generated
+ * Opus silence and is never evidence of microphone acquisition or speech.
+ * Counts describe admission; an admitted in-flight read/send may finish later.
+ */
+void webrtc_peer_command_get_stats(webrtc_command_stats_t *stats);
+
 
 /** The signaling callback allocates the returned answer; the peer frees it. */
 typedef esp_err_t (*webrtc_group_exchange_cb_t)(const char *offer, char **answer, void *context);
@@ -26,6 +59,22 @@ typedef struct {
     uint64_t decoded_samples;
     float source_rms_peak;
     float remote_rms_peak;
+    /* Latest admitted PTT window, retained after close; timestamps are device
+     * uptime microseconds, end=0 while open, id=0 if no grant on this Peer.
+     * RMS is normalized [0,1]. Sums are sums of per-frame RMS; divide by the
+     * corresponding frame count for an arithmetic (frame-weighted) mean.
+     * Raw frames are mic0 before software AEC; encoder frames are the exact
+     * PCM input immediately before Opus processing, not successful packets.
+     */
+    uint32_t ptt_id;
+    int64_t ptt_start_us;
+    int64_t ptt_end_us;
+    uint64_t ptt_raw_frames;
+    uint64_t ptt_encoder_frames;
+    double ptt_raw_rms_sum;
+    double ptt_encoder_rms_sum;
+    float ptt_raw_rms_peak;
+    float ptt_encoder_rms_peak;
 } webrtc_group_stats_t;
 
 /** Establish one group audio Peer without opening an RTA session or DataChannel. */

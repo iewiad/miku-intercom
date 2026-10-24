@@ -67,22 +67,6 @@ void app_main(void)
 
     ESP_ERROR_CHECK(wifi_manager_init());
     ESP_ERROR_CHECK(wifi_serial_cli_start());
-#if CONFIG_MIKU_INTERCOM_DEFAULT_MODE
-    /* Group mode never starts the RTA application or writes its credentials.
-     * USB Wi-Fi provisioning remains available without a network UI here. */
-    ESP_ERROR_CHECK(board_audio_set_output_volume(&board_audio, 0, false));
-    ESP_ERROR_CHECK(group_controller_init(&board_audio));
-    if (!group_config_ready()) {
-        ESP_ERROR_CHECK(board_display_set_group_state(NULL, "等待 USB 配置群语音", false, false));
-    }
-    if (wifi_manager_has_saved_credentials()) {
-        err = wifi_manager_connect_saved();
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "group Wi-Fi connection unavailable; provision over USB");
-        }
-    }
-    return;
-#endif
     err = wifi_manager_has_saved_credentials()
               ? wifi_manager_connect_saved()
               : ESP_ERR_NOT_FOUND;

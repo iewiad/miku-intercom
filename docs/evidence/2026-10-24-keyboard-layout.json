@@ -1,0 +1,50 @@
+{
+  "date": "2026-10-24",
+  "issue": "user reported over half of join keyboard clipped and no scrolling",
+  "scope": [
+    "join-code keyboard",
+    "shared Wi-Fi keyboard"
+  ],
+  "root_cause": "keyboard constructor sets BOTTOM_MID; set_pos retained that anchor",
+  "fix": "explicit TOP_LEFT alignment",
+  "display_size": [
+    800,
+    480
+  ],
+  "layout_test": {
+    "engine": "project managed real LVGL, headless",
+    "input": "synthetic LVGL pointer driver",
+    "join_rect": [
+      12,
+      178,
+      787,
+      467
+    ],
+    "wifi_rect": [
+      12,
+      190,
+      787,
+      475
+    ],
+    "all_key_hit_rects_in_bounds": true,
+    "join_input_and_bottom_ok_cancel": "passed",
+    "wifi_bottom_exclamation": "passed",
+    "voice_modal_bounds_and_cancel": "passed",
+    "old_join_mutation_rejected": true,
+    "old_wifi_mutation_rejected": true
+  },
+  "firmware": {
+    "bytes": 2822240,
+    "sha256": "73fd93392d7637dd9f5b7a6d926fb3c88d8f308f034a78b0856adc6b82afaa53",
+    "idf_build": "passed",
+    "independent_flash_verify": "digest matched"
+  },
+  "human_retest": {
+    "status": "passed",
+    "user_observation": "complete keyboard visible; physical touch join succeeded",
+    "memberships_before": 5,
+    "memberships_after": 6,
+    "current_group_retained": true,
+    "current_version_retained": 15
+  }
+}

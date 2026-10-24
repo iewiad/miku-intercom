@@ -1,6 +1,6 @@
 # 开发指南
 
-PR #10 已合并，S3 首切片的镜像已通过板↔浏览器双向数值、PTT 取消与短时故障恢复验证。[005 板端已加入群切换](specs/005-device-multigroup.md) 已完成本轮多群数值、十次连续切换及软重启恢复验证。用户确认显示正常；主要串口驱动不代表完整触控验收，两次软重启不代表实际断电。真人听测、长期稳定性、板端口令键盘与语音切换仍待验收。实际证据见 [acceptance.md](acceptance.md)，控制接口见 [002](specs/002-control-api.md)，媒体接口见 [003](specs/003-browser-media.md)，板端 LAN 增量见 [004](specs/004-device-lan.md)。S1 控制面评审记录见 [PR #5](https://github.com/iewiad/miku-intercom/pull/5)。
+PR #10 已合并，S3 首切片的镜像已通过板↔浏览器双向数值、PTT 取消与短时故障恢复验证。[005 板端已加入群切换](specs/005-device-multigroup.md) 已完成本轮多群数值、十次连续切换及软重启恢复验证。用户确认显示正常；主要串口驱动不代表完整触控验收，两次软重启不代表实际断电。本分支补齐板端口令键盘、主动语音切群、浏览器信令代理与启动工具；实际 RTA、取消恢复与最终人工验收分别记录。实际证据见 [acceptance.md](acceptance.md)，控制接口见 [002](specs/002-control-api.md)，媒体接口见 [003](specs/003-browser-media.md)，板端 LAN 增量见 [004](specs/004-device-lan.md)。S1 控制面评审记录见 [PR #5](https://github.com/iewiad/miku-intercom/pull/5)。
 
 ## 启动浏览器群音频
 
@@ -33,6 +33,17 @@ go run ./cmd/intercom -addr 127.0.0.1:18792 -data ../work/media-diagnostics/stat
 
 矩阵覆盖双向、一对多、跨群、松手排空后的静音、抢麦、租约到期与重复切换/重连。独立单端模式还可显式选择真实系统麦克风，沿用普通页面的 AudioClient 与麦权流程；两个窗口保持可见，使用各自身份加入同群，按麦后观察远端 PCM 和 Opus 解码统计，再交换方向。真实模式默认收听静音，人工听测时再主动开启收听并使用耳机。报告分别记录音源、采集状态、测量窗口及远端指标，不保存声音或设备标识。
 
+固定语句测试可在独立单端选择“本机合成语音 WAV”，载入本机生成的 RIFF/WAVE 文件（不超过 2 MiB、12 秒，单声道或双声道），再启用并加入测试群。两个可见窗口各用独立身份，点击“申请并发送一次合成语音”后，只有正常获权才从头播放一次，自然播放结束后保留约 250 ms 排空再放麦；异常看门狗为片长加 1 秒、最多 13 秒；取消、失焦、隐藏、离线、切群或关闭都会停止，包括音频恢复仍在等待的阶段。发送期间应保持本窗口前台直至完成；切到另一窗口会按正常失焦保护提前停发。该模式不申请系统麦克风，文件只在页面内存中解码，语音经原群媒体链路发送；报告使用 `synthetic_speech`，仅包含聚合 PCM、按麦窗口和最近 200 条远端 RMS 标量，不保存声音或文件名。
+
+macOS 可离线生成固定测试样本，再在页面中选择：
+
+```sh
+say -v Tingting -r 180 -o /tmp/shenglu-test.aiff '声路同行，群语音测试。一，二，三。测试结束。'
+afconvert -f WAVE -d LEI16@16000 -c 1 /tmp/shenglu-test.aiff /tmp/shenglu-test.wav
+```
+
+板端同时入群时，浏览器收到的远端 PCM 与板端解码指标分别记录。要验证物理扬声器，可将浏览器收听静音、音源禁止本地监听，再用电脑麦克风观察板端出声；仅在明确启用的测试时段采样，保留包络统计并丢弃原始 PCM。固定合成语音及声学检测都不能单独作为人工听清、回声或精确延迟的结论。
+
 没有人说话时可能只有静音；采集就绪、传输/解码、有声 PCM 和人工听清分别记录，不能只凭 RTP 增长判定说话成功。合成音矩阵与真实麦克风结果分别验收。详见 [003](specs/003-browser-media.md)。
 
 真实麦克风原生隐藏验证使用被动生命周期日志：先用系统 UI 切走标签、等待并返回，再读取报告。核对可信 hidden/visible 事件、旧 track ended / Peer closed、新 Peer 就绪且未按麦；单纯失焦只验停发，不能当作隐藏。直接读取或激活测试标签可能影响观察时序，报告保留最多 128 条白名单快照及丢弃计数。
@@ -60,7 +71,7 @@ ICE 仅增加所选 LAN IPv4，保留 loopback 供同机浏览器使用，UDP �
 
 固件默认 `CONFIG_MIKU_INTERCOM_DEFAULT_MODE=y`：等待私有 USB 配置与显式启动，使用已有 Wi-Fi 配置或 USB 配网，不因缺少群配置自动启动 RTA。需要原 RTA 时在 `Miku RTI device` 菜单关闭该项，重新构建并只刷应用区；原 `rti_auth` 与群配置独立，两个模式互斥。
 
-USB 配置文件必须归当前用户所有且仅本人可读写（0600），恰含 `server_url`、`ca_pem`、`device_id`、`token`、`group_code` 五个非空 ASCII 字符串。原文件最多 16 KiB，工具压缩编码后的 JSON 总计最多 2000 B，CA 的 JSON 换行转义也计入；单字段限制见[固件 README](../firmware/esp32-s31-rti/README.md#group-mode-usb-configuration)。只写 CA 证书，不写私钥；板端验证 CA 链、IP/主机名与证书有效期。
+USB 配置文件必须归当前用户所有且仅本人可读写（0600），包含 `server_url`、`ca_pem`、`device_id`、`token` 四个非空 ASCII 字符串，`group_code` 可省略或为空以使用板端键盘入群；旧预配口令保持兼容。原文件最多 16 KiB，工具压缩编码后的 JSON 总计最多 2000 B，CA 的 JSON 换行转义也计入；单字段限制见[固件 README](../firmware/esp32-s31-rti/README.md#group-mode-usb-configuration)。只写 CA 证书，不写私钥；板端验证 CA 链、IP/主机名与证书有效期。
 
 激活 ESP-IDF Python 环境并停止其他串口读取者，从仓库根目录执行：
 
@@ -72,7 +83,7 @@ python firmware/esp32-s31-rti/tools/intercom_config.py \
   --port /dev/cu.usbserial-XXXX --status
 ```
 
-工具不回显配置内容；不要把 Token 放入命令行、环境变量、日志或手工串口粘贴。`--restart` 只允许与配置文件一起使用，`--sync-time` 在重启后发送电脑当前 UTC。**本切片没有自动 SNTP，每次重启、复位或刷写后都要重新执行单独的 `--sync-time`**，再在板上显式启动；配置状态不代表时钟、TLS 或媒体已就绪。
+工具不回显配置内容；不要把 Token 放入命令行、环境变量、日志或手工串口粘贴。`--restart` 只允许与配置文件一起使用，`--sync-time` 在重启后发送电脑当前 UTC。联网后会自动 SNTP 校时；无外网时重启后仍可执行单独的 `--sync-time`，再在板上显式启动；配置状态不代表时钟、TLS 或媒体已就绪。
 
 ```sh
 python firmware/esp32-s31-rti/tools/intercom_config.py \
@@ -87,7 +98,7 @@ python firmware/esp32-s31-rti/tools/intercom_config.py \
 
 ## 板端已加入群切换（005，本轮数值与软重启恢复已验证）
 
-先完成临时 CA/TLS、USB 配置与每次重启后的 `--sync-time`，显式连接群音频。板端下拉列表只包含后台确认的已加入群；选择不会自动提交，点击切换才执行，当前群名称以权威 state 为准。展开列表取消 PTT。目录按 `view_generation` 标识，旧视图提交拒绝；目录、ID 和 UI 副本在 PSRAM，最多 128 条，非法或超限整体失败。
+先完成临时 CA/TLS、USB 身份配置和有效校时（自动 SNTP 或 `--sync-time`），显式连接群音频。板端下拉列表只包含后台确认的已加入群；选择不会自动提交，点击切换才执行，当前群名称以权威 state 为准。展开列表取消 PTT。目录按 `view_generation` 标识，旧视图提交拒绝；目录、ID 和 UI 副本在 PSRAM，最多 128 条，非法或超限整体失败。
 
 工具前提是板端已校时、已显式连接、目录已知，且打开串口没有造成复位。软件虽先设置 DTR/RTS=false，**当前 Mac 实测独立打开串口仍会复位板子**；本轮真机使用一条持续打开的串口会话完成校时、START、GROUPS 与 SWITCH。下列是满足前提时的独立工具入口，不会自动连接或校时；不能在会复位的环境中照抄连续调用并沿用旧代次。停止其他串口读取者，从仓库根目录执行：
 
@@ -113,6 +124,23 @@ SWITCH+STOP 后 pending 保留，软重启读回相同 operation_id；START 确�
 
 ## 自动验证
 
+从仓库根目录运行统一主机回归：
+
+```sh
+python3 tools/check.py --list
+python3 tools/check.py
+```
+
+入口编排现有 Go 竞态测试、vet、临时目录构建、Node 状态测试、Python 工具单测和固件主机回归，不控制既有服务、浏览器或板子，不开麦或播放声音。部分测试创建并清理独立的临时回环服务；不调用实际 RTA。Go 使用本机工具链、只读模块和离线缓存，并覆盖继承的 `GOFLAGS` 以免环境筛选跳过测试；禁止私有模块走直接下载。同时清除继承的 `NODE_OPTIONS` 并启用 Python 断言，保证主机回归不会因环境参数被缩小。缺少依赖直接失败，不自动联网下载。
+
+完整执行需要 Python 3.10+、Go 1.24+、Node 22+、支持现有 ASan/UBSan 测试的 C/C++ 编译器、CMake、OpenSSL，以及已下载的 cJSON 和 LVGL 源码。默认使用固件 `managed_components/` 下的依赖；干净检出可通过 `--cjson-dir /绝对路径/cJSON --lvgl-dir /绝对路径/lvgl` 指定已有源码。依赖缺失不记为跳过或通过。真实固件构建、Flash/NVS、RTOS 并发和人工听感仍按各自验收入口验证。
+
+竞态测试要求 CGO。若本机 `go env CGO_ENABLED` 为 `0`，确认已安装编译器后用 `CGO_ENABLED=1 python3 tools/check.py` 仅为本次进程启用；入口不修改全局 Go 配置。
+
+默认构建目录随运行清理；`--build-dir` 可指定专用于 LVGL 主机回归的缓存目录，非空且不属于此测试的目录会被拒绝。每项只打印摘要，失败打印有界尾部并非零退出，完整日志保存在提示的本机私有临时目录。
+
+以下保留各项独立入口，便于定位失败。
+
 在 `server/`：
 
 ```sh
@@ -136,6 +164,7 @@ python3 firmware/esp32-s31-rti/tests/run_http_client_reuse.py
 ```sh
 python3 firmware/esp32-s31-rti/tests/run_group_cli.py
 python3 firmware/esp32-s31-rti/tests/run_group_media_gate.py
+python3 firmware/esp32-s31-rti/tests/run_group_audio_level.py
 python3 firmware/esp32-s31-rti/tests/run_group_journal.py --sanitize
 python3 firmware/esp32-s31-rti/tests/run_switch_resolver.py
 ```
@@ -158,10 +187,35 @@ resolver 还需要已存在的 `firmware/esp32-s31-rti/managed_components/espres
 | S1 已通过 | Go 控制面、浏览器、身份/群/版本/麦权 API | 契约与状态测试通过，两身份控制流程可运行 |
 | S2 浏览器 | WebRTC 媒体契约、浏览器实音频、服务端门控 | 控制、Opus/PCM 数值、生命周期与人工听测分别记录 |
 | S3 首切片及 005 本轮数值已验证 | 固件群客户端、显式 LAN/TLS、已加入群选择与生命周期管理 | PR #10 历史证据独立；005 软重启/串口驱动不替代完整触控、断电、听测及长期稳定性 |
-| S4 | 明确群名的主动语音切换与恢复 | 操作终态、目标 RTC 可用、异常与十次切换验收 |
+| S4 首版实现 | 板端键盘、明确群名主动切换、RTA 终态确认与恢复 | 自动、触屏入群、两轮口述切群、取消恢复与六方向听测已有证据；十次连续语音切换和整场演示仍待验 |
 | S5 增强 | 按需求推荐协作群与确认 | 独立模型证据、候选权限、过期/重复确认验证 |
 
 S3 复用已定义的 S1/S2 群控制与媒体接口，不能把 RTA AI 音频桥当群转发。真机指标用实际测试确定，不预报延迟、资源、局域网以外可达性或听测结论。
+
+
+## 首版启动与命令回归
+
+首次运行使用[一条启动命令](first-run.md)，口令与语音流程见 [006](specs/006-first-version.md)。浏览器 RTA 通过显式 `-voice-config` 开启，默认关闭；私有配置及固定/受限数字节点模式以 [server README](../server/README.md) 为准。长期 Key 不进入浏览器。
+
+板端新增主机回归（本地已存在的 cJSON 可用 `--cjson-dir` 显式指定）：
+
+```sh
+python3 firmware/esp32-s31-rti/tests/run_group_commands.py
+python3 firmware/esp32-s31-rti/tests/run_group_command_ui.py
+python3 firmware/esp32-s31-rti/tests/run_group_command_flow.py
+python3 firmware/esp32-s31-rti/tests/run_legacy_join.py
+python3 firmware/esp32-s31-rti/tests/run_rta_command.py --sanitize
+python3 firmware/esp32-s31-rti/tests/run_rta_stop.py --sanitize
+python3 firmware/esp32-s31-rti/tests/run_rta_create_cleanup.py --sanitize
+python3 firmware/esp32-s31-rti/tests/run_command_bootstrap.py --sanitize
+python3 firmware/esp32-s31-rti/tests/run_wifi_recovery.py
+python3 -m unittest discover -s tools -p 'test_dev.py'
+python3 firmware/esp32-s31-rti/tests/run_group_keyboard_layout.py
+```
+
+键盘布局回归另外链接真实 LVGL，不需要 SDL。它覆盖 800×480 边界和底行触点，并要求旧锚点定位变体失败；可用 `--lvgl-dir` 指定依赖、`--build-dir` 复用私有 CMake 缓存。首次编译需要系统 C/C++ 编译器和 CMake。
+
+这些测试执行实际生产解析、意图和 worker 函数；SDK/HTTP/NVS 边界为 doubles，不能代替真实语音或物理触控。RTA stop 的 2xx 仅表示受理：命令路径还查询同一 session 的 `ended / failed / expired` 终态，失败则保持停麦并重试。界面 worker 发布只渲染，不反向回调 PTT，避免打断正在建立的连接代次。
 
 ## 变更与文档约定
 

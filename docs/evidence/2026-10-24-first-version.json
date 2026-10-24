@@ -1,0 +1,177 @@
+{
+  "date": "2026-10-24",
+  "base_commit": "88caead9332883d156e24c63844e859b29a86af5",
+  "merged_prs": [
+    9,
+    11
+  ],
+  "scope": "first-version automatic verification; human acceptance deferred",
+  "browser_matrix": {
+    "status": "passed",
+    "mode": "three-logical-terminals-in-one-page",
+    "source_kind": "synthetic",
+    "passed_cases": 10,
+    "total_cases": 10,
+    "resources_after_close": [
+      {
+        "terminal": "A",
+        "created_peers": 1,
+        "open_peers": 0
+      },
+      {
+        "terminal": "B",
+        "created_peers": 1,
+        "open_peers": 0
+      },
+      {
+        "terminal": "C",
+        "created_peers": 13,
+        "open_peers": 0
+      }
+    ],
+    "report_sha256": "d8495505ecce3cb5945c84ba5864ed5e2e1c5fd93d7552c24f93323e9ee7b73f"
+  },
+  "browser_rta_hidden": {
+    "actual_gateway": true,
+    "native_unbound_tab": true,
+    "ready_before_hide": true,
+    "ptt_unpressed_after_return": true,
+    "ptt_unpressed_after_recovery": true,
+    "ptt_available_after_recovery": true,
+    "remote_stop_contract": "POST accepted then GET matching session ID terminal; wait and retry while unconfirmed"
+  },
+  "board": {
+    "firmware": {
+      "bytes": 2822240,
+      "sha256": "b316e4b579caef015f5bb762f00f86270e2cfd92ee324fa4a33122f55c453334",
+      "idf_full_build": "passed",
+      "app_partition_only": true,
+      "independent_flash_digest": "matched",
+      "source_manifest_sha256": "14f62bd1ee3cdf16db345990eb7679437aa3c154cb9bb397fe81f64edd00cc94"
+    },
+    "fresh_identity_join": {
+      "empty_catalog_known_observed": true,
+      "connected_group_counts": [
+        1,
+        2
+      ],
+      "versions": [
+        1
+      ],
+      "all_unpressed": true,
+      "input": "UART uses same controller callback as touch UI; physical keyboard deferred"
+    },
+    "rta_ready": {
+      "session_updated_observed": true,
+      "stats_at_ready": {
+        "bootstrap_admitted": 6,
+        "bootstrap_sent": 6,
+        "mic_reads": 0,
+        "audio_sent": 0,
+        "dc_frames": 1,
+        "dc_events": 1
+      },
+      "automatic_cancel_after_ready": true,
+      "voice_utterance": "not performed",
+      "listening": "not performed"
+    },
+    "recovery": {
+      "connected_unpressed_version_unchanged": true,
+      "early_cancel_created_new_rta": false,
+      "group_packets_sent": 0,
+      "peer_start_entries": 6,
+      "peer_stop_completions": 6,
+      "fatal_observed": false
+    },
+    "network_failures": [
+      {
+        "stage": "sdp_exchange",
+        "error": "ESP_ERR_HTTP_CONNECT",
+        "count": 1,
+        "recovered": true
+      }
+    ],
+    "usb_time_sync_used": false,
+    "original_config_restore": {
+      "confirmed": true,
+      "group_count": 5,
+      "current_version": 14,
+      "final_audio": "stopped",
+      "pressed": false
+    }
+  },
+  "human_acceptance": {
+    "full_touch_flow": "pending",
+    "spoken_final_transcript_and_switch": "pending",
+    "one_board_two_browsers_listening": "pending",
+    "echo_latency": "pending"
+  },
+  "exclusions": [
+    "physical power-loss durability",
+    "second board",
+    "public WAN",
+    "demand-to-group recommendation",
+    "long-run stability"
+  ],
+  "gateway_update_probe": {
+    "mode": "synthetic_fixed_opus_silence_only",
+    "microphone_used": false,
+    "playback_used": false,
+    "variants": [
+      {
+        "label": "board_exact",
+        "type": "rtid.error",
+        "bytes": 112,
+        "code": "invalid_session_update",
+        "session_updated": false,
+        "terminal_stop_observed": true
+      },
+      {
+        "label": "browser_exact",
+        "type": "session.updated",
+        "bytes": 580,
+        "session_updated": true,
+        "terminal_stop_observed": true
+      },
+      {
+        "label": "board_without_voice",
+        "type": "rtid.error",
+        "bytes": 112,
+        "code": "invalid_session_update",
+        "session_updated": false,
+        "terminal_stop_observed": true
+      },
+      {
+        "label": "board_without_search",
+        "type": "session.updated",
+        "bytes": 593,
+        "session_updated": true,
+        "terminal_stop_observed": true
+      },
+      {
+        "label": "command_fixed_production_builder",
+        "type": "session.updated",
+        "bytes": 593,
+        "session_updated": true,
+        "terminal_stop_observed": true
+      }
+    ],
+    "finding": "Only removing enable_search from session.update fixes the rejection; voice remains compatible. Search remains disabled in create-session request."
+  },
+  "automated_tests": {
+    "host_suites": 15,
+    "host_passed": 15,
+    "node_tests": 84,
+    "node_passed": 84,
+    "go_race": "passed",
+    "go_vet": "passed"
+  },
+  "browser_rta_audio_off": {
+    "ready_before": true,
+    "audio_disabled_immediately": true,
+    "cleanup_wait_observed": true,
+    "final_ui_observation": "deferred: computer locked",
+    "proxy_journal_pending_records": 0
+  },
+  "platform_limitation": "Repeated original RTIC queries may return nonterminal states after a prior terminal observation; terminal monotonicity and stable upstream resource reclamation are not proven."
+}

@@ -308,3 +308,28 @@ test('PTT ignores another touch ending; active pointer cancellation and forced b
   handlers.get('pointerdown')(event(5)); assert.equal(client.pressed, true); forceEnd();
   assert.equal(client.stops, 5);
 });
+
+test('failed pending persistence never installs or submits a switch, even on a later confirmation tick',async()=>{
+ const h=setup(call=>response(200,call.url.endsWith('/state')?state():applied(call.body)));
+ h.client.onPending=()=>{throw new Error('QuotaExceededError');};
+ const started=await h.client.switchGroup('group_2');assert.equal(started,false);assert.equal(h.client.pendingSwitch,null);
+ await h.client.confirmSwitch();await h.client.refresh();
+ assert.equal(h.calls.filter(c=>c.url.endsWith('/current-group')||c.url.includes('/operations/')).length,0);
+ assert.equal(h.timers.size,0);assert.match(h.client.notice,/尚未提交/);
+});
+
+test('terminal persistence clear failure keeps original request pending and retries its terminal before media resumes',async()=>{
+ let operation;const h=setup(call=>{
+  if(call.url.endsWith('/current-group')){operation={...call.body};return response(200,applied(operation));}
+  if(call.url.includes('/operations/'))return response(200,{operation:applied(operation).operation});
+  if(call.url.endsWith('/state'))return response(200,state({current_group_id:'group_2',current_version:2}));
+  return response(200,{});
+ });
+ let durable=null,failClear=true;
+ h.client.onPending=value=>{if(!value&&failClear)throw new Error('SecurityError');durable=value&&{...value};};
+ await h.client.switchGroup('group_2');assert.deepEqual(h.client.pendingSwitch,operation);assert.deepEqual(durable,operation);
+ assert.equal(h.client.state.current_group_id,'group_1');assert.equal(h.client.canPress(),false);
+ failClear=false;await h.client.confirmSwitch();assert.equal(h.client.pendingSwitch,null);assert.equal(durable,null);
+ assert.equal(h.client.state.current_group_id,'group_2');assert.equal(h.calls.filter(c=>c.url.endsWith('/current-group')).length,1);
+ assert.equal(h.calls.filter(c=>c.url.includes('/operations/')).length,1);
+});

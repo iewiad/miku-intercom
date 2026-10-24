@@ -4,11 +4,13 @@
 
 首版目标：快速建群与口令入群、按住说话、按群名语音切换、断线后可信恢复。根据需求推荐协作群为增强项。普通群音频由独立对讲服务转发，RTA 只用于主动触发的语音指令。
 
-S1 群控制面与 S2 浏览器 WebRTC 群音频已合入 main（[PR #6](https://github.com/iewiad/miku-intercom/pull/6)）。真实系统麦克风采集与传输已有数值验证，诊断扩展及证据已随 [PR #7](https://github.com/iewiad/miku-intercom/pull/7) 合并；人工听测待完成。S3 首切片已随 [PR #10](https://github.com/iewiad/miku-intercom/pull/10) 合并，验证一板一浏览器的真实麦克风双向传输、松手停发及服务重启恢复。PR #11 已合并板端已加入群切换，已完成三群隔离、十次连续切换及待确认操作跨软重启恢复；人工听测、板端口令键盘、主动语音切群与需求推荐仍待完成。实际验证以[验收记录](docs/acceptance.md)及对应 PR 为准。
+当前联调已通过一板两浏览器六个方向的完整语句听测：浏览器使用合成语音，板端使用真人近讲；音量重启保持也已验证。范围与已知限制见[验收记录](docs/acceptance.md)。
+
+S1/S2 群控制与浏览器群音频、PR #9 浏览器隐藏恢复、PR #10/#11 板端群音频及多群恢复均已合并。本分支补齐板端口令键盘、主动语音切群、浏览器 RTA 信令代理与启动工具。触屏入群、两轮口述切群、取消恢复和六方向听测已通过；完整演示串联、回声与延迟专项观察仍待补齐，需求推荐为后续增强。实际范围见[验收记录](docs/acceptance.md)。
 
 ## 系统架构
 
-实线为当前浏览器及本分支板端实现，虚线为后续语音指令接入。控制面和媒体面在同一个 Go 进程中，通过权威状态配合工作。
+图中表示当前代码的组件与数据路径；各路径的实测范围以验收记录为准。控制面和媒体面在同一个 Go 进程中，通过权威状态配合工作。
 
 ```mermaid
 flowchart LR
@@ -19,6 +21,7 @@ flowchart LR
     subgraph Server[Go 对讲服务 · 单进程]
         C[控制面<br/>身份 / 群 / 当前群版本 / 麦权]
         M[媒体面 · Pion WebRTC<br/>逐包授权 / 有界队列 / RTP 续接]
+        V[RTA 信令代理<br/>显式启用 / 私有会话日志]
         D[(本机快照<br/>身份 / 群 / 成员 / 切群结果)]
         C -->|权威状态与租约| M
         C <-->|原子保存与恢复| D
@@ -27,16 +30,21 @@ flowchart LR
     B <-->|同源 HTTP · 控制与信令| C
     A <-->|WebRTC · Opus| M
     B <-->|WebRTC · Opus| M
-    subgraph Device[板端与后续语音指令]
+    subgraph Device[板端与主动语音指令]
         E[ESP32 终端]
         R[RTA · 主动语音指令]
     end
     E -->|指定 LAN IP · HTTPS 控制 API| C
-    E -->|WebRTC Opus · S3| M
-    E <-.->|语音与最终转写| R
+    E <-->|WebRTC Opus| M
+    E <-->|主动指令 · RTA RTC| R
+    A <-->|主动指令 · RTA RTC| R
+    B <-->|主动指令 · RTA RTC| R
+    A -->|同源语音信令| V
+    B -->|同源语音信令| V
+    V <-->|HTTPS · 会话 / offer / stop| R
 ```
 
-普通群音频经媒体面转发给同群其他成员，控制面是身份、当前群与麦权的唯一授权来源。源包入队与目标写出前都重新校验权限；麦权与 Peer 只保存在内存，服务重启后清空。RTA 群指令集成待实现；复用固件此前的一对一 RTA 验收见验收记录。默认部署保持 localhost；S3 通过完整显式参数开放指定 LAN IP 的设备 HTTPS 与 UDP 入口，配置见[开发指南](docs/development.md#s3-板端-lan-开发入口)。板端实际证据单独记录，不外推到公网。
+普通群音频经媒体面转发给同群其他成员，控制面是身份、当前群与麦权的唯一授权来源。源包入队与目标写出前都重新校验权限；麦权与 Peer 只保存在内存，服务重启后清空。RTA 只在主动指令阶段运行；后台仅解析已加入群的明确群名，仍复用原有持久切群与终态确认。默认部署保持 localhost；S3 通过完整显式参数开放指定 LAN IP 的设备 HTTPS 与 UDP 入口，配置见[开发指南](docs/development.md#s3-板端-lan-开发入口)。板端实际证据单独记录，不外推到公网。
 
 ## 连接与发言状态
 
@@ -140,7 +148,35 @@ sequenceDiagram
 
 结果未知时保持媒体关闭，并查询或重试同一操作；单次当前群快照不能代替操作终态。成功或拒绝后都以最新权威状态恢复，媒体连接失败时显示失败并保留重试入口。接口字段与完整异常语义见 [002](docs/specs/002-control-api.md) / [003](docs/specs/003-browser-media.md)。
 
-板端通过已加入群下拉列表和确认按钮执行切换，权威当前群单独显示。停止和软重启会保留待确认操作，恢复后保持未按麦。详情与状态图见 [005](docs/specs/005-device-multigroup.md)，实际范围见[多群验收](docs/acceptance.md#s3-板端多群切换)；板端口令键盘与语音切群后续接入。
+板端通过已加入群下拉列表和确认按钮执行切换，权威当前群单独显示。停止和软重启会保留待确认操作，恢复后保持未按麦。详情与状态图见 [005](docs/specs/005-device-multigroup.md)，实际范围见[多群验收](docs/acceptance.md#s3-板端多群切换)；新增口令键盘与语音切群见下节。
+
+## 主动语音切群
+
+点击语音入口后，终端先停发并退休群 Peer，等待 RTA 指令通道确认后才开麦；只接受当前代次首次最终用户转写。普通群聊不触发指令。提交前可取消，提交后等待原操作结果，恢复始终未按麦。
+
+```mermaid
+stateDiagram-v2
+    [*] --> GroupReady
+    state "群音频就绪" as GroupReady
+    state "关闭群 Peer · 准备指令" as Preparing
+    state "采集就绪 · 请说群名" as Listening
+    state "核对已加入群" as Resolving
+    state "结束 RTA 与确认切群终态" as Confirming
+    state "核实当前群 · 重建群 Peer" as Recovering
+    GroupReady --> Preparing: 主动点击语音切群 / 取消PTT
+    Preparing --> Listening: session.updated 与采集就绪
+    Listening --> Resolving: 首次最终用户转写 / 停采集
+    Preparing --> Confirming: 取消 / 初始化失败
+    Listening --> Confirming: 取消 / 超时 / 断网
+    Resolving --> Confirming: 有限群名命令 / 或明确拒绝
+    Confirming --> Confirming: stop或切群结果不明 / 重试原操作
+    Confirming --> Recovering: RTA结束确认且切群无未决操作
+    Recovering --> GroupReady: 当前群媒体可用 / 未按麦
+```
+
+板端先结束 RTA 再持久提交切群；浏览器先持久提交并确认控制操作，再结束 RTA。两者始终串行使用一个本地 Peer，RTA stop 未确认时不恢复群音频。详细边界见 [006 首版规格](docs/specs/006-first-version.md)。
+
+启动使用 `python3 tools/dev.py`；板端 LAN、私有证书、USB 初始化和可选 RTA 配置见[首次运行指南](docs/first-run.md)。本地主机回归用 `python3 tools/check.py`，范围与依赖见[开发指南](docs/development.md#自动验证)；完整演示和关闭检查见[演示与收尾指南](docs/demo.md)。
 
 ## 从这里开始
 

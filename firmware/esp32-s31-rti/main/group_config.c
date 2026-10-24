@@ -84,7 +84,7 @@ static bool valid_config(const group_config_t *config)
            bounded(config->ca_pem, sizeof(config->ca_pem)) &&
            bounded(config->device_id, sizeof(config->device_id)) &&
            bounded(config->token, sizeof(config->token)) &&
-           bounded(config->group_code, sizeof(config->group_code)) &&
+           strnlen(config->group_code, sizeof(config->group_code)) < sizeof(config->group_code) &&
            private_server_url(config->server_url) && identifier(config->device_id) &&
            identifier(config->token) && identifier(config->group_code) && valid_ca(config->ca_pem);
 }
@@ -197,13 +197,13 @@ esp_err_t group_config_store_json(const char *json, size_t size)
         else FIELD(token, 8)
         else FIELD(group_code, 16)
 #undef FIELD
-        if (!destination || (fields & bit) || !bounded(field->valuestring, capacity)) {
+        if (!destination || (fields & bit) || (bit == 16 ? strlen(field->valuestring) >= capacity : !bounded(field->valuestring, capacity))) {
             goto done;
         }
         fields |= bit;
         memcpy(destination, field->valuestring, strlen(field->valuestring) + 1);
     }
-    if (fields != 31 || !valid_config(config)) {
+    if ((fields != 15 && fields != 31) || !valid_config(config)) {
         goto done;
     }
     nvs_handle_t handle;

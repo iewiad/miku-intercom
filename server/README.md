@@ -53,3 +53,39 @@ go run ./cmd/intercom -addr 127.0.0.1:8080 \
 启用后仅额外发布指定 LAN IPv4 的 ICE host 候选，保留 loopback 供本机浏览器使用；不启用公网候选或 STUN/TURN。候选过滤不等于保证每个底层 socket 只绑定该地址。需在测试网络确认该 UDP 范围可达；服务端协议测试不能替代板↔浏览器实音频验收。完整板端契约见 `docs/specs/004-device-lan.md`。
 
 接口与后续顺序见仓库 `docs/specs/002-control-api.md`、`003-browser-media.md`、`docs/architecture.md` 和 `docs/development.md`。控制状态、数字音频诊断、真实听测、板端与语音切群分别验收，结果只记入 `docs/acceptance.md`。
+
+## 主动语音切群
+
+`POST /api/v1/voice/resolve` 使用终端 Bearer 鉴权，请求为 `{ "transcript": "切到后勤组" }`，成功返回 `{ "group_id": "…", "name": "后勤组" }`。板端和浏览器共用此接口。它只解析，不切群；真正执行仍使用 002 中的 `PUT /current-group`、同一 `operation_id` 的终态查询与持久恢复。
+
+首版接受完整句式“切到 / 切换到 / 进入”加已加入群的完整名称，可去除句末句号或感叹号；不使用子串、模糊或模型助手回复猜测，不接受普通聊天、问句、未知群或跨权限目标。输入上限为 256 个 Unicode 字符。拒绝码为 `invalid_voice_command`（400）、`voice_target_unknown` / `voice_target_ambiguous`（422）。普通对讲音频不送模型。
+
+浏览器提供“语音切群”按钮：明确触发后停麦并关闭群 Peer，再建立原 RTA RTC，只接受本次会话首次最终用户转写。取消、隐藏、离线、30 秒总超时和会话失败立即停止采集。提交切群前可取消，提交后只等待原操作终态。首版先提交并确认控制操作，再关闭 RTA，最后恢复群 RTC；任何阶段都不会并行创建两个 Peer。若后台已切群而 RTA stop 失败，界面明确显示请求已提交、会话清理待确认，保持暂停而不提供撤销。RTA stop 获得网关成功应答后，代理还必须 GET 同一 session，核验返回 session_id 匹配且 state 为 ended / failed / expired；只有确认远端终态且本地 Peer 关闭后，才允许核实当前群并恢复群音频；202 只代表已受理，不作为结束证据；非终态、查询失败或返回身份不符均继续阻塞并重试 POST stop + GET 状态。恢复始终未按麦。首次部署及页面恢复时也先查询并清理上次遗留会话。
+
+浏览器 RTA 默认关闭；`GET /api/v1/voice` 返回 `available:false`，页面明确显示尚未启用。开发者显式准备一个 0600 私有 JSON 文件，并在已有启动参数后增加 `-voice-config ../work/private/voice.json`。文件示例仅展示结构；按已跑通板端的网关、授权和 Profile 填写，勿提交真实文件或把 Key 写在命令行中：
+
+```json
+{
+  "rtic_url": "https://miku-rtic.qiniuapi.com",
+  "token": "<existing development API key>",
+  "app_id": "<authorized app id>",
+  "rtc_origin": "https://<explicitly trusted RTC endpoint host>",
+  "model_profile": "qwen3.5-omni-plus-realtime",
+  "role_profile": "default_assistant",
+  "voice_profile": "Tina",
+  "region": "cn-east"
+}
+```
+
+`rtic_url` 必须是 HTTPS origin，不带路径、用户信息、查询参数或片段。RTC endpoint 的授权策略必须明确选择一种，默认不开放动态域：
+
+- 固定节点：配置 `rtc_origin` 为完整 HTTPS origin，返回 endpoint 的 origin 必须精确匹配。
+- 动态数字节点：省略 `rtc_origin`，改配 `"rtc_node_domain": "mikudns.com", "rtc_node_port": 7882`。仅允许 `https://<1–63 位纯数字>.mikudns.com:7882`；单层节点名、完整域后缀和显式端口均严格核验。非数字节点、多层子域、伪造后缀、错端口、缺端口或带前导零的端口均拒绝。两个模式互斥，不能同时填写。
+
+两种策略都要求收到的原始路径严格为当前 `/v1/realtime/sessions/{session_id}/rtc`，不接受短链、别的 session、点段归一化、userinfo、query 或 fragment（包括空的 `?` / `#`）；禁止跟随重定向。若网关返回相对 URL，它按 RTIC origin 解析后仍必须符合所选策略。这里沿用板端已跑通的 legacy `input_audio_transcription`、`qwen3-asr-flash-realtime`、`semantic_vad` 配置；不自动切到 reference 中另一套 Lingxi Profile 或 GA 嵌套配置。命令会话在 DataChannel `open` 后发送一次 legacy `session.update`，不依赖上游先发送 `session.created`；若收到后者也复用同一次初始化。只在 `session.updated` 确认后开麦。页面区分准备麦克风、收集连接信息、连接语音服务、等待配置确认和听取指令。命令会话不发欢迎语，关闭自动回答，不播放助手音频。实际 Profile 对这些选项的支持与最终转写仍需真实 RTA 验证。
+
+浏览器只访问本地 `/voice/sessions` 建会话、`/voice/sessions/{command_id}/offer` 换 SDP、`/voice/sessions/{command_id}/stop` 清理；所有接口按身份绑定。API Key 和短期 endpoint Token 均不返回浏览器。WebRTC 音频和事件直接走配置中的 RTA 路线，本地代理只做 HTTP 信令；此路径仍需可达的 RTA ICE 网络。
+
+服务端在 `<data>.voice.json` 留存私有原子会话 journal，绑定 RTIC origin、app 与完整 RTC 授权策略（固定 origin 或数字节点域及端口）；不写 Key、短期 Token、SDP、转写或录音。先写待确认记录再请求创建；重启后只清理旧会话，不恢复为新语音命令。正常退出尝试 stop 全部已知会话；浏览器消失后 45 秒开始后台 stop，失败每 5 秒重试。**创建请求结果不明且没有 session_id 时，无法证明是否已创建，服务和页面保持阻塞；必须先在网关确认并处理该悬挂会话，再由开发者修复 journal，不能通过删除文件或重启来声称已清理。** 更换绑定配置同样要求先解决旧 journal；只有所有记录均已 terminal，才可由开发者归档旧 journal 后使用新策略，不能遗弃待确认记录。异常退出的私有存储锁沿用上文人工核实进程规则。
+
+每身份仅一个活动代理会话，全局上限 32 个；历史 command_id 保护记录上限 4096，不静默淘汰。已结束或先 stop 的 command_id 不得复活；新语音操作使用新随机 ID。数值、控制与 TLS 代理测试不替代真实转写、单 Peer 真机资源切换或真人听测。

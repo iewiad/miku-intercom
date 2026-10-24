@@ -1,0 +1,129 @@
+{
+  "date": "2026-10-24",
+  "scope": "physical board join and explicit spoken group switch; listening deferred",
+  "tested_firmware_sha256": "73fd93392d7637dd9f5b7a6d926fb3c88d8f308f034a78b0856adc6b82afaa53",
+  "physical_join": {
+    "status": "passed",
+    "keyboard_fully_visible": true,
+    "memberships_before": 5,
+    "memberships_after": 6,
+    "current_group_retained": true,
+    "current_version": 15
+  },
+  "spoken_switches": [
+    {
+      "from": "后勤组",
+      "to": "验收测试群",
+      "expected_version": 15,
+      "current_version": 16,
+      "operation_status": "applied",
+      "user_confirmed_after_closing_modal": true,
+      "group_audio_restored": true,
+      "remote_cleanup_wait_approx_seconds": 16
+    },
+    {
+      "from": "验收测试群",
+      "to": "后勤组",
+      "expected_version": 16,
+      "current_version": 17,
+      "operation_status": "applied",
+      "user_confirmed_current_group_and_ready": true,
+      "group_audio_restored": true
+    }
+  ],
+  "board_after_reverse_switch": {
+    "connected": true,
+    "pressed": false,
+    "held": false,
+    "current_version": 17,
+    "group_count": 6,
+    "group_media_sent_packets": 0,
+    "http_failures": 2,
+    "http_failure_note": "new durable operations first query expected 404; not a zero HTTP failure claim"
+  },
+  "raw_transcript_saved": false,
+  "audio_saved": false,
+  "manual_cancel": {
+    "status": "passed",
+    "input": "physical touchscreen after READY, no intended spoken command",
+    "user_confirmed_same_group_ready_and_unpressed": true,
+    "current_group": "后勤组",
+    "current_version_before": 17,
+    "current_version_after": 17,
+    "extra_switch_operation": false,
+    "board_connected_after": true,
+    "board_pressed_after": false,
+    "board_held_after": false,
+    "board_group_sent_packets": 0,
+    "rta_session_updated_observed": true,
+    "rta_final_transcription_observed": false,
+    "local_peer_closed": true
+  },
+  "listening": {
+    "status": "pending"
+  },
+  "modal_feedback_followup": {
+    "status": "passed",
+    "authoritative_group_label": true,
+    "terminal_action": "返回对讲",
+    "real_lvgl_test": "passed",
+    "ui_guard_sanitizers": "passed",
+    "physical_observation": {
+      "preparation_modal_current_group": "user confirmed 后勤组 complete and no overlap",
+      "cancel_return": "user confirmed",
+      "microphone_started": false,
+      "terminal_result_render": "covered by real LVGL regression; no additional physical voice run on this display-only revision"
+    },
+    "firmware": {
+      "bytes": 2822576,
+      "sha256": "2723e69e593b369a15d89b0fed7d548faba7edf7a911aca7e31c89d4e8bdca46",
+      "idf_build": "passed",
+      "independent_flash_verify": "digest matched",
+      "app_partition_only": true
+    },
+    "boot_reconnect": {
+      "current_group": "后勤组",
+      "current_version": 17,
+      "group_count": 6,
+      "connected": true,
+      "pressed": false,
+      "held": false,
+      "command_kind": 0,
+      "command_phase": 0,
+      "group_media_sent_packets": 0
+    },
+    "after_test": {
+      "group_audio_explicitly_stopped": true,
+      "local_peer_close_observed": true,
+      "serial_observer_closed": true
+    }
+  },
+  "platform_limit": "same session remote terminal status may later regress; no stable cleanup guarantee",
+  "observation_window": {
+    "rta_sessions": 3,
+    "audio_peer_starts": 8,
+    "audio_peer_stops": 8,
+    "fatal_log_events": 0,
+    "after_test": "explicitly stopped before app-only firmware update"
+  },
+  "rta_cleanup_snapshot": {
+    "known_sessions": 3,
+    "stop_http": [
+      202,
+      202,
+      202
+    ],
+    "query_http": [
+      200,
+      200,
+      200
+    ],
+    "all_session_ids_match": true,
+    "observed_states": [
+      "ended",
+      "ended",
+      "ended"
+    ],
+    "stable_terminal_monotonicity_proven": false
+  }
+}

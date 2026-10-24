@@ -320,6 +320,13 @@ static void serial_cli_task(void *arg)
         } else if (strcmp(line, "INTERCOM_PTT_UP") == 0) {
             group_controller_ptt(false, NULL);
             printf("INTERCOM_PTT_UP_REQUESTED\n");
+        } else if (strncmp(line, "INTERCOM_JOIN ", strlen("INTERCOM_JOIN ")) == 0) {
+            const esp_err_t err = group_controller_join_group(line + strlen("INTERCOM_JOIN "), NULL);
+            printf(err == ESP_OK ? "INTERCOM_JOIN_REQUESTED\n" : "INTERCOM_JOIN_ERROR invalid_or_unavailable\n");
+        } else if (strcmp(line, "INTERCOM_VOICE_START") == 0 || strcmp(line, "INTERCOM_VOICE_CANCEL") == 0) {
+            const bool cancel = strcmp(line, "INTERCOM_VOICE_CANCEL") == 0;
+            const esp_err_t err = group_controller_voice_action(cancel, NULL);
+            printf(err == ESP_OK ? "INTERCOM_VOICE_REQUESTED\n" : "INTERCOM_VOICE_ERROR invalid_state\n");
         } else if (strcmp(line, "INTERCOM_STATUS") == 0) {
             group_controller_print_status();
         } else if (strncmp(line, "RTI_WIFI_PING", strlen("RTI_WIFI_PING")) == 0) {

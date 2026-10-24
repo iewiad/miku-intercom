@@ -14,6 +14,7 @@ import (
 	"github.com/iewiad/miku-intercom/server/internal/lan"
 	"github.com/iewiad/miku-intercom/server/internal/media"
 	"github.com/iewiad/miku-intercom/server/internal/persist"
+	"github.com/iewiad/miku-intercom/server/internal/rta"
 )
 
 func run() error {
@@ -25,6 +26,7 @@ func run() error {
 	deviceKey := flag.String("device-key", "", "device HTTPS private key PEM file")
 	deviceUDPMin := flag.Int("device-udp-min", 0, "device media minimum UDP port")
 	deviceUDPMax := flag.Int("device-udp-max", 0, "device media maximum UDP port")
+	voiceConfig := flag.String("voice-config", "", "opt-in private JSON RTA configuration; browser signalling stays local")
 	flag.Parse()
 	if err := validateBrowserAddress(*addr); err != nil {
 		return err
@@ -64,7 +66,17 @@ func run() error {
 		return err
 	}
 	defer hub.Close()
-	browserServer := httpServer(*addr, httpapi.New(service, hub))
+	var voice *rta.Proxy
+	if *voiceConfig != "" {
+		voice, err = rta.Load(*voiceConfig, *data+".voice.json")
+		if err != nil {
+			return err
+		}
+	}
+	if voice != nil {
+		defer voice.Close()
+	}
+	browserServer := httpServer(*addr, httpapi.NewWithVoice(service, hub, voice))
 	var deviceServer *http.Server
 	if device != nil {
 		handler, err := httpapi.NewDevice(service, hub, device.address.String())
