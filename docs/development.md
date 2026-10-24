@@ -1,6 +1,6 @@
 # 开发指南
 
-当前 S3 首切片的最终镜像已通过板↔浏览器双向数值、PTT 取消与短时故障恢复验证；真人听测、长期稳定性、板端多群切换及语音指令仍待验收。实际证据见 [acceptance.md](acceptance.md)，控制接口见 [002](specs/002-control-api.md)，媒体接口见 [003](specs/003-browser-media.md)，板端 LAN 增量见 [004](specs/004-device-lan.md)。S1 控制面评审记录见 [PR #5](https://github.com/iewiad/miku-intercom/pull/5)。
+PR #10 已合并，S3 首切片的镜像已通过板↔浏览器双向数值、PTT 取消与短时故障恢复验证。[005 板端已加入群切换](specs/005-device-multigroup.md) 已完成本轮多群数值、十次连续切换及软重启恢复验证。用户确认显示正常；主要串口驱动不代表完整触控验收，两次软重启不代表实际断电。真人听测、长期稳定性、板端口令键盘与语音切换仍待验收。实际证据见 [acceptance.md](acceptance.md)，控制接口见 [002](specs/002-control-api.md)，媒体接口见 [003](specs/003-browser-media.md)，板端 LAN 增量见 [004](specs/004-device-lan.md)。S1 控制面评审记录见 [PR #5](https://github.com/iewiad/miku-intercom/pull/5)。
 
 ## 启动浏览器群音频
 
@@ -79,9 +79,35 @@ python firmware/esp32-s31-rti/tools/intercom_config.py \
 
 构建与升级使用[固件 README](../firmware/esp32-s31-rti/README.md#toolchain) 的 `app-flash`，独立校验本次镜像；保持现有分区布局，不执行整片擦除或常规全量 `flash`。应用区写入不覆盖 NVS。群模式遇到 NVS 无空页/版本不兼容会停止并要求显式修复，不自动擦除；RTA 回退模式保留原异常处理。
 
-群会话在同一身份/配置内复用单个 HTTPS client handle，每次设置 GET/POST/DELETE 及请求体，结束后清除请求体/响应指针；失败或不可复用的响应会关闭 handle，不自动重放不确定写请求。群模式约 24.2 KB 非 DMA 音频工作区显式使用 PSRAM 且无 internal fallback；I2S 驱动仍用 DMA，AEC DMA 数组仍在内部内存，RTA 原 `malloc` 路径未改。
+群会话在同一身份/配置内复用单个 HTTPS client handle，每次设置 GET/POST/PUT/DELETE 及请求体，结束后清除请求体/响应指针；失败或不可复用的响应会关闭 handle；HTTP helper 不自动重放写请求，005 切群 worker 另按固定 NVS 操作查询与重放。群模式约 24.2 KB 非 DMA 音频工作区显式使用 PSRAM 且无 internal fallback；I2S 驱动仍用 DMA，AEC DMA 数组仍在内部内存，RTA 原 `malloc` 路径未改。
 
-最终镜像已完成 app-only 写入和独立 verify。浏览器→板端为 3010 ms/30 次 enabled 采集观察，源 RMS 0.40566，板端远端累计峰 0.519934；板端→浏览器 PULSE6 发送 299 包，浏览器远端累计峰 0.0075，松手后发送计数不再增长。120.26 秒正常观察中 HTTP 请求计数 7→124、TLS 连接数为 1、失败为 0；计划服务中断另引入 7 次连接错误，重连后新 epoch/Peer、同群同版本、未按麦 TX=0。不能将正常窗口的零失败写成全程零错误。三次板端 Peer 生命周期无 panic，停止后浏览器 open Peer=0、capture=none；Wi-Fi 和 RTA 凭据保留。完整镜像标识、内存数值及范围见[最终证据](evidence/2026-10-24-device-group.json)和[固件 README](../firmware/esp32-s31-rti/README.md#group-session-resources-and-current-evidence)。这些通过项不替代真人听测或长期稳定性验收。
+以下是 PR #10 首切片历史证据，不是当前多群镜像的验收：该镜像已完成 app-only 写入和独立 verify。浏览器→板端为 3010 ms/30 次 enabled 采集观察，源 RMS 0.40566，板端远端累计峰 0.519934；板端→浏览器 PULSE6 发送 299 包，浏览器远端累计峰 0.0075，松手后发送计数不再增长。120.26 秒正常观察中 HTTP 请求计数 7→124、TLS 连接数为 1、失败为 0；计划服务中断另引入 7 次连接错误，重连后新 epoch/Peer、同群同版本、未按麦 TX=0。不能将正常窗口的零失败写成全程零错误。三次板端 Peer 生命周期无 panic，停止后浏览器 open Peer=0、capture=none；Wi-Fi 和 RTA 凭据保留。完整镜像标识、内存数值及范围见[最终证据](evidence/2026-10-24-device-group.json)和[固件 README](../firmware/esp32-s31-rti/README.md#group-session-resources-and-current-evidence)。这些通过项不替代真人听测或长期稳定性验收。
+
+## 板端已加入群切换（005，本轮数值与软重启恢复已验证）
+
+先完成临时 CA/TLS、USB 配置与每次重启后的 `--sync-time`，显式连接群音频。板端下拉列表只包含后台确认的已加入群；选择不会自动提交，点击切换才执行，当前群名称以权威 state 为准。展开列表取消 PTT。目录按 `view_generation` 标识，旧视图提交拒绝；目录、ID 和 UI 副本在 PSRAM，最多 128 条，非法或超限整体失败。
+
+工具前提是板端已校时、已显式连接、目录已知，且打开串口没有造成复位。软件虽先设置 DTR/RTS=false，**当前 Mac 实测独立打开串口仍会复位板子**；本轮真机使用一条持续打开的串口会话完成校时、START、GROUPS 与 SWITCH。下列是满足前提时的独立工具入口，不会自动连接或校时；不能在会复位的环境中照抄连续调用并沿用旧代次。停止其他串口读取者，从仓库根目录执行：
+
+```sh
+python3 firmware/esp32-s31-rti/tools/intercom_config.py \
+  --port /dev/cu.usbserial-XXXX --groups
+python3 firmware/esp32-s31-rti/tools/intercom_config.py \
+  --port /dev/cu.usbserial-XXXX \
+  --switch-group "${INTERCOM_GROUP_ID}" --view-generation "${INTERCOM_VIEW_GENERATION}"
+```
+
+`INTERCOM_GROUP_ID` 和 `INTERCOM_VIEW_GENERATION` 须由开发者明确设置为目录中的目标 ID 和当次整数代次；工具不会自动选群或刷新代次。`--groups` 只打印经过校验的 `view_generation/current_group_id/current_version/known/switching/groups[id,name]` 字段，最多 128 条，串口响应按完整行分段累积，上限 64 KiB。它不回显原始日志、Token 或口令；两种群操作不读取凭据文件，不能与配置、重启、校时或 `--status` 混用。现有 `--status` 仍仅报告配置是否存在。若开口复位，必须重新校时并显式连接；`known:false` 的未就绪目录会拒绝切换。长会话使用 `INTERCOM_TIME_SET`、`INTERCOM_START`、`INTERCOM_GROUPS`、`INTERCOM_SWITCH N ID` 协议，工具未提供自动建立该会话的功能。
+
+切群回执 `REQUESTED` 只说明控制器受理。再次查看目录并结合后台当前群/版本和板端媒体就绪状态确认结果，不能把回执或群名变化单独当作音频已连接。接受意图时先同步暂停 TX、RX 入队及 PCM 播放准入，再释放麦权、关闭旧 Peer；已经进入网络/I2S 的尾音不可撤回。
+
+首次 PUT 前将固定操作号、目标、预期版本及服务 URL/身份绑定写入 NVS 并 commit。超时、Stop/Start、断网、服务重启和板端重启不替换操作；先查原 ID，404 再按原载荷重放。终态不明不建媒体；取得同一操作终态和最新 state、成功清理日志后，才按最新当前群重建单 Peer，恢复为未按麦。配置与日志的服务/身份不匹配时保留日志并暂停，需恢复原配置，不能自动清除日志或猜测回原群。
+
+本轮最终多群镜像完成 app-only 与独立 verify。三群 A/B/C、单浏览器合成 440 Hz 且播放静音：同 A/B 板端 RMS 为 0.071842/0.071816；板 B 听 A、板 C 听 B 时累计 remote_rms_peak=0。持麦 A→B 接受后 pressed/held=false、新 Peer TX=0。十次连续切换 version 3→13 均 ready、未按麦、TX=0，记录内部可用 heap 48,523–50,447 B；未知目标本地拒绝仍为 version 13，旧 view 同样拒绝。
+
+SWITCH+STOP 后 pending 保留，软重启读回相同 operation_id；START 确认至 A/version 14，日志清理后再次软重启 pending=false。共 16 次 Peer start/close 无 panic，停止后内部可用 heap 152,227–152,243 B，最终启动保持停止为 152,711 B，Wi-Fi/RTA 凭据保留。这是两次软重启，未做实际断电；用户确认当前群/下拉/按钮显示正常，但切换路径主要由长串口会话调用同一控制器，不标完整触控验收。
+
+该版本将新操作的预期 GET operation=404 也计入 http_failures，正常 13 次操作对应 13 次非 2xx，不能声称零 HTTP 失败。镜像标识及范围见[本轮多群证据](evidence/2026-10-24-device-multigroup.json)；与 PR #10 首切片独立，不构成人工听测、长期稳定性、板端口令键盘或语音切换通过。
 
 ## 自动验证
 
@@ -103,13 +129,33 @@ python3 firmware/esp32-s31-rti/tests/run_http_client_reuse.py
 
 该脚本提取当前生产 `request`、请求体解绑和 client 清理函数，用 SDK double 编译执行；覆盖 GET→POST acquire→POST renew→GET→DELETE 复用、Content-Type/空请求体语义、临时指针解绑，以及失败/不完整/超限/无效 JSON/服务端关闭后的清理，并运行 `GROUP_CONTROLLER_HOST_TEST` 状态回归。它不打开网络、读取凭据或连接板子，不验证真实 TLS、ESP 内存分配、音频或长期稳定性。
 
+新增多群主机回归同样从仓库根目录运行；`--sanitize` 仅用于日志测试脚本：
+
+```sh
+python3 firmware/esp32-s31-rti/tests/run_group_cli.py
+python3 firmware/esp32-s31-rti/tests/run_group_media_gate.py
+python3 firmware/esp32-s31-rti/tests/run_group_journal.py --sanitize
+python3 firmware/esp32-s31-rti/tests/run_switch_resolver.py
+```
+
+| 入口 | 实际覆盖 | 明确边界 |
+| --- | --- | --- |
+| `run_group_cli.py` | 提取生产 C parser/dispatch；Python 参数、分段目录白名单、uint32/ID/CR/多余字段、凭据隔离、DTR/RTS 与 REQUESTED 语义 | 串口/控制器为 double，无真实 UART、触控或网络 |
+| `run_group_media_gate.py` | 提取生产发送/接收准入、不可逆暂停、迟到授权、到期、晚到包入队与 RTA 路径隔离 | 不执行 playback_task 的出队/解码/I2S 调用点，也不验证真实并发或硬件尾音 |
+| `run_group_journal.py --sanitize` | 编译生产日志存储；NVS double 注入提交前/提交结果不明错误、损坏 blob、身份/载荷冲突、终态与旧状态；ASan/UBSan | 不验证真实 NVS/Flash 原子性或实际断电；不是完整 HTTP worker/媒体集成测试 |
+| `run_switch_resolver.py` | 提取生产 resolver/终态解析/STOP/session 检查并用真实 cJSON；脚本化 HTTP 404→固定 PUT 重放、最新 state、拒绝/迟到、日志清理门禁和配置绑定 | 请求、state 应用与日志边界为 double；无真实网络、RTOS 调度、媒体或 NVS 持久性 |
+
+resolver 还需要已存在的 `firmware/esp32-s31-rti/managed_components/espressif__cjson/cJSON/cJSON.c` 和 `.h`；干净检出可用 `--cjson-dir "${CJSON_DIR}"` 指向已下载的 cJSON 源码目录，脚本不自动下载。其余仍需系统 `cc`，无需启动 ESP-IDF。
+
+这些入口不连接板子、读取凭据、录音或访问网络；通过只证明列出的主机范围，不能记为多群真机、听测或长期稳定性通过。
+
 ## 按切片推进
 
 | 顺序 | 交付物 | 完成条件 |
 | --- | --- | --- |
 | S1 已通过 | Go 控制面、浏览器、身份/群/版本/麦权 API | 契约与状态测试通过，两身份控制流程可运行 |
 | S2 浏览器 | WebRTC 媒体契约、浏览器实音频、服务端门控 | 控制、Opus/PCM 数值、生命周期与人工听测分别记录 |
-| S3 首切片数值已通过 | 固件群客户端、显式 LAN/TLS 与生命周期管理 | 最终镜像双向数值/PTT/短时恢复已记录；听测、长期稳定性与板端多群另验 |
+| S3 首切片及 005 本轮数值已验证 | 固件群客户端、显式 LAN/TLS、已加入群选择与生命周期管理 | PR #10 历史证据独立；005 软重启/串口驱动不替代完整触控、断电、听测及长期稳定性 |
 | S4 | 明确群名的主动语音切换与恢复 | 操作终态、目标 RTC 可用、异常与十次切换验收 |
 | S5 增强 | 按需求推荐协作群与确认 | 独立模型证据、候选权限、过期/重复确认验证 |
 

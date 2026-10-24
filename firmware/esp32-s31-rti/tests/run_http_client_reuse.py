@@ -21,8 +21,8 @@ C_TOKENS = re.compile(r'/\*[\s\S]*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\
 
 
 def extract_function(source: str, name: str) -> str:
-    """Extract a static function, ignoring braces in strings and comments."""
-    declaration = re.search(rf"^static\s+\w+\s+{re.escape(name)}\s*\(", source, re.MULTILINE)
+    """Extract a production function, ignoring braces in strings and comments."""
+    declaration = re.search(rf"^(?:static\s+)?\w+\s+{re.escape(name)}\s*\(", source, re.MULTILINE)
     if declaration is None:
         raise RuntimeError(f"Production function is missing: {name}")
     depth = 0
@@ -61,6 +61,7 @@ def main() -> None:
         state_executable = temporary / "controller_state"
         subprocess.run([
             compiler, *flags, "-DGROUP_CONTROLLER_HOST_TEST", str(controller),
+            str(project / "main" / "group_switch_journal.c"),
             "-o", str(state_executable),
         ], check=True)
         subprocess.run([str(state_executable)], check=True)

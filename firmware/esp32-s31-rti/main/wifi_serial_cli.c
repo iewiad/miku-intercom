@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -187,6 +188,92 @@ static void handle_intercom_time(const char *seconds)
     printf(settimeofday(&tv, NULL) == 0 ? "INTERCOM_TIME_SET\n" : "INTERCOM_TIME_ERROR unavailable\n");
 }
 
+static bool parse_intercom_switch(const char *arguments, uint32_t *generation, char group_id[81])
+{
+    uint32_t value = 0;
+    size_t digits = 0;
+    const char *cursor = arguments;
+    while (*cursor >= '0' && *cursor <= '9') {
+        const uint32_t digit = (uint32_t)(*cursor - '0');
+        if (++digits > 10 || value > (UINT32_MAX - digit) / 10) {
+            return false;
+        }
+        value = value * 10 + digit;
+        ++cursor;
+    }
+    if (digits == 0 || *cursor++ != ' ') {
+        return false;
+    }
+    const char *id = cursor;
+    size_t length = 0;
+    for (; *cursor; ++cursor) {
+        const char c = *cursor;
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') || c == '-' || c == '_') || ++length > 80) {
+            return false;
+        }
+    }
+    if (length < 8) {
+        return false;
+    }
+    memcpy(group_id, id, length);
+    group_id[length] = '\0';
+    *generation = value;
+    return true;
+}
+
+/* Handle only the new group commands before the legacy line normalizer. This
+ * keeps embedded CR / trailing fields from being silently discarded. The
+ * controller queues work; the serial task never performs group HTTP itself. */
+static bool handle_intercom_group_command(const char *line)
+{
+    const bool groups = strncmp(line, "INTERCOM_GROUPS", strlen("INTERCOM_GROUPS")) == 0;
+    const bool switching = strncmp(line, "INTERCOM_SWITCH", strlen("INTERCOM_SWITCH")) == 0;
+    if (!groups && !switching) {
+        return false;
+    }
+    size_t length = strlen(line);
+    if (length && line[length - 1] == '\n') {
+        --length;
+        if (length && line[length - 1] == '\r') {
+            --length;
+        }
+    }
+    char command[sizeof("INTERCOM_SWITCH ") + 10 + 1 + 80];
+    if (length >= sizeof(command)) {
+        printf("%s\n", groups ? "INTERCOM_GROUPS_ERROR invalid_request" : "INTERCOM_SWITCH_ERROR invalid_request");
+        return true;
+    }
+    memcpy(command, line, length);
+    command[length] = '\0';
+    if (groups) {
+        if (strcmp(command, "INTERCOM_GROUPS") == 0) {
+            group_controller_print_groups();
+        } else {
+            printf("INTERCOM_GROUPS_ERROR invalid_request\n");
+        }
+        return true;
+    }
+    uint32_t generation = 0;
+    char group_id[81];
+    const size_t prefix = strlen("INTERCOM_SWITCH");
+    if (command[prefix] != ' ' || !parse_intercom_switch(command + prefix + 1, &generation, group_id)) {
+        printf("INTERCOM_SWITCH_ERROR invalid_request\n");
+        return true;
+    }
+    const esp_err_t err = group_controller_switch_group(group_id, generation, NULL);
+    if (err == ESP_OK) {
+        printf("INTERCOM_SWITCH_REQUESTED\n");
+    } else if (err == ESP_ERR_INVALID_ARG) {
+        printf("INTERCOM_SWITCH_ERROR invalid_request\n");
+    } else if (err == ESP_ERR_INVALID_STATE) {
+        printf("INTERCOM_SWITCH_ERROR invalid_state\n");
+    } else {
+        printf("INTERCOM_SWITCH_ERROR unavailable\n");
+    }
+    return true;
+}
+
 static void serial_cli_task(void *arg)
 {
     (void)arg;
@@ -207,6 +294,11 @@ static void serial_cli_task(void *arg)
             mbedtls_platform_zeroize(line, SERIAL_CLI_LINE_MAX);
             printf("INTERCOM_ERROR command_too_long\n");
             fflush(stdout);
+            continue;
+        }
+        if (handle_intercom_group_command(line)) {
+            fflush(stdout);
+            mbedtls_platform_zeroize(line, SERIAL_CLI_LINE_MAX);
             continue;
         }
         line[strcspn(line, "\r\n")] = '\0';

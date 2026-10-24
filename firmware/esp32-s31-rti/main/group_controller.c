@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include "group_switch_journal.h"
 
 /* These transitions run under guard in firmware. The host entry below exercises
  * the same transitions without networking, an RTOS, or a copy of the model. */
@@ -13,6 +14,7 @@ typedef struct {
     bool held;
     bool busy;
     bool link_lost;
+    bool switch_pending;
     uint32_t generation;
     uint32_t session;
 } group_intent_t;
@@ -47,7 +49,7 @@ static void intent_link_lost(group_intent_t *s)
 
 static bool intent_begin_connect(group_intent_t *s, uint32_t *ticket)
 {
-    if (!s->desired) {
+    if (!s->desired || s->switch_pending) {
         return false;
     }
     intent_cancel(s);
@@ -59,7 +61,7 @@ static bool intent_begin_connect(group_intent_t *s, uint32_t *ticket)
 
 static bool intent_connection_current(const group_intent_t *s, uint32_t ticket)
 {
-    return s->desired && !s->link_lost && s->generation == ticket;
+    return s->desired && !s->link_lost && !s->switch_pending && s->generation == ticket;
 }
 
 static bool intent_publish_connected(group_intent_t *s, uint32_t ticket)
@@ -73,7 +75,7 @@ static bool intent_publish_connected(group_intent_t *s, uint32_t ticket)
 
 static bool intent_press(group_intent_t *s)
 {
-    if (!s->ready || !s->desired || s->pressed || s->busy || s->link_lost) {
+    if (!s->ready || !s->desired || s->pressed || s->busy || s->link_lost || s->switch_pending) {
         return false;
     }
     s->pressed = true;
@@ -86,12 +88,25 @@ static bool intent_accept_grant(group_intent_t *s, uint32_t ticket,
                                 int64_t deadline, int64_t now,
                                 bool renewing, int64_t old_deadline)
 {
-    if (!s->desired || !s->ready || !s->pressed || s->link_lost ||
+    if (!s->desired || !s->ready || !s->pressed || s->link_lost || s->switch_pending ||
         s->generation != ticket || deadline <= now ||
         (renewing && (!s->held || old_deadline <= now))) {
         return false;
     }
     s->held = true;
+    return true;
+}
+
+static bool intent_queue_switch(group_intent_t *s, bool known,
+                                 uint32_t current_view, uint32_t selected_view)
+{
+    if (!s->desired || !known || s->link_lost || s->switch_pending ||
+        current_view != selected_view) {
+        return false;
+    }
+    intent_cancel(s);
+    s->ready = false;
+    s->switch_pending = true;
     return true;
 }
 
@@ -242,7 +257,51 @@ int main(void)
     assert(parse_time(formatted) == 1735689600123LL);
     assert(!format_time(-1, formatted));
     assert(!format_time(4133980800000LL, formatted));
-    puts("group controller host regression: passed (late grant, cancel/repress, expiry, reconnect, RFC3339 bounds)");
+    intent_action(&s, true);
+    intent_action(&s, false);
+    s.ready = true;
+    s.link_lost = false;
+    assert(!intent_queue_switch(&s, true, 4, 3));
+    assert(!s.switch_pending);
+    assert(intent_queue_switch(&s, true, 4, 4));
+    assert(!s.ready && !s.pressed && !s.held && s.switch_pending);
+    assert(!intent_press(&s));
+    assert(!intent_begin_connect(&s, &connection));
+    intent_action(&s, true);
+    intent_action(&s, false);
+    intent_link_lost(&s);
+    assert(s.switch_pending);
+    assert(!intent_begin_connect(&s, &connection));
+    group_switch_journal_t journal = {
+        .format = GROUP_SWITCH_JOURNAL_FORMAT,
+        .server_url = "https://192.168.1.2:1234", .device_id = "device_fixture",
+        .operation_id = "operation_fixture", .group_id = "target_fixture", .expected_version = 4
+    };
+    assert(group_switch_journal_valid(&journal));
+    assert(group_switch_journal_bound(&journal, journal.server_url, journal.device_id));
+    assert(!group_switch_journal_bound(&journal, "https://192.168.1.3:1234", journal.device_id));
+    assert(!group_switch_journal_bound(&journal, journal.server_url, "other_identity"));
+    group_switch_terminal_t terminal = {
+        .operation_id = "operation_fixture", .group_id = "target_fixture", .expected_version = 4,
+        .status = "applied", .current_group_id = "target_fixture", .current_version = 5
+    };
+    assert(group_switch_terminal_matches(&journal, &terminal));
+    assert(group_switch_state_confirms(&terminal, "target_fixture", 5));
+    assert(!group_switch_state_confirms(&terminal, "target_fixture", 4));
+    assert(!group_switch_state_confirms(&terminal, "different_group", 5));
+    assert(group_switch_state_confirms(&terminal, "different_group", 6));
+    terminal.expected_version = 5;
+    assert(!group_switch_terminal_matches(&journal, &terminal));
+    terminal.expected_version = 4;
+    strcpy(terminal.status, "pending");
+    assert(!group_switch_terminal_matches(&journal, &terminal));
+    strcpy(terminal.status, "rejected");
+    assert(!group_switch_terminal_matches(&journal, &terminal));
+    strcpy(terminal.error_code, "version_conflict");
+    assert(group_switch_terminal_matches(&journal, &terminal));
+    journal.operation_id[0] = '/';
+    assert(!group_switch_journal_valid(&journal));
+    puts("group controller host regression: passed (late grant, expiry, switch fencing, journal binding, terminal replay/state, RFC3339 bounds)");
     return 0;
 }
 #else
@@ -263,6 +322,7 @@ int main(void)
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "group_config.h"
 #include "mbedtls/platform_util.h"
 #include "webrtc_peer.h"
@@ -288,6 +348,32 @@ static bool ui_active_known, ui_active;
  * identity. Keep it across complete requests, not across STOP/config changes. */
 static esp_http_client_handle_t control_client;
 static uint64_t http_requests, tls_connections, http_failures;
+#define GROUP_CHOICES_MAX 128
+static SemaphoreHandle_t catalog_lock;
+static board_group_item_t *catalog_items;
+static size_t catalog_count;
+static bool catalog_known;
+static uint32_t view_generation = 1;
+static uint64_t published_version;
+static char published_group_id[81];
+static size_t published_group_count;
+static bool selection_queued;
+static char selected_group_id[81];
+static uint64_t selected_expected_version;
+static group_switch_journal_t pending_operation;
+static bool pending_saved, journal_blocked;
+typedef enum { SWITCH_IDLE, SWITCH_QUEUED, SWITCH_CONFIRMING, SWITCH_MISMATCH, SWITCH_JOURNAL_ERROR } switch_phase_t;
+static switch_phase_t switch_phase;
+static char switch_operation_id[81], switch_target_id[81];
+static uint32_t choices_view;
+static bool choices_published, choices_known, choices_selectable, choices_switching;
+
+static void advance_view_locked(void)
+{
+    if (++view_generation == 0) {
+        ++view_generation;
+    }
+}
 
 typedef struct {
     char *data;
@@ -522,9 +608,13 @@ done:
 static bool update_ui(const char *detail)
 {
     portENTER_CRITICAL(&guard);
-    const bool connected = intent.ready;
+    const bool connected = intent.ready && catalog_known && !intent.switch_pending;
     const bool speaking = intent.held && intent.pressed;
     const bool active = intent.desired;
+    const bool known = catalog_known;
+    const bool switching = intent.switch_pending;
+    const bool selectable = active && known && !switching && !intent.link_lost;
+    const uint32_t view = view_generation;
     portEXIT_CRITICAL(&guard);
     if (detail) {
         strlcpy(ui_detail, detail, sizeof(ui_detail));
@@ -535,6 +625,18 @@ static bool update_ui(const char *detail)
         }
         ui_active = active;
         ui_active_known = true;
+    }
+    if (!choices_published || choices_view != view || choices_known != known ||
+        choices_selectable != selectable || choices_switching != switching) {
+        if (board_display_set_group_choices(catalog_items, catalog_count, group_id, view,
+                                             known, selectable, switching) != ESP_OK) {
+            return false;
+        }
+        choices_view = view;
+        choices_known = known;
+        choices_selectable = selectable;
+        choices_switching = switching;
+        choices_published = true;
     }
     return board_display_set_group_state(group_name, ui_detail, connected, speaking) == ESP_OK;
 }
@@ -579,6 +681,7 @@ static void release_floor(void)
 static void disconnect_peer(void)
 {
     portENTER_CRITICAL(&guard);
+    webrtc_peer_group_suspend_media();
     intent.ready = false;
     portEXIT_CRITICAL(&guard);
     release_floor();
@@ -592,49 +695,134 @@ static void disconnect_peer(void)
     drop_http_client();
 }
 
+static esp_err_t reject_state(esp_err_t err)
+{
+    portENTER_CRITICAL(&guard);
+    webrtc_peer_group_suspend_media();
+    intent_cancel(&intent);
+    intent.ready = false;
+    if (catalog_known) {
+        catalog_known = false;
+        advance_view_locked();
+    }
+    portEXIT_CRITICAL(&guard);
+    return err;
+}
+
+static void forget_catalog(void)
+{
+    xSemaphoreTake(catalog_lock, portMAX_DELAY);
+    board_group_item_t *old = catalog_items;
+    catalog_items = NULL;
+    catalog_count = 0;
+    portENTER_CRITICAL(&guard);
+    const bool changed = catalog_known || published_group_count || published_version || published_group_id[0];
+    catalog_known = false;
+    published_group_count = 0;
+    published_version = 0;
+    published_group_id[0] = 0;
+    if (changed) {
+        advance_view_locked();
+    }
+    portEXIT_CRITICAL(&guard);
+    xSemaphoreGive(catalog_lock);
+    free(old);
+    group_id[0] = 0;
+    group_name[0] = 0;
+    server_epoch[0] = 0;
+    version = 0;
+}
+
+static bool json_version(const cJSON *object, const char *key, uint64_t *value)
+{
+    const cJSON *number = cJSON_GetObjectItemCaseSensitive(object, key);
+    if (!cJSON_IsNumber(number) || !isfinite(number->valuedouble) || number->valuedouble < 0 ||
+        number->valuedouble > (double)GROUP_SWITCH_MAX_VERSION || floor(number->valuedouble) != number->valuedouble) {
+        return false;
+    }
+    *value = (uint64_t)number->valuedouble;
+    return true;
+}
+
 static esp_err_t apply_state(const cJSON *state, int64_t started, int64_t ended)
 {
     char id[81], epoch[81], gid[81], time_text[64];
+    uint64_t next_version;
     const cJSON *device = cJSON_GetObjectItemCaseSensitive(state, "device");
-    const cJSON *v = cJSON_GetObjectItemCaseSensitive(state, "current_version");
     const cJSON *groups = cJSON_GetObjectItemCaseSensitive(state, "groups");
     if (!string_field(device, "id", id, sizeof(id)) || strcmp(id, config.device_id) ||
         !string_field(state, "server_epoch", epoch, sizeof(epoch)) || !epoch[0] ||
         !string_field(state, "current_group_id", gid, sizeof(gid)) ||
+        (gid[0] && !group_switch_identifier(gid)) ||
         !string_field(state, "server_time", time_text, sizeof(time_text)) ||
-        !cJSON_IsNumber(v) || !isfinite(v->valuedouble) || v->valuedouble < 0 ||
-        v->valuedouble > 9007199254740991.0 || floor(v->valuedouble) != v->valuedouble ||
+        !json_version(state, "current_version", &next_version) || next_version < version ||
         !cJSON_IsArray(groups) || ended < started) {
-        return ESP_ERR_INVALID_RESPONSE;
+        return reject_state(ESP_ERR_INVALID_RESPONSE);
     }
     const int64_t stamp = parse_time(time_text);
-    if (stamp < 0) {
-        return ESP_ERR_INVALID_RESPONSE;
+    const int count = cJSON_GetArraySize(groups);
+    if (stamp < 0 || count < 0 || count > GROUP_CHOICES_MAX) {
+        return reject_state(ESP_ERR_INVALID_RESPONSE);
+    }
+    board_group_item_t *items = count ? heap_caps_calloc((size_t)count, sizeof(*items), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : NULL;
+    if (count && !items) {
+        return reject_state(ESP_ERR_NO_MEM);
     }
     char name[sizeof(group_name)] = {0};
-    const cJSON *g = NULL;
     bool matched = gid[0] == 0;
+    const cJSON *g = NULL;
+    int index = 0;
     cJSON_ArrayForEach(g, groups) {
-        char candidate[81];
-        if (string_field(g, "id", candidate, sizeof(candidate)) && strcmp(candidate, gid) == 0) {
-            matched = string_field(g, "name", name, sizeof(name)) && name[0];
-            break;
+        if (!string_field(g, "id", items[index].id, sizeof(items[index].id)) ||
+            !group_switch_identifier(items[index].id) ||
+            !string_field(g, "name", items[index].name, sizeof(items[index].name)) || !items[index].name[0]) {
+            free(items);
+            return reject_state(ESP_ERR_INVALID_RESPONSE);
         }
+        for (int previous = 0; previous < index; ++previous) {
+            if (!strcmp(items[previous].id, items[index].id) || !strcmp(items[previous].name, items[index].name)) {
+                free(items);
+                return reject_state(ESP_ERR_INVALID_RESPONSE);
+            }
+        }
+        if (!strcmp(items[index].id, gid)) {
+            matched = true;
+            strlcpy(name, items[index].name, sizeof(name));
+        }
+        ++index;
     }
     if (!matched) {
-        return ESP_ERR_INVALID_RESPONSE;
+        free(items);
+        return reject_state(ESP_ERR_INVALID_RESPONSE);
     }
-    if (peer_id[0] && (strcmp(epoch, server_epoch) || strcmp(gid, group_id) ||
-                       (uint64_t)v->valuedouble != version)) {
+    const bool binding_changed = strcmp(epoch, server_epoch) || strcmp(gid, group_id) || next_version != version;
+    if (peer_id[0] && binding_changed) {
         disconnect_peer();
     }
+    xSemaphoreTake(catalog_lock, portMAX_DELAY);
+    board_group_item_t *old = catalog_items;
+    const bool changed = binding_changed || (size_t)count != catalog_count ||
+                         (count && memcmp(old, items, (size_t)count * sizeof(*items)) != 0);
+    catalog_items = items;
+    catalog_count = (size_t)count;
     strlcpy(server_epoch, epoch, sizeof(server_epoch));
     strlcpy(group_id, gid, sizeof(group_id));
     strlcpy(group_name, name, sizeof(group_name));
-    version = (uint64_t)v->valuedouble;
-    /* Add the full request RTT, conservatively shortening local lease life. */
+    version = next_version;
+    portENTER_CRITICAL(&guard);
+    if (changed || !catalog_known) {
+        advance_view_locked();
+    }
+    catalog_known = true;
+    published_version = version;
+    published_group_count = catalog_count;
+    strlcpy(published_group_id, group_id, sizeof(published_group_id));
+    portEXIT_CRITICAL(&guard);
+    xSemaphoreGive(catalog_lock);
+    free(old);
     server_base_ms = stamp + (ended - started) / 1000;
     clock_at_us = ended;
+    (void)update_ui(NULL);
     return ESP_OK;
 }
 
@@ -647,8 +835,11 @@ static esp_err_t refresh_state(bool join)
         err = apply_state(out, started, esp_timer_get_time());
     }
     cJSON_Delete(out);
-    if (err != ESP_OK || group_id[0] || !join) {
-        return err;
+    if (err != ESP_OK) {
+        return reject_state(err);
+    }
+    if (group_id[0] || !join) {
+        return ESP_OK;
     }
     cJSON *body = cJSON_CreateObject();
     if (!body || !cJSON_AddStringToObject(body, "code", config.group_code)) {
@@ -923,10 +1114,211 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t event, void *da
     (void)event;
     (void)data;
     portENTER_CRITICAL(&guard);
-    webrtc_peer_group_set_sending(false, 0);
+    webrtc_peer_group_suspend_media();
     intent_link_lost(&intent);
+    catalog_known = false;
+    advance_view_locked();
     portEXIT_CRITICAL(&guard);
     notify_worker();
+}
+
+static void reload_switch_journal(void)
+{
+    group_switch_journal_t record;
+    const esp_err_t err = group_switch_journal_load(&record);
+    pending_saved = err == ESP_OK;
+    journal_blocked = err != ESP_OK && err != ESP_ERR_NOT_FOUND;
+    if (pending_saved) {
+        pending_operation = record;
+    } else {
+        memset(&pending_operation, 0, sizeof(pending_operation));
+    }
+    portENTER_CRITICAL(&guard);
+    intent.switch_pending = pending_saved || journal_blocked || selection_queued;
+    switch_phase = journal_blocked ? SWITCH_JOURNAL_ERROR : pending_saved ? SWITCH_CONFIRMING : SWITCH_IDLE;
+    strlcpy(switch_operation_id, pending_saved ? record.operation_id : "", sizeof(switch_operation_id));
+    strlcpy(switch_target_id, pending_saved ? record.group_id : "", sizeof(switch_target_id));
+    advance_view_locked();
+    portEXIT_CRITICAL(&guard);
+}
+
+static void finish_unsent_switch(const char *detail)
+{
+    portENTER_CRITICAL(&guard);
+    intent_cancel(&intent);
+    intent.ready = false;
+    selection_queued = false;
+    intent.switch_pending = pending_saved || journal_blocked;
+    switch_phase = journal_blocked ? SWITCH_JOURNAL_ERROR : pending_saved ? SWITCH_CONFIRMING : SWITCH_IDLE;
+    if (!intent.switch_pending) {
+        switch_operation_id[0] = 0;
+        switch_target_id[0] = 0;
+    }
+    advance_view_locked();
+    portEXIT_CRITICAL(&guard);
+    (void)update_ui(detail);
+}
+
+static void prepare_selected_switch(void)
+{
+    char target[81];
+    uint64_t expected;
+    portENTER_CRITICAL(&guard);
+    if (!selection_queued) {
+        portEXIT_CRITICAL(&guard);
+        return;
+    }
+    strlcpy(target, selected_group_id, sizeof(target));
+    expected = selected_expected_version;
+    selection_queued = false;
+    portEXIT_CRITICAL(&guard);
+    disconnect_peer();
+    bool member = false;
+    for (size_t i = 0; i < catalog_count; ++i) {
+        if (!strcmp(catalog_items[i].id, target)) {
+            member = true;
+            break;
+        }
+    }
+    if (!member) {
+        finish_unsent_switch("目标不在已加入群列表中，请刷新后重试");
+        return;
+    }
+    if (!strcmp(target, group_id) && expected == version) {
+        finish_unsent_switch("当前已在此群，正在恢复群音频");
+        return;
+    }
+    group_switch_journal_t record = {.format = GROUP_SWITCH_JOURNAL_FORMAT, .expected_version = expected};
+    strlcpy(record.server_url, config.server_url, sizeof(record.server_url));
+    strlcpy(record.device_id, config.device_id, sizeof(record.device_id));
+    strlcpy(record.group_id, target, sizeof(record.group_id));
+    random_id(record.operation_id);
+    const esp_err_t err = group_switch_journal_save(&record);
+    if (err != ESP_OK) {
+        /* Save/commit can fail ambiguously. Read the durable slot rather than
+         * overwriting an older operation or guessing that no journal exists. */
+        reload_switch_journal();
+        finish_unsent_switch((pending_saved || journal_blocked) ? "切群记录尚未确认，请稍后重试" : "未提交切群，保存失败，请重试");
+        return;
+    }
+    pending_operation = record;
+    pending_saved = true;
+    journal_blocked = false;
+    portENTER_CRITICAL(&guard);
+    intent.switch_pending = true;
+    switch_phase = SWITCH_CONFIRMING;
+    strlcpy(switch_operation_id, record.operation_id, sizeof(switch_operation_id));
+    strlcpy(switch_target_id, record.group_id, sizeof(switch_target_id));
+    portEXIT_CRITICAL(&guard);
+    (void)update_ui("正在确认切群结果，确认前暂停音频");
+}
+
+static bool switch_session_active(uint32_t session)
+{
+    portENTER_CRITICAL(&guard);
+    const bool active = intent.desired && intent.session == session;
+    portEXIT_CRITICAL(&guard);
+    return active;
+}
+
+static bool parse_switch_terminal(const cJSON *response, group_switch_terminal_t *terminal)
+{
+    memset(terminal, 0, sizeof(*terminal));
+    const cJSON *operation = cJSON_GetObjectItemCaseSensitive(response, "operation");
+    return string_field(operation, "operation_id", terminal->operation_id, sizeof(terminal->operation_id)) &&
+           string_field(operation, "group_id", terminal->group_id, sizeof(terminal->group_id)) &&
+           json_version(operation, "expected_version", &terminal->expected_version) &&
+           string_field(operation, "status", terminal->status, sizeof(terminal->status)) &&
+           string_field(operation, "error_code", terminal->error_code, sizeof(terminal->error_code)) &&
+           string_field(operation, "current_group_id", terminal->current_group_id, sizeof(terminal->current_group_id)) &&
+           json_version(operation, "current_version", &terminal->current_version) &&
+           group_switch_terminal_matches(&pending_operation, terminal);
+}
+
+static esp_err_t resolve_pending_switch(uint32_t session)
+{
+    if (journal_blocked || !pending_saved) {
+        (void)update_ui("切群记录不可读取，音频保持暂停");
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!group_switch_journal_bound(&pending_operation, config.server_url, config.device_id)) {
+        portENTER_CRITICAL(&guard);
+        switch_phase = SWITCH_MISMATCH;
+        portEXIT_CRITICAL(&guard);
+        (void)update_ui("有未确认的切群，请恢复原服务与身份配置");
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!switch_session_active(session)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    portENTER_CRITICAL(&guard);
+    switch_phase = SWITCH_CONFIRMING;
+    portEXIT_CRITICAL(&guard);
+    char path[112];
+    snprintf(path, sizeof(path), "/operations/%s", pending_operation.operation_id);
+    cJSON *out = NULL;
+    esp_err_t err = request(path, HTTP_METHOD_GET, NULL, &out);
+    if (err != ESP_OK && last_http_status == 404 && switch_session_active(session)) {
+        cJSON *body = cJSON_CreateObject();
+        if (!body || !cJSON_AddStringToObject(body, "operation_id", pending_operation.operation_id) ||
+            !cJSON_AddStringToObject(body, "group_id", pending_operation.group_id) ||
+            !cJSON_AddNumberToObject(body, "expected_version", (double)pending_operation.expected_version)) {
+            cJSON_Delete(body);
+            return ESP_ERR_NO_MEM;
+        }
+        /* Never change this ID, target, or version after a timeout, reconnect,
+         * STOP/START, reboot, or server_epoch change. */
+        err = request("/current-group", HTTP_METHOD_PUT, body, &out);
+        cJSON_Delete(body);
+    }
+    group_switch_terminal_t terminal;
+    if (err == ESP_OK && !parse_switch_terminal(out, &terminal)) {
+        err = ESP_ERR_INVALID_RESPONSE;
+    }
+    cJSON_Delete(out);
+    if (err != ESP_OK) {
+        (void)update_ui("切群结果尚未确认，音频暂停并重试同一操作");
+        return err;
+    }
+    /* The immutable operation snapshot may be older than the current state.
+     * A fresh state is required even when PUT already returned a state member. */
+    cJSON *state = NULL;
+    const int64_t started = esp_timer_get_time();
+    err = request("/state", HTTP_METHOD_GET, NULL, &state);
+    char current[81];
+    uint64_t current_version;
+    if (err == ESP_OK && (!string_field(state, "current_group_id", current, sizeof(current)) ||
+        !json_version(state, "current_version", &current_version) ||
+        !group_switch_state_confirms(&terminal, current, current_version))) {
+        err = ESP_ERR_INVALID_RESPONSE;
+    }
+    if (err == ESP_OK) {
+        err = apply_state(state, started, esp_timer_get_time());
+    }
+    cJSON_Delete(state);
+    if (err != ESP_OK) {
+        (void)update_ui("切群终态已收到，仍在确认当前群，音频暂停");
+        return err;
+    }
+    err = group_switch_journal_clear(pending_operation.operation_id);
+    if (err != ESP_OK) {
+        (void)update_ui("正在保存切群确认结果，音频保持暂停");
+        return err;
+    }
+    pending_saved = false;
+    memset(&pending_operation, 0, sizeof(pending_operation));
+    portENTER_CRITICAL(&guard);
+    intent_cancel(&intent);
+    intent.ready = false;
+    intent.switch_pending = false;
+    switch_phase = SWITCH_IDLE;
+    switch_operation_id[0] = 0;
+    switch_target_id[0] = 0;
+    advance_view_locked();
+    portEXIT_CRITICAL(&guard);
+    (void)update_ui(!strcmp(terminal.status, "applied") ? "切群已确认，正在按当前群恢复连接" :
+                                                        "切群被拒绝，正在按服务端当前群恢复");
+    return ESP_OK;
 }
 
 static void run(void *arg)
@@ -936,57 +1328,61 @@ static void run(void *arg)
     bool configured = false;
     bool stopped_published = false;
     uint32_t configured_session = 0;
+    reload_switch_journal();
     for (;;) {
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
         portENTER_CRITICAL(&guard);
         const group_intent_t snapshot = intent;
         const int64_t deadline = lease_deadline_us;
+        const bool queued = selection_queued;
         portEXIT_CRITICAL(&guard);
+        if (queued && configured) {
+            /* Persist an accepted selection under its original identity before
+             * a STOP/config reload can wipe that identity from RAM. */
+            prepare_selected_switch();
+            retry_at = 0;
+            continue;
+        }
         if (!snapshot.desired) {
             if (configured || peer_id[0] || floor_request) {
                 disconnect_peer();
                 mbedtls_platform_zeroize(&config, sizeof(config));
                 configured = false;
-                group_id[0] = 0;
-                group_name[0] = 0;
+                forget_catalog();
             }
             if (!stopped_published) {
-                stopped_published = update_ui("已停止，点击连接群音频");
+                stopped_published = update_ui(snapshot.switch_pending ?
+                    "已停止，未确认的切群会在下次连接时继续" : "已停止，点击连接群音频");
             }
             retry_at = 0;
             continue;
         }
         stopped_published = false;
         if (!configured || configured_session != snapshot.session) {
-            /* A rapid STOP/START can arrive while HTTP is pending. The session
-             * number preserves that boundary even if the worker never saw false.
-             * Retire the old peer/request with OLD credentials before loading NEW. */
             if (configured || peer_id[0] || floor_request) {
                 disconnect_peer();
                 mbedtls_platform_zeroize(&config, sizeof(config));
                 configured = false;
             }
+            forget_catalog();
             if (esp_timer_get_time() < retry_at) {
                 continue;
             }
             if (group_config_load(&config) != ESP_OK) {
-                update_ui("请通过 USB 配置群服务");
+                (void)update_ui("请通过 USB 配置群服务");
                 retry_at = esp_timer_get_time() + 3000000;
                 continue;
             }
             configured = true;
             configured_session = snapshot.session;
-            group_id[0] = 0;
-            group_name[0] = 0;
-            server_epoch[0] = 0;
-            version = 0;
+            reload_switch_journal();
         }
         if (!trusted_clock()) {
             if (peer_id[0] || floor_request) {
                 disconnect_peer();
             }
             drop_http_client();
-            update_ui("请通过 USB 同步当前时间");
+            (void)update_ui("请通过 USB 同步当前时间");
             continue;
         }
         wifi_ap_record_t ap;
@@ -995,7 +1391,18 @@ static void run(void *arg)
                 disconnect_peer();
             }
             drop_http_client();
-            update_ui("等待 Wi-Fi 恢复");
+            (void)update_ui("等待 Wi-Fi 恢复");
+            continue;
+        }
+        portENTER_CRITICAL(&guard);
+        const bool switching = intent.switch_pending;
+        portEXIT_CRITICAL(&guard);
+        if (switching) {
+            if (esp_timer_get_time() < retry_at) {
+                continue;
+            }
+            const esp_err_t err = resolve_pending_switch(configured_session);
+            retry_at = err == ESP_OK ? 0 : esp_timer_get_time() + 1800000;
             continue;
         }
         if (snapshot.link_lost && peer_id[0]) {
@@ -1007,11 +1414,11 @@ static void run(void *arg)
             if (esp_timer_get_time() < retry_at) {
                 continue;
             }
-            update_ui("正在连接群服务");
+            (void)update_ui("正在连接群服务");
             const esp_err_t err = connect_peer(configured_session);
             if (err != ESP_OK) {
                 ESP_LOGW(TAG, "group connect failed: %s HTTP=%d", esp_err_to_name(err), last_http_status);
-                update_ui("群连接失败，请检查服务或重试");
+                (void)update_ui("群连接失败，请检查服务或重试");
                 retry_at = esp_timer_get_time() + 3000000;
             }
             continue;
@@ -1019,13 +1426,13 @@ static void run(void *arg)
         if (!webrtc_peer_group_connected()) {
             disconnect_peer();
             retry_at = esp_timer_get_time() + 1000000;
-            update_ui("群音频连接中断，已停发");
+            (void)update_ui("群音频连接中断，已停发");
             continue;
         }
         if (floor_request && (!snapshot.pressed || snapshot.generation != request_generation ||
                               (snapshot.held && esp_timer_get_time() >= deadline))) {
             release_floor();
-            update_ui("群音频就绪，按住说话");
+            (void)update_ui("群音频就绪，按住说话");
             continue;
         }
         if (snapshot.pressed && !floor_request) {
@@ -1042,7 +1449,7 @@ static void run(void *arg)
             if (err != ESP_OK) {
                 disconnect_peer();
                 retry_at = esp_timer_get_time() + 1000000;
-                update_ui("控制连接中断，已停发");
+                (void)update_ui("控制连接中断，已停发");
             }
         }
     }
@@ -1066,11 +1473,44 @@ void group_controller_action(bool stop, void *context)
     (void)context;
     portENTER_CRITICAL(&guard);
     if (stop) {
-        webrtc_peer_group_set_sending(false, 0);
+        webrtc_peer_group_suspend_media();
+        catalog_known = false;
+        advance_view_locked();
     }
     intent_action(&intent, stop);
     portEXIT_CRITICAL(&guard);
     notify_worker();
+}
+
+esp_err_t group_controller_switch_group(const char *target_group_id, uint32_t selected_view, void *context)
+{
+    (void)context;
+    if (!group_switch_identifier(target_group_id)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    portENTER_CRITICAL(&guard);
+    if (!intent.desired || !catalog_known || intent.link_lost || intent.switch_pending ||
+        selected_view != view_generation) {
+        portEXIT_CRITICAL(&guard);
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!strcmp(target_group_id, published_group_id)) {
+        portEXIT_CRITICAL(&guard);
+        return ESP_OK;
+    }
+    webrtc_peer_group_suspend_media();
+    const bool queued = intent_queue_switch(&intent, catalog_known, view_generation, selected_view);
+    if (queued) {
+        strlcpy(selected_group_id, target_group_id, sizeof(selected_group_id));
+        selected_expected_version = published_version;
+        selection_queued = true;
+        switch_phase = SWITCH_QUEUED;
+        switch_operation_id[0] = 0;
+        strlcpy(switch_target_id, target_group_id, sizeof(switch_target_id));
+    }
+    portEXIT_CRITICAL(&guard);
+    notify_worker();
+    return queued ? ESP_OK : ESP_ERR_INVALID_STATE;
 }
 
 static void volume(uint8_t value, bool persist, void *context)
@@ -1084,13 +1524,17 @@ esp_err_t group_controller_init(const board_audio_t *board)
     if (!board || !board->microphone || !board->speaker || worker) {
         return ESP_ERR_INVALID_STATE;
     }
+    catalog_lock = xSemaphoreCreateMutex();
+    if (!catalog_lock) {
+        return ESP_ERR_NO_MEM;
+    }
     audio = *board;
     (void)board_audio_set_output_volume(&audio, 0, false);
     esp_err_t err = esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, wifi_event, NULL);
     if (err != ESP_OK) {
         return err;
     }
-    err = board_display_show_group(group_controller_action, group_controller_ptt, volume, 0, NULL);
+    err = board_display_show_group(group_controller_action, group_controller_ptt, group_controller_switch_group, volume, 0, NULL);
     if (err == ESP_OK) {
         update_ui(group_config_ready() ? "已配置，点击连接群音频" : "请通过 USB 配置群服务");
         TaskHandle_t task = NULL;
@@ -1106,6 +1550,110 @@ esp_err_t group_controller_init(const board_audio_t *board)
     return err;
 }
 
+/* Serial callers copy the worker-owned catalog under its mutex. Formatting and
+ * UART output happen after both locks are released, and large buffers use PSRAM. */
+typedef struct {
+    board_group_item_t items[GROUP_CHOICES_MAX];
+    size_t count;
+    char current[81];
+    uint32_t view;
+    uint64_t version;
+    bool known;
+    bool switching;
+} group_catalog_snapshot_t;
+
+static bool json_append(char *out, size_t capacity, size_t *used, const char *text)
+{
+    const size_t length = strlen(text);
+    if (*used >= capacity || length >= capacity - *used) {
+        return false;
+    }
+    memcpy(out + *used, text, length + 1);
+    *used += length;
+    return true;
+}
+
+static bool json_append_string(char *out, size_t capacity, size_t *used, const char *text)
+{
+    static const char hex[] = "0123456789abcdef";
+    if (!json_append(out, capacity, used, "\"")) {
+        return false;
+    }
+    for (const unsigned char *p = (const unsigned char *)text; *p; ++p) {
+        char encoded[7] = {0};
+        if (*p == '"' || *p == '\\') {
+            encoded[0] = '\\';
+            encoded[1] = (char)*p;
+        } else if (*p < 0x20) {
+            memcpy(encoded, "\\u00", 4);
+            encoded[4] = hex[*p >> 4];
+            encoded[5] = hex[*p & 15];
+        } else {
+            encoded[0] = (char)*p;
+        }
+        if (!json_append(out, capacity, used, encoded)) {
+            return false;
+        }
+    }
+    return json_append(out, capacity, used, "\"");
+}
+
+void group_controller_print_groups(void)
+{
+    enum { JSON_CAPACITY = 48 * 1024 };
+    group_catalog_snapshot_t *snapshot = heap_caps_calloc(1, sizeof(*snapshot), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    char *json = heap_caps_malloc(JSON_CAPACITY, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!snapshot || !json) {
+        free(snapshot);
+        free(json);
+        printf("INTERCOM_GROUPS_ERROR no_memory\n");
+        fflush(stdout);
+        return;
+    }
+    if (!catalog_lock || xSemaphoreTake(catalog_lock, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        free(snapshot);
+        free(json);
+        printf("INTERCOM_GROUPS_ERROR catalog_busy\n");
+        fflush(stdout);
+        return;
+    }
+    snapshot->count = catalog_count;
+    if (snapshot->count) {
+        memcpy(snapshot->items, catalog_items, snapshot->count * sizeof(snapshot->items[0]));
+    }
+    portENTER_CRITICAL(&guard);
+    snapshot->view = view_generation;
+    snapshot->version = published_version;
+    snapshot->known = catalog_known;
+    snapshot->switching = intent.switch_pending;
+    strlcpy(snapshot->current, published_group_id, sizeof(snapshot->current));
+    portEXIT_CRITICAL(&guard);
+    xSemaphoreGive(catalog_lock);
+    const int prefix = snprintf(json, JSON_CAPACITY,
+        "{\"view_generation\":%" PRIu32 ",\"current_group_id\":\"%s\",\"current_version\":%" PRIu64
+        ",\"known\":%s,\"switching\":%s,\"groups\":[", snapshot->view, snapshot->current, snapshot->version,
+        snapshot->known ? "true" : "false", snapshot->switching ? "true" : "false");
+    size_t used = prefix > 0 ? (size_t)prefix : JSON_CAPACITY;
+    bool complete = used < JSON_CAPACITY;
+    for (size_t i = 0; complete && i < snapshot->count; ++i) {
+        complete = json_append(json, JSON_CAPACITY, &used, i ? ",{\"id\":" : "{\"id\":") &&
+                   json_append_string(json, JSON_CAPACITY, &used, snapshot->items[i].id) &&
+                   json_append(json, JSON_CAPACITY, &used, ",\"name\":") &&
+                   json_append_string(json, JSON_CAPACITY, &used, snapshot->items[i].name) &&
+                   json_append(json, JSON_CAPACITY, &used, "}");
+    }
+    complete = complete && json_append(json, JSON_CAPACITY, &used, "]}");
+    if (complete) {
+        printf("INTERCOM_GROUPS %s\n", json);
+    } else {
+        /* Never silently omit groups, even for unusually escape-heavy names. */
+        printf("INTERCOM_GROUPS_ERROR response_too_large\n");
+    }
+    free(json);
+    free(snapshot);
+    fflush(stdout);
+}
+
 void group_controller_print_status(void)
 {
     portENTER_CRITICAL(&guard);
@@ -1114,6 +1662,15 @@ void group_controller_print_status(void)
     const uint64_t requests = http_requests;
     const uint64_t connections = tls_connections;
     const uint64_t failures = http_failures;
+    const bool known = catalog_known;
+    const uint32_t view = view_generation;
+    const uint64_t current_version = published_version;
+    const size_t group_count = published_group_count;
+    char current[81], operation[81], target[81];
+    strlcpy(current, published_group_id, sizeof(current));
+    strlcpy(operation, switch_operation_id, sizeof(operation));
+    strlcpy(target, switch_target_id, sizeof(target));
+    const switch_phase_t phase = switch_phase;
     portEXIT_CRITICAL(&guard);
     const bool connected = snapshot.ready && webrtc_peer_group_connected();
     const bool holding = connected && snapshot.held && snapshot.pressed && esp_timer_get_time() < deadline;
@@ -1122,12 +1679,16 @@ void group_controller_print_status(void)
     printf("INTERCOM_STATUS {\"configured\":%s,\"desired\":%s,\"connected\":%s,\"pressed\":%s,\"held\":%s,\"busy\":%s,"
            "\"source_frames\":%" PRIu64 ",\"sent_packets\":%" PRIu64 ",\"received_packets\":%" PRIu64 ",\"decoded_samples\":%" PRIu64 ","
            "\"source_rms_peak\":%.6f,\"remote_rms_peak\":%.6f,\"heap_internal_free\":%u,"
-           "\"http_requests\":%" PRIu64 ",\"tls_connections\":%" PRIu64 ",\"http_failures\":%" PRIu64 "}\n",
+           "\"http_requests\":%" PRIu64 ",\"tls_connections\":%" PRIu64 ",\"http_failures\":%" PRIu64 ","
+           "\"catalog_known\":%s,\"view_generation\":%" PRIu32 ",\"current_group_id\":\"%s\",\"current_version\":%" PRIu64 ","
+           "\"group_count\":%u,\"switch_pending\":%s,\"switch_phase\":%u,\"switch_operation_id\":\"%s\",\"target_group_id\":\"%s\"}\n",
            group_config_ready() ? "true" : "false", snapshot.desired ? "true" : "false", connected ? "true" : "false",
            snapshot.pressed ? "true" : "false", holding ? "true" : "false", snapshot.busy ? "true" : "false",
            stats.source_frames, stats.sent_packets, stats.received_packets, stats.decoded_samples,
            (double)stats.source_rms_peak, (double)stats.remote_rms_peak,
-           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), requests, connections, failures);
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), requests, connections, failures,
+           known ? "true" : "false", view, current, current_version, (unsigned)group_count,
+           snapshot.switch_pending ? "true" : "false", (unsigned)phase, operation, target);
     fflush(stdout);
 }
 #endif

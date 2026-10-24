@@ -37,6 +37,11 @@ esp_err_t webrtc_peer_start_group(const board_audio_t *audio,
  *  Already admitted network/playout packets cannot be retracted.
  */
 void webrtc_peer_group_set_sending(bool enabled, int64_t expires_at_us);
+/** Close both group media admission gates synchronously, without I/O or wait.
+ *  This Peer stays suspended until retired; a new group start resets the gate.
+ *  Audio already admitted into network or I2S hardware cannot be retracted.
+ */
+void webrtc_peer_group_suspend_media(void);
 bool webrtc_peer_group_connected(void);
 
 /** Per-group-start counters, retained after stop. RMS is normalized to 0..1.

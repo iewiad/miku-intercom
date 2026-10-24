@@ -1,0 +1,402 @@
+/* Inserts the current production resolver, terminal parser, session fence and
+ * STOP callback. Only their external boundaries are doubles; cJSON is real.
+ * All identities/URLs below are fake and no file/socket/board is accessed. */
+#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include "cJSON.h"
+#include "group_switch_journal.h"
+
+typedef int esp_err_t;
+typedef int esp_http_client_method_t;
+#define ESP_OK 0
+#define ESP_FAIL -1
+#define ESP_ERR_NO_MEM 257
+#define ESP_ERR_INVALID_STATE 259
+#define ESP_ERR_NOT_FOUND 261
+#define ESP_ERR_INVALID_RESPONSE 264
+#define HTTP_METHOD_GET 0
+#define HTTP_METHOD_PUT 1
+#define portENTER_CRITICAL(value) ((void)(value))
+#define portEXIT_CRITICAL(value) ((void)(value))
+
+/* @production-intent */
+typedef enum { SWITCH_IDLE, SWITCH_QUEUED, SWITCH_CONFIRMING, SWITCH_MISMATCH, SWITCH_JOURNAL_ERROR } switch_phase_t;
+static int guard;
+static group_intent_t intent;
+static struct { char server_url[192], device_id[81]; } config;
+static group_switch_journal_t pending_operation;
+static bool pending_saved, journal_blocked, catalog_known;
+static switch_phase_t switch_phase;
+static char switch_operation_id[81], switch_target_id[81];
+static uint32_t view_generation;
+static int last_http_status;
+static unsigned apply_calls, clear_calls, ui_ready_publications, suspend_calls;
+static int apply_error, clear_error;
+static bool media_admitted;
+static int64_t now_us;
+static char trace[128];
+static size_t trace_used;
+static group_switch_journal_t original;
+
+static size_t strlcpy(char *to, const char *from, size_t capacity)
+{
+    const size_t length = strlen(from);
+    if (capacity) {
+        const size_t copied = length < capacity - 1 ? length : capacity - 1;
+        memcpy(to, from, copied);
+        to[copied] = 0;
+    }
+    return length;
+}
+static void event(char symbol)
+{
+    assert(trace_used + 1 < sizeof(trace));
+    trace[trace_used++] = symbol;
+    trace[trace_used] = 0;
+}
+static int64_t esp_timer_get_time(void) { return ++now_us; }
+static bool update_ui(const char *detail)
+{
+    assert(detail);
+    if (intent.ready) {
+        ++ui_ready_publications;
+    }
+    return true;
+}
+static void notify_worker(void) { }
+static void webrtc_peer_group_suspend_media(void)
+{
+    media_admitted = false;
+    ++suspend_calls;
+}
+void group_controller_action(bool stop, void *context);
+
+typedef struct {
+    const char *path;
+    int method;
+    int error;
+    int http_status;
+    cJSON *response;
+    bool stop_during_request;
+} step_t;
+static step_t steps[8];
+static size_t step_count, step_at;
+static unsigned put_calls;
+
+static esp_err_t request(const char *path, esp_http_client_method_t method, const cJSON *body, cJSON **out)
+{
+    assert(step_at < step_count);
+    const step_t *step = &steps[step_at++];
+    assert(!strcmp(path, step->path) && method == step->method);
+    if (method == HTTP_METHOD_PUT) {
+        event('P');
+        ++put_calls;
+        /* The replay must preserve every immutable request field, and must not
+         * add a server_epoch or accidentally send a different current version. */
+        assert(body && cJSON_GetArraySize(body) == 3);
+        const cJSON *id = cJSON_GetObjectItemCaseSensitive(body, "operation_id");
+        const cJSON *target = cJSON_GetObjectItemCaseSensitive(body, "group_id");
+        const cJSON *version = cJSON_GetObjectItemCaseSensitive(body, "expected_version");
+        assert(cJSON_IsString(id) && !strcmp(id->valuestring, original.operation_id));
+        assert(cJSON_IsString(target) && !strcmp(target->valuestring, original.group_id));
+        assert(cJSON_IsNumber(version) && version->valuedouble == (double)original.expected_version);
+    } else {
+        assert(body == NULL);
+        event(!strcmp(path, "/state") ? 'S' : 'Q');
+    }
+    last_http_status = step->http_status;
+    if (step->stop_during_request) {
+        /* Run the actual production STOP callback during an outstanding HTTP. */
+        group_controller_action(true, NULL);
+    }
+    *out = step->error == ESP_OK && step->response ? cJSON_Duplicate(step->response, true) : NULL;
+    assert(step->error != ESP_OK || *out);
+    return step->error;
+}
+static esp_err_t apply_state(const cJSON *state, int64_t started, int64_t ended)
+{
+    assert(cJSON_IsObject(state) && ended >= started);
+    assert(intent.switch_pending && pending_saved);
+    event('A');
+    ++apply_calls;
+    return apply_error;
+}
+esp_err_t group_switch_journal_clear(const char *operation_id)
+{
+    assert(!strcmp(operation_id, original.operation_id));
+    assert(pending_saved && intent.switch_pending);
+    event('C');
+    ++clear_calls;
+    return clear_error;
+}
+
+/* @production-functions */
+
+static void dispose_steps(void)
+{
+    for (size_t i = 0; i < step_count; ++i) {
+        cJSON_Delete(steps[i].response);
+    }
+    memset(steps, 0, sizeof(steps));
+    step_count = step_at = 0;
+}
+static void reset(void)
+{
+    dispose_steps();
+    memset(&intent, 0, sizeof(intent));
+    intent.desired = true;
+    intent.switch_pending = true;
+    intent.session = 7;
+    intent.generation = 4;
+    pending_operation = (group_switch_journal_t){
+        .format = GROUP_SWITCH_JOURNAL_FORMAT,
+        .server_url = "https://fixture.invalid:18443", .device_id = "device_fixture",
+        .operation_id = "operation_fixture", .group_id = "target_fixture", .expected_version = 4,
+    };
+    original = pending_operation;
+    strlcpy(config.server_url, original.server_url, sizeof(config.server_url));
+    strlcpy(config.device_id, original.device_id, sizeof(config.device_id));
+    strlcpy(switch_operation_id, original.operation_id, sizeof(switch_operation_id));
+    strlcpy(switch_target_id, original.group_id, sizeof(switch_target_id));
+    pending_saved = true;
+    journal_blocked = false;
+    catalog_known = true;
+    switch_phase = SWITCH_CONFIRMING;
+    view_generation = 100;
+    last_http_status = 0;
+    apply_calls = clear_calls = ui_ready_publications = suspend_calls = put_calls = 0;
+    apply_error = clear_error = ESP_OK;
+    media_admitted = false;
+    now_us = 100;
+    trace_used = 0;
+    trace[0] = 0;
+}
+static cJSON *operation(void)
+{
+    cJSON *root = cJSON_Parse("{\"operation\":{\"operation_id\":\"operation_fixture\",\"group_id\":\"target_fixture\","
+        "\"expected_version\":4,\"status\":\"applied\",\"error_code\":\"\",\"current_group_id\":\"target_fixture\",\"current_version\":5}}");
+    assert(root);
+    return root;
+}
+static cJSON *state(const char *current, double version)
+{
+    cJSON *root = cJSON_CreateObject();
+    assert(root && cJSON_AddStringToObject(root, "current_group_id", current));
+    assert(cJSON_AddNumberToObject(root, "current_version", version));
+    return root;
+}
+static void add_step(const char *path, int method, int error, int http, cJSON *response, bool stop)
+{
+    assert(step_count < sizeof(steps) / sizeof(steps[0]));
+    steps[step_count++] = (step_t){path, method, error, http, response, stop};
+}
+static void lookup(cJSON *response, bool stop)
+{
+    add_step("/operations/operation_fixture", HTTP_METHOD_GET, response ? ESP_OK : ESP_FAIL,
+             response ? 200 : 404, response, stop);
+}
+static void fresh(const char *current, double version, bool stop)
+{
+    add_step("/state", HTTP_METHOD_GET, ESP_OK, 200, state(current, version), stop);
+}
+static void assert_pending(void)
+{
+    assert(pending_saved && intent.switch_pending);
+    assert(!memcmp(&pending_operation, &original, sizeof(original)));
+    assert(!intent.ready && !media_admitted && !ui_ready_publications);
+}
+static void assert_complete(const char *expected_trace)
+{
+    assert(step_at == step_count && !strcmp(trace, expected_trace));
+    assert(!pending_saved && !intent.switch_pending && !pending_operation.operation_id[0]);
+    assert(!switch_operation_id[0] && !switch_target_id[0]);
+    assert(!intent.ready && !media_admitted && !ui_ready_publications);
+    assert(switch_phase == SWITCH_IDLE && view_generation > 100);
+}
+static void replace_operation(cJSON *root, const char *key, cJSON *replacement)
+{
+    assert(cJSON_ReplaceItemInObjectCaseSensitive(cJSON_GetObjectItemCaseSensitive(root, "operation"), key, replacement));
+}
+
+int main(void)
+{
+    /* Unknown operation -> one exact PUT -> a separate fresh state -> apply ->
+     * durable clear. The PUT's returned state is deliberately absent. */
+    reset();
+    lookup(NULL, false);
+    add_step("/current-group", HTTP_METHOD_PUT, ESP_OK, 200, operation(), false);
+    fresh("target_fixture", 5, false);
+    assert(resolve_pending_switch(7) == ESP_OK);
+    assert_complete("QPSAC");
+    assert(put_calls == 1 && apply_calls == 1 && clear_calls == 1);
+
+    /* A lost PUT response keeps the immutable journal. Lookup on retry, and if
+     * still unknown replay the identical payload, never create another ID. */
+    reset();
+    lookup(NULL, false);
+    add_step("/current-group", HTTP_METHOD_PUT, ESP_FAIL, 0, NULL, false);
+    assert(resolve_pending_switch(7) == ESP_FAIL);
+    assert_pending();
+    assert(!strcmp(trace, "QP") && !apply_calls && !clear_calls);
+    dispose_steps();
+    lookup(NULL, false);
+    add_step("/current-group", HTTP_METHOD_PUT, ESP_OK, 200, operation(), false);
+    fresh("target_fixture", 5, false);
+    assert(resolve_pending_switch(7) == ESP_OK);
+    assert_complete("QPQPSAC");
+    assert(put_calls == 2);
+
+    /* If the first PUT reached the server despite its lost response, lookup
+     * alone resolves it on retry; no second PUT or operation is generated. */
+    reset();
+    lookup(NULL, false);
+    add_step("/current-group", HTTP_METHOD_PUT, ESP_FAIL, 0, NULL, false);
+    assert(resolve_pending_switch(7) == ESP_FAIL);
+    assert_pending();
+    dispose_steps();
+    lookup(operation(), false);
+    fresh("target_fixture", 5, false);
+    assert(resolve_pending_switch(7) == ESP_OK);
+    assert_complete("QPQSAC");
+    assert(put_calls == 1);
+
+    /* A rejected terminal still needs a fresh current state before clear. */
+    reset();
+    cJSON *rejected = operation();
+    replace_operation(rejected, "status", cJSON_CreateString("rejected"));
+    replace_operation(rejected, "error_code", cJSON_CreateString("version_conflict"));
+    replace_operation(rejected, "current_group_id", cJSON_CreateString("different_group"));
+    replace_operation(rejected, "current_version", cJSON_CreateNumber(6));
+    lookup(rejected, false);
+    fresh("different_group", 6, false);
+    assert(resolve_pending_switch(7) == ESP_OK);
+    assert_complete("QSAC");
+
+    /* A server/transport failure is not an unknown operation; never PUT. */
+    reset();
+    add_step("/operations/operation_fixture", HTTP_METHOD_GET, ESP_FAIL, 503, NULL, false);
+    assert(resolve_pending_switch(7) == ESP_FAIL);
+    assert_pending();
+    assert(!put_calls && !clear_calls && !strcmp(trace, "Q"));
+
+    /* Real cJSON types and production payload matching reject wrong identity,
+     * target/version/status/error, missing fields and nonintegral versions. */
+    for (unsigned variant = 0; variant < 8; ++variant) {
+        reset();
+        cJSON *reply = operation();
+        switch (variant) {
+        case 0: replace_operation(reply, "operation_id", cJSON_CreateString("different_operation")); break;
+        case 1: replace_operation(reply, "group_id", cJSON_CreateString("different_group")); break;
+        case 2: replace_operation(reply, "expected_version", cJSON_CreateNumber(3)); break;
+        case 3: replace_operation(reply, "status", cJSON_CreateString("pending")); break;
+        case 4: replace_operation(reply, "error_code", cJSON_CreateString("unexpected_error")); break;
+        case 5: replace_operation(reply, "current_version", cJSON_CreateNumber(5.5)); break;
+        case 6: cJSON_DeleteItemFromObjectCaseSensitive(cJSON_GetObjectItemCaseSensitive(reply, "operation"), "group_id"); break;
+        default: replace_operation(reply, "expected_version", cJSON_CreateString("4")); break;
+        }
+        lookup(reply, false);
+        assert(resolve_pending_switch(7) == ESP_ERR_INVALID_RESPONSE);
+        assert_pending();
+        assert(!apply_calls && !clear_calls && !strcmp(trace, "Q"));
+    }
+
+    /* The historical terminal cannot authorize an older/different fresh state. */
+    for (unsigned variant = 0; variant < 3; ++variant) {
+        reset();
+        lookup(operation(), false);
+        fresh(variant == 1 ? "different_group" : "target_fixture", variant == 0 ? 4 : variant == 1 ? 5 : 5.5, false);
+        assert(resolve_pending_switch(7) == ESP_ERR_INVALID_RESPONSE);
+        assert_pending();
+        assert(!apply_calls && !clear_calls && !strcmp(trace, "QS"));
+    }
+    /* A later genuine server state may legitimately point at another group. */
+    reset();
+    lookup(operation(), false);
+    fresh("different_group", 6, false);
+    assert(resolve_pending_switch(7) == ESP_OK);
+    assert_complete("QSAC");
+
+    reset();
+    lookup(operation(), false);
+    add_step("/state", HTTP_METHOD_GET, ESP_FAIL, 0, NULL, false);
+    assert(resolve_pending_switch(7) == ESP_FAIL);
+    assert_pending();
+    assert(!apply_calls && !clear_calls && !strcmp(trace, "QS"));
+
+    reset();
+    apply_error = ESP_ERR_INVALID_RESPONSE;
+    lookup(operation(), false);
+    fresh("target_fixture", 5, false);
+    assert(resolve_pending_switch(7) == ESP_ERR_INVALID_RESPONSE);
+    assert_pending();
+    assert(!clear_calls && !strcmp(trace, "QSA"));
+
+    /* Clear/commit uncertainty keeps pending and no media restoration. A retry
+     * confirms the same terminal/fresh state and clears the same operation. */
+    reset();
+    clear_error = ESP_FAIL;
+    lookup(operation(), false);
+    fresh("target_fixture", 5, false);
+    assert(resolve_pending_switch(7) == ESP_FAIL);
+    assert_pending();
+    assert(!strcmp(trace, "QSAC") && clear_calls == 1);
+    dispose_steps();
+    clear_error = ESP_OK;
+    lookup(operation(), false);
+    fresh("target_fixture", 5, false);
+    assert(resolve_pending_switch(7) == ESP_OK);
+    assert_complete("QSACQSAC");
+    assert(!put_calls && clear_calls == 2);
+
+    /* Binding mismatches and unreadable journals perform no HTTP at all. */
+    reset();
+    strcpy(config.device_id, "different_device");
+    assert(resolve_pending_switch(7) == ESP_ERR_INVALID_STATE);
+    assert_pending();
+    assert(!step_at && !trace_used && switch_phase == SWITCH_MISMATCH);
+    reset();
+    journal_blocked = true;
+    assert(resolve_pending_switch(7) == ESP_ERR_INVALID_STATE);
+    assert_pending();
+    assert(!step_at && !trace_used);
+
+    /* STOP while GET is in flight forbids the fallback PUT. If a PUT already
+     * reached the service, it may settle safely while stopped, without ready. */
+    reset();
+    media_admitted = true;
+    lookup(NULL, true);
+    assert(resolve_pending_switch(7) == ESP_FAIL);
+    assert_pending();
+    assert(!intent.desired && !put_calls && suspend_calls == 1 && !strcmp(trace, "Q"));
+    reset();
+    media_admitted = true;
+    lookup(NULL, false);
+    add_step("/current-group", HTTP_METHOD_PUT, ESP_OK, 200, operation(), true);
+    fresh("target_fixture", 5, false);
+    assert(resolve_pending_switch(7) == ESP_OK);
+    assert_complete("QPSAC");
+    assert(!intent.desired && suspend_calls == 1);
+    reset();
+    media_admitted = true;
+    lookup(operation(), false);
+    fresh("target_fixture", 5, true);
+    assert(resolve_pending_switch(7) == ESP_OK);
+    assert_complete("QSAC");
+    assert(!intent.desired && suspend_calls == 1);
+
+    /* The caller's prior session cannot issue requests after STOP/START. */
+    reset();
+    intent.session = 8;
+    assert(resolve_pending_switch(7) == ESP_ERR_INVALID_STATE);
+    assert_pending();
+    assert(!step_at && !trace_used);
+    dispose_steps();
+    puts("switch resolver host flow: passed (production resolver/parser/STOP, real cJSON, exact replay, fresh state, durable-clear fence)");
+    puts("scope: scripted request/state/journal boundaries; no real HTTP, RTOS, audio, or NVS durability claims");
+    return 0;
+}

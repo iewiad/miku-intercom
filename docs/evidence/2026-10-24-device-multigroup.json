@@ -1,0 +1,358 @@
+{
+  "schema": "shenglu.device-multigroup.v1",
+  "date": "2026-10-24",
+  "base_revision": "7383e2b8c2c50e7e3cd9456d5b354f0ec86f4469",
+  "source_manifest_sha256": "2a0a26850c3c71cdbcb3a1e1ddeca354043e3b5a151e5bef8c55a19e67c9778d",
+  "scope": "one ESP32-S31-Korvo-1, three prejoined groups, one Chrome synthetic 440Hz sender/receiver; board switches use the same controller entry as touch UI",
+  "recording_saved": false,
+  "human_listening": "not_performed",
+  "browser_playback_muted": true,
+  "board_group_volume": 0,
+  "ui_confirmation": {
+    "user_confirmed_current_group_dropdown_and_switch_button_display": true,
+    "complete_manual_touch_switch_matrix": "not_performed"
+  },
+  "firmware": {
+    "app_bytes": 2621696,
+    "app_sha256": "184b4168bdf97eedff6df86305156858affa9e66f685244bcd405dc39d00f3fd",
+    "offset": "0x10000",
+    "write_scope": "application only",
+    "independent_flash_verify": "passed",
+    "nvs_erased": false,
+    "wifi_reconnected": true,
+    "rta_credentials_present": true,
+    "rta_gateway_called": false,
+    "time_sync": "USB UTC after each reboot"
+  },
+  "provisioning": {
+    "prejoined_groups": 3,
+    "adding_groups_kept_current": true,
+    "adding_groups_kept_version": true,
+    "board_join_code_keyboard": "not_implemented"
+  },
+  "receive_observations": {
+    "tone_hz": 440,
+    "tone_source": "browser synthetic source with real WebRTC/Opus",
+    "same_group_a": {
+      "connected": true,
+      "pressed": false,
+      "held": false,
+      "sent_packets": 0,
+      "received_packets": 3402,
+      "decoded_samples": 1088320,
+      "remote_rms_peak": 0.071842,
+      "current_version": 1,
+      "switch_pending": false,
+      "at": "2026-10-24T09:35:16.390599Z",
+      "group": "A"
+    },
+    "board_b_receiving_group_a": {
+      "connected": true,
+      "pressed": false,
+      "held": false,
+      "sent_packets": 0,
+      "received_packets": 4070,
+      "decoded_samples": 1302080,
+      "remote_rms_peak": 0.0,
+      "current_version": 2,
+      "switch_pending": false,
+      "at": "2026-10-24T09:37:35.324276Z",
+      "group": "B"
+    },
+    "same_group_b_after_browser_switch": {
+      "connected": true,
+      "pressed": false,
+      "held": false,
+      "sent_packets": 0,
+      "received_packets": 5634,
+      "decoded_samples": 1802560,
+      "remote_rms_peak": 0.071816,
+      "current_version": 2,
+      "switch_pending": false,
+      "at": "2026-10-24T09:38:07.729901Z",
+      "group": "B"
+    },
+    "board_c_receiving_group_b": {
+      "connected": true,
+      "pressed": false,
+      "held": false,
+      "sent_packets": 0,
+      "received_packets": 4280,
+      "decoded_samples": 1369280,
+      "remote_rms_peak": 0.0,
+      "current_version": 3,
+      "switch_pending": false,
+      "at": "2026-10-24T09:39:56.118783Z",
+      "group": "C"
+    },
+    "note": "PCM peaks and counters are cumulative for each new board Peer; not exact three-second windows or a listening result"
+  },
+  "switch_while_holding": {
+    "before": {
+      "connected": true,
+      "pressed": true,
+      "held": true,
+      "sent_packets": 537,
+      "received_packets": 5915,
+      "decoded_samples": 1892160,
+      "remote_rms_peak": 0.071842,
+      "current_version": 1,
+      "switch_pending": false,
+      "at": "2026-10-24T09:36:08.641986Z",
+      "group": "A"
+    },
+    "first_suspended_status": {
+      "connected": false,
+      "pressed": false,
+      "held": false,
+      "sent_packets": 545,
+      "received_packets": 5923,
+      "decoded_samples": 1894720,
+      "remote_rms_peak": 0.071842,
+      "current_version": 1,
+      "switch_pending": true,
+      "at": "2026-10-24T09:36:08.733172Z",
+      "group": "A"
+    },
+    "new_peer": {
+      "connected": true,
+      "pressed": false,
+      "held": false,
+      "sent_packets": 0,
+      "received_packets": 1620,
+      "decoded_samples": 518080,
+      "remote_rms_peak": 0.0,
+      "current_version": 2,
+      "switch_pending": false,
+      "at": "2026-10-24T09:36:44.435869Z",
+      "group": "B"
+    },
+    "note": "TX counts across UART status lines include time before command acceptance; no claim of zero physical tail in network/I2S buffers"
+  },
+  "ten_switches": {
+    "completed": 10,
+    "versions": [
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13
+    ],
+    "observations": [
+      {
+        "at": "2026-10-24T09:41:18.111662Z",
+        "hop": 1,
+        "version": 4,
+        "target": "A",
+        "connected": true,
+        "pressed": false,
+        "held": false,
+        "sent_packets": 0,
+        "heap_internal_free": 50403
+      },
+      {
+        "at": "2026-10-24T09:41:22.224136Z",
+        "hop": 2,
+        "version": 5,
+        "target": "B",
+        "connected": true,
+        "pressed": false,
+        "held": false,
+        "sent_packets": 0,
+        "heap_internal_free": 50287
+      },
+      {
+        "at": "2026-10-24T09:41:27.388330Z",
+        "hop": 3,
+        "version": 6,
+        "target": "A",
+        "connected": true,
+        "pressed": false,
+        "held": false,
+        "sent_packets": 0,
+        "heap_internal_free": 50363
+      },
+      {
+        "at": "2026-10-24T09:41:32.570582Z",
+        "hop": 4,
+        "version": 7,
+        "target": "B",
+        "connected": true,
+        "pressed": false,
+        "held": false,
+        "sent_packets": 0,
+        "heap_internal_free": 50019
+      },
+      {
+        "at": "2026-10-24T09:41:37.730301Z",
+        "hop": 5,
+        "version": 8,
+        "target": "A",
+        "connected": true,
+        "pressed": false,
+        "held": false,
+        "sent_packets": 0,
+        "heap_internal_free": 50391
+      },
+      {
+        "at": "2026-10-24T09:41:42.842073Z",
+        "hop": 6,
+        "version": 9,
+        "target": "B",
+        "connected": true,
+        "pressed": false,
+        "held": false,
+        "sent_packets": 0,
+        "heap_internal_free": 50375
+      },
+      {
+        "at": "2026-10-24T09:41:47.959892Z",
+        "hop": 7,
+        "version": 10,
+        "target": "A",
+        "connected": true,
+        "pressed": false,
+        "held": false,
+        "sent_packets": 0,
+        "heap_internal_free": 48523
+      },
+      {
+        "at": "2026-10-24T09:41:53.148501Z",
+        "hop": 8,
+        "version": 11,
+        "target": "B",
+        "connected": true,
+        "pressed": false,
+        "held": false,
+        "sent_packets": 0,
+        "heap_internal_free": 50439
+      },
+      {
+        "at": "2026-10-24T09:41:58.412815Z",
+        "hop": 9,
+        "version": 12,
+        "target": "A",
+        "connected": true,
+        "pressed": false,
+        "held": false,
+        "sent_packets": 0,
+        "heap_internal_free": 50447
+      },
+      {
+        "at": "2026-10-24T09:42:03.565120Z",
+        "hop": 10,
+        "version": 13,
+        "target": "B",
+        "connected": true,
+        "pressed": false,
+        "held": false,
+        "sent_packets": 0,
+        "heap_internal_free": 50403
+      }
+    ],
+    "heap_internal_free_range": [
+      48523,
+      50447
+    ],
+    "all_ready_unpressed_and_zero_tx": true,
+    "driver_errors": []
+  },
+  "negative_checks": {
+    "stale_view_rejected": true,
+    "unknown_group_locally_rejected_without_version_change": true
+  },
+  "pending_reboot": {
+    "operation_id_preserved": true,
+    "operation_id_sha256": "69ac1b195d94aa698586ca8216d4abd3e5367c401369ba26d78c30a73ed4956a",
+    "stopped_pending_at": "2026-10-24T09:44:31.364512Z",
+    "reloaded_pending_at": "2026-10-24T09:45:04.526582Z",
+    "reloaded_kept_unpressed_and_disconnected": true,
+    "resolved": {
+      "connected": true,
+      "pressed": false,
+      "held": false,
+      "sent_packets": 0,
+      "received_packets": 503,
+      "decoded_samples": 160320,
+      "remote_rms_peak": 0.0,
+      "current_version": 14,
+      "switch_pending": false,
+      "at": "2026-10-24T09:45:28.659721Z",
+      "group": "A"
+    },
+    "server_terminal": {
+      "current_group": "A",
+      "current_version": 14,
+      "all_floors_empty": true,
+      "board_media_peer_absent": true,
+      "pending_operation_applied_once": true,
+      "operation_id_sha256": "69ac1b195d94aa698586ca8216d4abd3e5367c401369ba26d78c30a73ed4956a"
+    },
+    "journal_empty_after_second_reboot": true,
+    "software_reboots": 2,
+    "power_loss_tested": false
+  },
+  "lifecycle": {
+    "audio_peer_starts": 16,
+    "closed_peers": 16,
+    "panic_observed": false,
+    "stopped_internal_free_bytes": [
+      152227,
+      152223,
+      152671,
+      152243,
+      152711
+    ],
+    "final_boot_stopped_internal_free_bytes": 152711,
+    "browser": [
+      {
+        "terminal": "群A接收端",
+        "created_peers": 2,
+        "open_peers": 0
+      }
+    ],
+    "all_board_media_stopped": true
+  },
+  "control_error_observations": {
+    "non_2xx_warning_count": 13,
+    "completed_new_operations": 13,
+    "other_control_error_log_count": 0,
+    "explanation": "this image counts the expected initial GET /operations/{new-id} 404 as http_failures and drops that HTTPS handle; 13 observed non-2xx warnings match 13 new operations. They are not described as zero HTTP failures or injected network faults."
+  },
+  "software_checks": {
+    "idf_build": "passed, 37% application partition free",
+    "http_reuse_and_controller_host": "passed",
+    "group_cli_host": "13/13 passed",
+    "media_gate_host": "passed, predicates and packet ingress only; playback_task/I2S not executed",
+    "journal_host_sanitized": "passed with ASan/UBSan, transactional NVS SDK double",
+    "resolver_host": "passed, production resolver/parser and real cJSON with scripted request/state/journal boundaries"
+  },
+  "limits": [
+    "No human listening or new real-microphone audio-quality verdict",
+    "Switch matrix driven over UART through the production UI controller entry; only display checked manually",
+    "No physical power-loss/Flash atomicity test",
+    "No second computer, router, Internet, or multi-board coverage",
+    "No board join-code keyboard or RTA voice commands",
+    "Standalone serial open may reset this board; live diagnostics used one long serial session",
+    "USB clock sync required after reboot; development certificates remain temporary",
+    "Bounded lifecycle test is not a long-term stability claim"
+  ],
+  "artifact_sha256": {
+    "device-multigroup-serial-isolation.json": "62aaf4a9bb3aabefe8177623c5c9c6b6d58abe6273f2d5d55a1d39fbaf2ef72c",
+    "device-multigroup-serial-recovery.json": "7f821e6255f8925372f89c9718788c5b761a8aa165ce97dc5570d6db46fa3405",
+    "device-multigroup-browser-baseline.json": "39ad76bfed08e92f75d23a8ec4f2b770127f1f0eb0e9d12f3866ddfeb791ed1d",
+    "device-multigroup-browser-same-a.json": "ac9db2013c7130ae7a9cbcc77e243d412bda5283cfde028489ae5d86a2dd31fd",
+    "device-multigroup-browser-cross-a-to-b.json": "203daa7374c819679654afa10f4f570a94e6cf08d15dfd2576d90fd077a267f2",
+    "device-multigroup-browser-same-b.json": "e7596dc258d32d05308a49cc073a296338ddde53655b30911763f7ce3a857ad0",
+    "device-multigroup-browser-cross-b-to-c.json": "9ef1698b050ef8075d2a24751b757b647ef2f5086c85e1dcdffea0eb8910c1bd",
+    "device-multigroup-browser-final.json": "66b649e9fc5b2e0c653f830791c0f26c1e7af33c86e5d8dd015241458c55fa9b",
+    "device-multigroup-browser-final.png": "2b581afcd05df594aaa150bee34fa0e16a173f964eefe98e0fb5e51246548cab",
+    "device-multigroup-server-final.json": "1cbd61afaf54f557dd1e9aaf0ee12dfa919cd2f218ae29fce49614bcb8f7c7d5",
+    "device-multigroup-source-manifest.json": "2a0a26850c3c71cdbcb3a1e1ddeca354043e3b5a151e5bef8c55a19e67c9778d"
+  }
+}

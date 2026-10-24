@@ -5,9 +5,14 @@ selects the S3 group-intercom client; the original Miku RTA application remains
 an explicit Kconfig fallback. The final S3 first-slice image has passed
 bidirectional board↔browser numerical transport, PTT cancellation and short
 fault-recovery checks. This is not long-term stability or human-listening
-acceptance; listening, board multi-group switching and voice commands remain
-pending. See
-[the S3 contract](../../docs/specs/004-device-lan.md) and
+acceptance. PR #10 is merged and its first-slice evidence remains independent.
+[005 joined-group switching](../../docs/specs/005-device-multigroup.md) is now
+validated numerically for this run, including ten consecutive switches and
+soft-reboot recovery. The user confirmed display contents; switching was mainly
+driven through the same controller via serial, not a complete touch-flow test.
+Human listening, actual power-loss recovery, a join-code keyboard and voice
+switching remain pending. See
+[the S3 LAN contract](../../docs/specs/004-device-lan.md) and
 [the evidence log](../../docs/acceptance.md) for scope and actual results.
 
 The boot screen and main interface display the application name **声路同行**.
@@ -70,11 +75,12 @@ separate steps.
 ## Group session resources and current evidence
 
 The lifecycle worker reuses one HTTPS client handle within a configured group
-session/identity. Each request sets its GET/POST/DELETE method, URL, headers and
+session/identity. Each request sets its GET/POST/PUT/DELETE method, URL, headers and
 body; it detaches request-body and response pointers before freeing temporary
 storage. Only complete, successful, persistent responses retain the handle.
 Errors, server-close responses, Stop or configuration replacement discard it;
-uncertain mutations are not automatically replayed.
+the HTTP helper does not automatically replay mutations. The 005 switch worker
+separately queries and replays only its fixed journaled operation.
 
 Approximately 24.2 KB of the group mode's non-DMA audio workspaces (capture,
 mono/accumulator buffers and playback PCM/reference/packet buffers) explicitly
@@ -83,7 +89,8 @@ path. I2S driver buffers still use DMA; AEC DMA_ATTR arrays remain internal.
 This does not move every audio allocation into PSRAM, and the RTA mode's original
 `malloc` path for these workspaces is unchanged.
 
-The accepted first-slice application is **2,606,960 B**, SHA256:
+The following is the historical **PR #10 first-slice** evidence, not validation
+of the current multi-group image. Its application is **2,606,960 B**, SHA256:
 
 ```text
 a9cd7583a2621dfbab7c894fbd21d7b2b9338dda138bc69994511e307590612b
@@ -110,6 +117,90 @@ not long-term stability or listening quality. Human listening has not been
 performed; board multi-group switching and voice commands also remain pending.
 See the [sanitized final evidence](../../docs/evidence/2026-10-24-device-group.json)
 and [acceptance log](../../docs/acceptance.md) for the authoritative test scope.
+
+## Joined-group switching (005, numerical and soft-reboot checks completed)
+
+The screen shows a dropdown of server-confirmed joined groups. Selection alone
+does not submit; the user confirms a switch explicitly. The current-group name
+comes from authoritative state. Opening the dropdown cancels PTT. Unknown/stale
+catalogs, switching and an unready transport disable PTT; the controller rejects
+an old `view_generation`. Catalog IDs/names and the UI deep copy use PSRAM, with
+a 128-group limit; invalid or oversized catalogs fail as a whole, without silent
+truncation. This slice does not add a board join-code keyboard or voice commands.
+
+Accepting a switch synchronously suspends old-Peer TX, RX ingress and PCM-playout
+admission. The worker then releases the floor and closes that Peer. Audio already
+in the network or I2S/DMA cannot be recalled. Before the first PUT, a fixed
+`operation_id`, target and `expected_version`, bound to `server_url`/`device_id`,
+are committed under an independent NVS key; Token/CA are not journaled. Stop,
+reconnect, service restart and board reboot retain that pending operation.
+Recovery queries the same ID and replays the identical payload only after 404.
+A configuration binding mismatch preserves the record and pauses audio until
+the original service/identity configuration is restored.
+
+No group Peer is created while the result is unknown. Validate the original
+operation's terminal response, fetch fresh authoritative state, then successfully
+clear the journal before rebuilding one Peer for the current group, unpressed.
+A rejection also follows the fresh state; it does not guess a return to the
+previous group. Saving/clearing errors keep audio paused when the journal's
+outcome remains uncertain.
+
+The tool requires a clock-synchronized, explicitly connected board with a known
+catalog, and opening serial must not reset it. Setting DTR/RTS=false in software
+does not guarantee this: independent opens reset the board on the tested Mac.
+This hardware run kept one serial session open for clock sync, START, GROUPS and
+SWITCH. The following independent tool entry points are valid only when those
+preconditions hold; they do not automatically sync time or connect:
+
+```bash
+python3 tools/intercom_config.py --port /dev/cu.usbserial-XXXX --groups
+python3 tools/intercom_config.py --port /dev/cu.usbserial-XXXX \
+  --switch-group "${INTERCOM_GROUP_ID}" --view-generation "${INTERCOM_VIEW_GENERATION}"
+```
+
+Explicitly set both variables from the chosen ID and integer generation returned
+by `--groups`; the tool never chooses a group or silently refreshes the view.
+It prints only validated catalog fields: `view_generation`, `current_group_id`,
+`current_version`, optional `known`/`switching`, and `groups[id,name]`. Up to 128
+entries are read as fragmented UTF-8 with a 64 KiB response limit, without echoing
+raw UART logs, Tokens or join codes. These operations never read a credential
+file and cannot be combined with provisioning, restart, clock sync or `--status`.
+The existing `--status` still means configuration presence only. If opening the
+port resets the board, synchronize time and explicitly connect again; a
+`known:false` catalog rejects switching. The long-session protocol uses
+`INTERCOM_TIME_SET`, `INTERCOM_START`, `INTERCOM_GROUPS` and `INTERCOM_SWITCH N ID`;
+the tool does not establish that persistent session automatically.
+
+`REQUESTED` acknowledges controller acceptance, not successful switching or
+connected media. Inspect the later catalog, server current group/version and
+board media-ready state. The final multi-group application is **2,621,696 B**,
+SHA256:
+
+```text
+184b4168bdf97eedff6df86305156858affa9e66f685244bcd405dc39d00f3fd
+```
+
+App-only writing and independent verification passed. This run used three groups
+A/B/C, one browser with synthetic 440 Hz, and muted playback:
+
+| Multi-group check | Observed result |
+| --- | --- |
+| Same-group receive | Board RMS 0.071842 in A and 0.071816 in B |
+| Cross-group isolation | Board B listening to browser A, and board C listening to browser B: cumulative remote_rms_peak=0 |
+| Switch while holding A→B | Acceptance cleared pressed/held; new Peer TX=0 |
+| Ten consecutive switches | version 3→13; each ready, unpressed and TX=0; internal free heap 48,523–50,447 B |
+| Local rejection | Unknown target retained version 13; stale view was also rejected |
+| Pending recovery | SWITCH+STOP retained the NVS record; a soft reboot recovered the same operation ID; START confirmed A/version 14; after clearing, a second soft reboot found pending=false |
+| Lifecycle/cleanup | 16 Peer start/close cycles without panic; stopped internal free heap 152,227–152,243 B, final boot stopped at 152,711 B; original Wi-Fi/RTA credentials retained |
+| Display evidence | User confirmed current-group name, dropdown and switch button display; most switching used serial through the same controller |
+
+This version counts each expected first GET-operation 404 in `http_failures`:
+13 normal operations produced 13 such non-2xx responses. Do not report zero HTTP
+failures. The two resets above were soft reboots, not physical power cuts. This
+is numerical/controller recovery evidence, not complete touch-flow, long-term
+stability or listening acceptance. Human listening, the board join-code keyboard
+and voice switching have not been done. See the [multi-group evidence](../../docs/evidence/2026-10-24-device-multigroup.json),
+kept separate from the PR #10 first-slice record.
 
 ## Group mode USB configuration
 
@@ -258,6 +349,42 @@ response. It also runs the `GROUP_CONTROLLER_HOST_TEST` state regression. It
 needs no ESP-IDF, opens no network or serial connection, and reads no credentials.
 This host regression does not establish real TLS, ESP allocation behavior,
 audio transport or long-running stability.
+
+## Board-free multi-group regressions
+
+From the repository root, with Python 3 and `cc` (`--sanitize` applies only to
+the journal runner):
+
+```bash
+python3 firmware/esp32-s31-rti/tests/run_group_cli.py
+python3 firmware/esp32-s31-rti/tests/run_group_media_gate.py
+python3 firmware/esp32-s31-rti/tests/run_group_journal.py --sanitize
+python3 firmware/esp32-s31-rti/tests/run_switch_resolver.py
+```
+
+- CLI: actual C parser/dispatcher and Python tool, strict numeric/ID/framing
+  bounds, fragmented allowlisted catalogs, credential isolation, modem-line
+  setup and request-only acknowledgement; UART/controller are doubles.
+- Media gate: production send/receive predicates and packet ingress, irreversible
+  suspension, late grants/packets, expiry and legacy RTA isolation. It does not
+  execute playback_task's dequeue/decode/I2S call sites or real concurrency.
+- Journal: production storage with a transactional NVS double, pre-commit and
+  uncertain post-commit failures, malformed blobs, identity/payload conflicts,
+  terminal matching and stale-state rules, with host ASan/UBSan. It does not
+  establish real NVS/Flash atomicity, physical power-loss recovery, or complete
+  HTTP-worker/media integration.
+
+- Resolver: actual production resolver/terminal parser/STOP and session checks
+  with real cJSON; scripted 404→fixed PUT replay, fresh state, rejection/late
+  responses, configuration binding and journal-clear fencing. HTTP, state-apply
+  and journal boundaries are doubles, not real network/RTOS/media/NVS durability.
+  It requires existing `managed_components/espressif__cjson/cJSON/cJSON.c` and
+  `.h` under this firmware directory, or `--cjson-dir "${CJSON_DIR}"` pointing
+  to an already downloaded cJSON source directory; it does not download sources.
+
+These tests use no board, serial port, network, credential file or recording.
+They cannot substitute for physical touch, board audio, listening or long-term
+stability acceptance.
 
 ## RTI development credentials (RTA fallback only)
 
