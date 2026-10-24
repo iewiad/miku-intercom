@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "esp_err.h"
@@ -19,6 +20,18 @@ typedef enum {
 } board_transcript_role_t;
 
 typedef void (*board_conversation_action_cb_t)(bool stop, void *context);
+typedef void (*board_ptt_action_cb_t)(bool pressed, void *context);
+/* A successful callback only queues the switch. It must not perform I/O,
+ * allocate, or call display functions while the LVGL lock is held. */
+typedef esp_err_t (*board_group_switch_action_cb_t)(const char *target_group_id,
+                                                    uint32_t view_generation,
+                                                    void *context);
+#define BOARD_GROUP_CHOICES_MAX 128
+
+typedef struct {
+    char id[81];
+    char name[129];
+} board_group_item_t;
 typedef void (*board_volume_action_cb_t)(uint8_t volume, bool persist, void *context);
 typedef esp_err_t (*board_wifi_connected_cb_t)(void *context);
 
@@ -36,3 +49,28 @@ esp_err_t board_display_set_transcript(board_transcript_role_t role, const char 
 esp_err_t board_display_commit_transcript_turn(void);
 esp_err_t board_display_reset_transcript(void);
 bool board_display_is_chinese(void);
+
+/** Group intercom uses independent connect and hold-to-talk controls. */
+esp_err_t board_display_show_group(board_conversation_action_cb_t startstop,
+                                   board_ptt_action_cb_t ptt,
+                                   board_group_switch_action_cb_t switch_group,
+                                   board_volume_action_cb_t volume,
+                                   uint8_t initial_volume,
+                                   void *context);
+esp_err_t board_display_set_group_state(const char *group, const char *detail,
+                                        bool connected, bool speaking);
+
+/** Publish controller intent separately from transport readiness (worker only). */
+esp_err_t board_display_set_group_active(bool active);
+
+/** Worker-only publication. Strings/items are deep-copied into explicit PSRAM.
+ * Same-generation refreshes preserve the candidate until confirmation. Publish
+ * a new generation at a switch terminal result, including rejection, so a fast
+ * transaction cannot leave the UI waiting for an unobserved pending frame. */
+esp_err_t board_display_set_group_choices(const board_group_item_t *items,
+                                          size_t count,
+                                          const char *current_group_id,
+                                          uint32_t view_generation,
+                                          bool known,
+                                          bool can_select,
+                                          bool switching);

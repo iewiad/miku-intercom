@@ -2,26 +2,44 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/iewiad/miku-intercom/server/internal/control"
 	"github.com/iewiad/miku-intercom/server/internal/httpapi"
+	"github.com/iewiad/miku-intercom/server/internal/lan"
 	"github.com/iewiad/miku-intercom/server/internal/media"
 	"github.com/iewiad/miku-intercom/server/internal/persist"
 )
 
 func run() error {
-	addr := flag.String("addr", "127.0.0.1:8080", "HTTP listen address")
+	addr := flag.String("addr", "127.0.0.1:8080", "loopback HTTP listen address")
 	data := flag.String("data", "../work/intercom/state.json", "private snapshot path (parent directory must be 0700)")
 	diagnostics := flag.Bool("media-diagnostics", false, "enable localhost synthetic audio diagnostics")
+	deviceAddr := flag.String("device-addr", "", "opt-in native HTTPS listener: assigned RFC1918 IPv4:port")
+	deviceCert := flag.String("device-cert", "", "device HTTPS certificate PEM file (IPv4 SAN required)")
+	deviceKey := flag.String("device-key", "", "device HTTPS private key PEM file")
+	deviceUDPMin := flag.Int("device-udp-min", 0, "device media minimum UDP port")
+	deviceUDPMax := flag.Int("device-udp-max", 0, "device media maximum UDP port")
 	flag.Parse()
+	if err := validateBrowserAddress(*addr); err != nil {
+		return err
+	}
+	var device *deviceConfiguration
+	if *deviceAddr != "" || *deviceCert != "" || *deviceKey != "" || *deviceUDPMin != 0 || *deviceUDPMax != 0 {
+		local, err := lan.LocalIPv4s()
+		if err != nil {
+			return err
+		}
+		device, err = prepareDeviceConfiguration(deviceFlags{*deviceAddr, *deviceCert, *deviceKey, *deviceUDPMin, *deviceUDPMax}, local)
+		if err != nil {
+			return err
+		}
+	}
 	store, err := persist.Open(*data)
 	if err != nil {
 		return err
@@ -35,30 +53,43 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	hub, err := media.New(service, media.Options{Diagnostics: *diagnostics})
+	mediaOptions := media.Options{Diagnostics: *diagnostics}
+	if device != nil {
+		mediaOptions.DeviceIP = device.address.Addr()
+		mediaOptions.DeviceUDPMin = device.udpMin
+		mediaOptions.DeviceUDPMax = device.udpMax
+	}
+	hub, err := media.New(service, mediaOptions)
 	if err != nil {
 		return err
 	}
 	defer hub.Close()
-	server := &http.Server{Addr: *addr, Handler: httpapi.New(service, hub), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
+	browserServer := httpServer(*addr, httpapi.New(service, hub))
+	var deviceServer *http.Server
+	if device != nil {
+		handler, err := httpapi.NewDevice(service, hub, device.address.String())
+		if err != nil {
+			return err
+		}
+		deviceServer = httpServer(device.address.String(), handler)
+		deviceServer.TLSConfig = device.tls
+	}
+	servers, err := prepareListeners(browserServer, deviceServer)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		for _, entry := range servers {
+			_ = entry.listener.Close()
+		}
+	}()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdown)
-	}()
 	log.Printf("intercom browser audio listening on %s", *addr)
-	err = server.ListenAndServe()
-	stop()
-	<-done
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
+	if device != nil {
+		log.Printf("intercom native device HTTPS listening on %s", device.address)
 	}
-	return err
+	return serveListeners(ctx, servers)
 }
 func main() {
 	if err := run(); err != nil {

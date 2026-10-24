@@ -1,9 +1,12 @@
 #include "wifi_serial_cli.h"
 
+#include <errno.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 
 #include "driver/uart.h"
 #include "driver/uart_vfs.h"
@@ -15,6 +18,8 @@
 #include "mbedtls/platform_util.h"
 #include "sdkconfig.h"
 #include "rti_credentials.h"
+#include "group_config.h"
+#include "group_controller.h"
 #include "wifi_manager.h"
 
 #define SERIAL_CLI_LINE_MAX 4096
@@ -23,6 +28,14 @@
 static const char *TAG = "wifi_serial_cli";
 static bool started;
 
+static int hex_nibble(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
 static bool hex_decode(const char *hex, uint8_t *out, size_t out_size, size_t *out_len)
 {
     const size_t hex_len = strlen(hex);
@@ -30,11 +43,12 @@ static bool hex_decode(const char *hex, uint8_t *out, size_t out_size, size_t *o
         return false;
     }
     for (size_t i = 0; i < hex_len / 2; ++i) {
-        unsigned int value;
-        if (sscanf(hex + i * 2, "%2x", &value) != 1) {
+        const int high = hex_nibble(hex[i * 2]);
+        const int low = hex_nibble(hex[i * 2 + 1]);
+        if (high < 0 || low < 0) {
             return false;
         }
-        out[i] = (uint8_t)value;
+        out[i] = (uint8_t)((high << 4) | low);
     }
     out[hex_len / 2] = '\0';
     *out_len = hex_len / 2;
@@ -140,6 +154,126 @@ static void handle_rti_config(char *arguments)
     fflush(stdout);
 }
 
+static void handle_intercom_config(const char *hex)
+{
+    uint8_t *json = calloc(1, GROUP_CONFIG_JSON_MAX + 1);
+    if (!json) {
+        printf("INTERCOM_CONFIG_ERROR out_of_memory\n");
+        return;
+    }
+    size_t size = 0;
+    esp_err_t err = ESP_ERR_INVALID_ARG;
+    if (hex_decode(hex, json, GROUP_CONFIG_JSON_MAX + 1, &size) && size > 0) {
+        err = group_config_store_json((const char *)json, size);
+    }
+    mbedtls_platform_zeroize(json, GROUP_CONFIG_JSON_MAX + 1);
+    free(json);
+    printf(err == ESP_OK ? "INTERCOM_CONFIG_SAVED\n" : "INTERCOM_CONFIG_ERROR invalid_or_unavailable\n");
+}
+
+static void handle_intercom_time(const char *seconds)
+{
+    bool digits = seconds[0] != '\0';
+    for (const char *c = seconds; *c; ++c) {
+        if (*c < '0' || *c > '9') digits = false;
+    }
+    errno = 0;
+    char *end = NULL;
+    const long long epoch = strtoll(seconds, &end, 10);
+    if (!digits || errno || !end || *end || epoch < 1735689600LL || epoch > 4102444800LL) {
+        printf("INTERCOM_TIME_ERROR invalid_time\n");
+        return;
+    }
+    const struct timeval tv = {.tv_sec = (time_t)epoch, .tv_usec = 0};
+    printf(settimeofday(&tv, NULL) == 0 ? "INTERCOM_TIME_SET\n" : "INTERCOM_TIME_ERROR unavailable\n");
+}
+
+static bool parse_intercom_switch(const char *arguments, uint32_t *generation, char group_id[81])
+{
+    uint32_t value = 0;
+    size_t digits = 0;
+    const char *cursor = arguments;
+    while (*cursor >= '0' && *cursor <= '9') {
+        const uint32_t digit = (uint32_t)(*cursor - '0');
+        if (++digits > 10 || value > (UINT32_MAX - digit) / 10) {
+            return false;
+        }
+        value = value * 10 + digit;
+        ++cursor;
+    }
+    if (digits == 0 || *cursor++ != ' ') {
+        return false;
+    }
+    const char *id = cursor;
+    size_t length = 0;
+    for (; *cursor; ++cursor) {
+        const char c = *cursor;
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') || c == '-' || c == '_') || ++length > 80) {
+            return false;
+        }
+    }
+    if (length < 8) {
+        return false;
+    }
+    memcpy(group_id, id, length);
+    group_id[length] = '\0';
+    *generation = value;
+    return true;
+}
+
+/* Handle only the new group commands before the legacy line normalizer. This
+ * keeps embedded CR / trailing fields from being silently discarded. The
+ * controller queues work; the serial task never performs group HTTP itself. */
+static bool handle_intercom_group_command(const char *line)
+{
+    const bool groups = strncmp(line, "INTERCOM_GROUPS", strlen("INTERCOM_GROUPS")) == 0;
+    const bool switching = strncmp(line, "INTERCOM_SWITCH", strlen("INTERCOM_SWITCH")) == 0;
+    if (!groups && !switching) {
+        return false;
+    }
+    size_t length = strlen(line);
+    if (length && line[length - 1] == '\n') {
+        --length;
+        if (length && line[length - 1] == '\r') {
+            --length;
+        }
+    }
+    char command[sizeof("INTERCOM_SWITCH ") + 10 + 1 + 80];
+    if (length >= sizeof(command)) {
+        printf("%s\n", groups ? "INTERCOM_GROUPS_ERROR invalid_request" : "INTERCOM_SWITCH_ERROR invalid_request");
+        return true;
+    }
+    memcpy(command, line, length);
+    command[length] = '\0';
+    if (groups) {
+        if (strcmp(command, "INTERCOM_GROUPS") == 0) {
+            group_controller_print_groups();
+        } else {
+            printf("INTERCOM_GROUPS_ERROR invalid_request\n");
+        }
+        return true;
+    }
+    uint32_t generation = 0;
+    char group_id[81];
+    const size_t prefix = strlen("INTERCOM_SWITCH");
+    if (command[prefix] != ' ' || !parse_intercom_switch(command + prefix + 1, &generation, group_id)) {
+        printf("INTERCOM_SWITCH_ERROR invalid_request\n");
+        return true;
+    }
+    const esp_err_t err = group_controller_switch_group(group_id, generation, NULL);
+    if (err == ESP_OK) {
+        printf("INTERCOM_SWITCH_REQUESTED\n");
+    } else if (err == ESP_ERR_INVALID_ARG) {
+        printf("INTERCOM_SWITCH_ERROR invalid_request\n");
+    } else if (err == ESP_ERR_INVALID_STATE) {
+        printf("INTERCOM_SWITCH_ERROR invalid_state\n");
+    } else {
+        printf("INTERCOM_SWITCH_ERROR unavailable\n");
+    }
+    return true;
+}
+
 static void serial_cli_task(void *arg)
 {
     (void)arg;
@@ -148,12 +282,47 @@ static void serial_cli_task(void *arg)
         started = false;
         ESP_LOGE(TAG, "could not allocate serial command buffer");
         vTaskDelete(NULL);
+        return;
     }
     printf("RTI_WIFI_READY\n");
     fflush(stdout);
 
     while (fgets(line, SERIAL_CLI_LINE_MAX, stdin) != NULL) {
-        if (strncmp(line, "RTI_WIFI_PING", strlen("RTI_WIFI_PING")) == 0) {
+        if (strchr(line, '\n') == NULL) {
+            int ch;
+            while ((ch = fgetc(stdin)) != '\n' && ch != EOF) { }
+            mbedtls_platform_zeroize(line, SERIAL_CLI_LINE_MAX);
+            printf("INTERCOM_ERROR command_too_long\n");
+            fflush(stdout);
+            continue;
+        }
+        if (handle_intercom_group_command(line)) {
+            fflush(stdout);
+            mbedtls_platform_zeroize(line, SERIAL_CLI_LINE_MAX);
+            continue;
+        }
+        line[strcspn(line, "\r\n")] = '\0';
+        if (strncmp(line, "INTERCOM_CONFIG_SET ", strlen("INTERCOM_CONFIG_SET ")) == 0) {
+            handle_intercom_config(line + strlen("INTERCOM_CONFIG_SET "));
+        } else if (strcmp(line, "INTERCOM_CONFIG_STATUS") == 0) {
+            printf("INTERCOM_CONFIG_STATUS %d\n", group_config_ready() ? 1 : 0);
+        } else if (strncmp(line, "INTERCOM_TIME_SET ", strlen("INTERCOM_TIME_SET ")) == 0) {
+            handle_intercom_time(line + strlen("INTERCOM_TIME_SET "));
+        } else if (strcmp(line, "INTERCOM_START") == 0) {
+            group_controller_action(false, NULL);
+            printf("INTERCOM_START_REQUESTED\n");
+        } else if (strcmp(line, "INTERCOM_STOP") == 0) {
+            group_controller_action(true, NULL);
+            printf("INTERCOM_STOP_REQUESTED\n");
+        } else if (strcmp(line, "INTERCOM_PTT_DOWN") == 0) {
+            group_controller_ptt(true, NULL);
+            printf("INTERCOM_PTT_DOWN_REQUESTED\n");
+        } else if (strcmp(line, "INTERCOM_PTT_UP") == 0) {
+            group_controller_ptt(false, NULL);
+            printf("INTERCOM_PTT_UP_REQUESTED\n");
+        } else if (strcmp(line, "INTERCOM_STATUS") == 0) {
+            group_controller_print_status();
+        } else if (strncmp(line, "RTI_WIFI_PING", strlen("RTI_WIFI_PING")) == 0) {
             printf("RTI_WIFI_PONG\n");
             fflush(stdout);
         } else if (strncmp(line, "RTI_WIFI_SCAN", strlen("RTI_WIFI_SCAN")) == 0) {
@@ -176,11 +345,15 @@ static void serial_cli_task(void *arg)
         } else if (strncmp(line, "RTI_DEVICE_RESTART", strlen("RTI_DEVICE_RESTART")) == 0) {
             printf("RTI_DEVICE_RESTARTING\n");
             fflush(stdout);
+            mbedtls_platform_zeroize(line, SERIAL_CLI_LINE_MAX);
             vTaskDelay(pdMS_TO_TICKS(100));
             esp_restart();
         }
+        fflush(stdout);
+        mbedtls_platform_zeroize(line, SERIAL_CLI_LINE_MAX);
     }
 
+    mbedtls_platform_zeroize(line, SERIAL_CLI_LINE_MAX);
     free(line);
     started = false;
     ESP_LOGW(TAG, "serial input closed");

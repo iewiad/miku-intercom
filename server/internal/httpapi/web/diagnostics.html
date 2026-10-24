@@ -6,7 +6,7 @@
 :root{font-family:system-ui,sans-serif;color:#172529;background:#f2f7f5}body{max-width:1120px;margin:auto;padding:28px}h1{font-size:28px}.warning{background:#fff4ce;border-left:5px solid #b78000;padding:16px;line-height:1.7}section,article{background:white;border:1px solid #d5e2dd;border-radius:12px;padding:18px;margin:16px 0}button,input,select{font:inherit;padding:10px;margin:5px;border-radius:7px;border:1px solid #a9beb4}button{background:#0b6855;color:white;cursor:pointer}button:disabled{opacity:.5;cursor:not-allowed}button[aria-pressed="true"]{background:#a83a27}#single-ptt{touch-action:none;user-select:none;min-height:64px;font-weight:700}[hidden]{display:none!important}label{display:inline-block}#terminals{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px}article{margin:0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}#status{font-weight:650}a{color:#075c4b}.pass{color:#087343}.fail{color:#b12626}table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:10px;border-bottom:1px solid #dde5e1}
 </style>
 <h1>声路同行 · 本机音频诊断</h1>
-<p class="warning">开发诊断，使用真实 WebRTC 编解码。自动矩阵仅使用合成音源；独立单端可显式选择系统麦克风。默认收听静音，避免同机回授；不录音，只保存聚合数值，本轮不作人工听测结论。测试身份独立，不读取产品身份；不使用板子或 RTA。自动矩阵是同页三个逻辑终端，不能称作三个独立浏览器。</p>
+<p class="warning">开发诊断，使用真实 WebRTC 编解码。自动矩阵仅使用合成音源；独立单端可显式选择系统麦克风。默认收听静音，避免同机回授；不录音，只保存聚合数值，本轮不作人工听测结论。测试身份独立，不读取产品身份；页面不控制板端或调用 RTA，同群板端的收发结果需另存证据。自动矩阵是同页三个逻辑终端，不能称作三个独立浏览器。</p>
 <section>
 <h2>三终端自动矩阵</h2>
 <button id="run-matrix">显式启用合成音源并运行三终端矩阵</button>

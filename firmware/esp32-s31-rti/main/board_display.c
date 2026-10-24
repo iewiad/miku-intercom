@@ -3,10 +3,12 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "bsp/esp-bsp.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
@@ -1667,4 +1669,591 @@ esp_err_t board_display_reset_transcript(void)
     render_conversation_timeline(true);
     bsp_display_unlock();
     return ESP_OK;
+}
+
+/* Group mode owns a bounded PSRAM copy of its choices. No controller-owned
+ * pointers or cJSON nodes survive a publication. Only the worker publishes;
+ * callbacks merely queue intent while the existing display lock is held. */
+typedef struct {
+    size_t count;
+    uint32_t generation;
+    bool known;
+    bool can_select;
+    bool switching;
+    char current_id[81];
+    board_group_item_t items[];
+} group_choices_t;
+
+static lv_obj_t *group_name_label;
+static lv_obj_t *group_detail_label;
+static lv_obj_t *group_status_label;
+static lv_obj_t *group_ptt_button;
+static lv_obj_t *group_ptt_label;
+static lv_obj_t *group_action_label;
+static lv_obj_t *group_volume_label;
+static lv_obj_t *group_dropdown;
+static lv_obj_t *group_switch_button;
+static lv_obj_t *group_switch_label;
+static board_conversation_action_cb_t group_action_callback;
+static board_ptt_action_cb_t group_ptt_callback;
+static board_group_switch_action_cb_t group_switch_callback;
+static board_volume_action_cb_t group_volume_callback;
+static void *group_context;
+static group_choices_t *group_choices;
+static char *group_choice_options;
+static bool group_choices_valid;
+static bool group_candidate_valid;
+static bool group_switch_pending;
+static uint32_t group_pending_generation;
+static bool group_connected;
+static bool group_transport_ready;
+static bool group_speaking;
+static bool group_pressed;
+static bool group_stop_action;
+
+static void group_cancel_ptt(void)
+{
+    if (group_pressed) {
+        group_pressed = false;
+        if (group_ptt_callback) {
+            group_ptt_callback(false, group_context);
+        }
+    }
+}
+
+static void group_force_release(void)
+{
+    group_pressed = false;
+    group_speaking = false;
+    /* USB and touch share the controller. Opening the selector must also
+     * cancel an externally initiated press which has no local touch flag. */
+    if (group_ptt_callback) {
+        group_ptt_callback(false, group_context);
+    }
+}
+
+static int group_current_index(void)
+{
+    if (!group_choices_valid || !group_choices || !group_choices->known) {
+        return -1;
+    }
+    for (size_t i = 0; i < group_choices->count; ++i) {
+        if (strcmp(group_choices->items[i].id, group_choices->current_id) == 0) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static bool group_is_switching(void)
+{
+    return group_switch_pending || (group_choices && group_choices->switching);
+}
+
+static bool group_can_choose(void)
+{
+    return group_choices_valid && group_choices && group_choices->known &&
+           group_choices->can_select && group_choices->count &&
+           group_stop_action && !group_is_switching();
+}
+
+static void group_render_controls(void)
+{
+    if (!group_ptt_button || !group_dropdown || !group_switch_button) {
+        return;
+    }
+    const bool selecting = lv_dropdown_is_open(group_dropdown);
+    const bool choosing = group_can_choose();
+    const uint32_t selected = lv_dropdown_get_selected(group_dropdown);
+    const bool different = group_candidate_valid && group_choices &&
+                           selected < group_choices->count &&
+                           strcmp(group_choices->items[selected].id, group_choices->current_id) != 0;
+    if (choosing) {
+        lv_obj_remove_state(group_dropdown, LV_STATE_DISABLED);
+    } else {
+        lv_obj_add_state(group_dropdown, LV_STATE_DISABLED);
+    }
+    if (choosing && different && !selecting && group_switch_callback) {
+        lv_obj_remove_state(group_switch_button, LV_STATE_DISABLED);
+    } else {
+        lv_obj_add_state(group_switch_button, LV_STATE_DISABLED);
+    }
+    lv_label_set_text(group_switch_label, group_is_switching() ? "切换中" : "切换群组");
+    group_connected = group_transport_ready && group_stop_action &&
+                      group_current_index() >= 0 && !group_is_switching() && !selecting;
+    if (!group_connected) {
+        group_cancel_ptt();
+        lv_obj_add_state(group_ptt_button, LV_STATE_DISABLED);
+    } else {
+        lv_obj_remove_state(group_ptt_button, LV_STATE_DISABLED);
+    }
+    lv_label_set_text(group_status_label,
+                      group_is_switching() ? "正在切换群组" :
+                      !group_stop_action ? "已停止" :
+                      !group_connected ? "群音频尚未就绪" :
+                      group_speaking ? "持有麦权，正在发言" : "群语音已就绪");
+    lv_label_set_text(group_ptt_label,
+                      group_is_switching() ? "切换完成后可发言" :
+                      !group_connected ? "连接后可发言" :
+                      group_speaking ? "松手停止发言" :
+                      group_pressed ? "正在申请麦权" : "按住说话");
+}
+
+static void group_render_current(void)
+{
+    const int current = group_current_index();
+    if (current >= 0) {
+        char text[176];
+        snprintf(text, sizeof(text), "当前群：%s", group_choices->items[current].name);
+        lv_label_set_text(group_name_label, text);
+    } else if (!group_choices_valid || !group_choices || !group_choices->known) {
+        lv_label_set_text(group_name_label, "当前群：尚未同步");
+    } else if (!group_choices->count) {
+        lv_label_set_text(group_name_label, "尚未加入群组");
+    } else if (!group_choices->current_id[0]) {
+        lv_label_set_text(group_name_label, "尚未选择当前群");
+    } else {
+        lv_label_set_text(group_name_label, "当前群待确认，请等待同步");
+    }
+}
+
+static void group_ptt_event_cb(lv_event_t *event)
+{
+    const lv_event_code_t code = lv_event_get_code(event);
+    if (code == LV_EVENT_PRESSED && group_connected && !group_pressed) {
+        group_pressed = true;
+        lv_label_set_text(group_ptt_label, "正在申请麦权");
+        if (group_ptt_callback) {
+            group_ptt_callback(true, group_context);
+        }
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST || code == LV_EVENT_DELETE) {
+        group_cancel_ptt();
+        if (code == LV_EVENT_DELETE) {
+            group_ptt_button = NULL;
+            group_ptt_label = NULL;
+            group_name_label = NULL;
+            group_detail_label = NULL;
+            group_status_label = NULL;
+            group_action_label = NULL;
+            group_volume_label = NULL;
+            group_connected = false;
+            group_transport_ready = false;
+        } else {
+            group_render_controls();
+        }
+    }
+}
+
+static void group_dropdown_event_cb(lv_event_t *event)
+{
+    const lv_event_code_t code = lv_event_get_code(event);
+    if (code == LV_EVENT_DELETE) {
+        /* Detach both static string users before freeing the PSRAM storage. */
+        lv_obj_t *list = lv_dropdown_get_list(group_dropdown);
+        if (list && lv_obj_get_child_count(list)) {
+            lv_label_set_text_static(lv_obj_get_child(list, 0), "");
+        }
+        lv_dropdown_set_options_static(group_dropdown, "");
+        free(group_choice_options);
+        free(group_choices);
+        group_choice_options = NULL;
+        group_choices = NULL;
+        group_dropdown = NULL;
+        group_switch_button = NULL;
+        group_switch_label = NULL;
+        group_choices_valid = false;
+        group_candidate_valid = false;
+        group_switch_pending = false;
+        return;
+    }
+    if (code == LV_EVENT_READY) {
+        group_force_release();
+    } else if (code == LV_EVENT_VALUE_CHANGED) {
+        const uint32_t selected = lv_dropdown_get_selected(group_dropdown);
+        group_candidate_valid = group_choices_valid && group_choices &&
+                                selected < group_choices->count;
+        lv_dropdown_set_text_static(group_dropdown, NULL);
+    }
+    if (code == LV_EVENT_READY || code == LV_EVENT_CANCEL || code == LV_EVENT_VALUE_CHANGED) {
+        group_render_controls();
+    }
+}
+
+static void group_screen_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) == LV_EVENT_SCREEN_UNLOAD_START) {
+        group_force_release();
+        group_transport_ready = false;
+        if (group_dropdown) {
+            lv_dropdown_close(group_dropdown);
+        }
+        group_render_controls();
+    }
+}
+
+static void group_action_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_RELEASED) {
+        return;
+    }
+    group_force_release();
+    const bool stop = group_stop_action;
+    group_stop_action = !stop;
+    group_transport_ready = false;
+    if (stop) {
+        group_switch_pending = false;
+    }
+    lv_dropdown_close(group_dropdown);
+    group_render_controls();
+    lv_label_set_text(group_action_label, group_stop_action ? "停止连接" : "连接群语音");
+    if (group_action_callback) {
+        group_action_callback(stop, group_context);
+    }
+}
+
+static void group_switch_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || !group_can_choose() ||
+        !group_candidate_valid || !group_switch_callback) {
+        return;
+    }
+    const uint32_t selected = lv_dropdown_get_selected(group_dropdown);
+    if (selected >= group_choices->count ||
+        strcmp(group_choices->items[selected].id, group_choices->current_id) == 0) {
+        return;
+    }
+    group_force_release();
+    const esp_err_t err = group_switch_callback(group_choices->items[selected].id,
+                                               group_choices->generation, group_context);
+    if (err == ESP_OK) {
+        group_switch_pending = true;
+        group_pending_generation = group_choices->generation;
+        group_transport_ready = false;
+        lv_label_set_text(group_detail_label, "正在请求切换群组");
+    } else {
+        lv_label_set_text(group_detail_label,
+                          err == ESP_ERR_INVALID_STATE ? "状态已变化，请重新选择群组" :
+                          err == ESP_ERR_NO_MEM ? "切换申请未提交：内存不足" :
+                          "无法提交切换，请稍后重试");
+    }
+    group_render_controls();
+}
+
+static void group_volume_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_VALUE_CHANGED) {
+        return;
+    }
+    const uint8_t value = (uint8_t)lv_slider_get_value(lv_event_get_target_obj(event));
+    char text[48];
+    snprintf(text, sizeof(text), value ? "收听音量 %u%%" : "收听已静音 %u%%", (unsigned)value);
+    lv_label_set_text(group_volume_label, text);
+    if (group_volume_callback) {
+        group_volume_callback(value, false, group_context);
+    }
+}
+
+static lv_obj_t *group_label(lv_obj_t *parent, const char *text, int x, int y, int width, uint32_t color)
+{
+    lv_obj_t *label = lv_label_create(parent);
+    lv_label_set_text(label, text);
+    lv_obj_set_pos(label, x, y);
+    lv_obj_set_width(label, width);
+    lv_obj_set_style_text_font(label, TRANSCRIPT_FONT, 0);
+    lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
+    return label;
+}
+
+esp_err_t board_display_show_group(board_conversation_action_cb_t startstop,
+                                   board_ptt_action_cb_t ptt,
+                                   board_group_switch_action_cb_t switch_group,
+                                   board_volume_action_cb_t volume,
+                                   uint8_t initial_volume,
+                                   void *context)
+{
+    if (!bsp_display_lock(1000)) {
+        return ESP_ERR_TIMEOUT;
+    }
+    group_cancel_ptt();
+    lv_obj_t *screen = lv_screen_active();
+    lv_obj_clean(screen);
+    lv_obj_remove_event_cb(screen, group_screen_event_cb);
+    lv_obj_add_event_cb(screen, group_screen_event_cb, LV_EVENT_SCREEN_UNLOAD_START, NULL);
+    group_action_callback = startstop;
+    group_ptt_callback = ptt;
+    group_switch_callback = switch_group;
+    group_volume_callback = volume;
+    group_context = context;
+    group_connected = false;
+    group_transport_ready = false;
+    group_speaking = false;
+    group_pressed = false;
+    group_stop_action = false;
+    lv_obj_set_style_bg_color(screen, lv_color_hex(0x071018), 0);
+    lv_obj_set_style_bg_grad_dir(screen, LV_GRAD_DIR_NONE, 0);
+    lv_obj_t *brand = group_label(screen, APP_DISPLAY_NAME, 28, 22, 420, 0xF4FAFC);
+    lv_obj_set_style_text_font(brand, &shenglu_brand_24, 0);
+    group_name_label = group_label(screen, "当前群：尚未同步", 28, 70, 744, 0xF4FAFC);
+    lv_label_set_long_mode(group_name_label, LV_LABEL_LONG_MODE_DOTS);
+    group_dropdown = lv_dropdown_create(screen);
+    lv_obj_set_pos(group_dropdown, 28, 108);
+    lv_obj_set_size(group_dropdown, 568, 52);
+    lv_obj_set_style_text_font(group_dropdown, TRANSCRIPT_FONT, LV_PART_MAIN);
+    lv_obj_set_style_text_font(group_dropdown, TRANSCRIPT_FONT, LV_PART_SELECTED);
+    lv_obj_set_style_text_color(group_dropdown, lv_color_hex(0xF4FAFC), 0);
+    lv_obj_set_style_bg_color(group_dropdown, lv_color_hex(0x152934), 0);
+    lv_dropdown_set_symbol(group_dropdown, "v");
+    lv_dropdown_set_options_static(group_dropdown, "群列表尚未同步");
+    lv_dropdown_set_text_static(group_dropdown, "群列表尚未同步");
+    lv_obj_add_state(group_dropdown, LV_STATE_DISABLED);
+    lv_obj_t *list = lv_dropdown_get_list(group_dropdown);
+    lv_obj_set_style_text_font(list, TRANSCRIPT_FONT, 0);
+    lv_obj_set_style_text_line_space(list, 22, 0);
+    lv_obj_set_style_max_height(list, 220, 0);
+    lv_obj_set_style_bg_color(list, lv_color_hex(0x152934), 0);
+    lv_obj_set_style_text_color(list, lv_color_hex(0xF4FAFC), 0);
+    lv_obj_set_style_bg_color(list, lv_color_hex(0x245675), LV_PART_SELECTED);
+    lv_obj_add_event_cb(group_dropdown, group_dropdown_event_cb, LV_EVENT_ALL, NULL);
+    group_switch_button = lv_button_create(screen);
+    lv_obj_set_pos(group_switch_button, 612, 108);
+    lv_obj_set_size(group_switch_button, 160, 52);
+    lv_obj_set_style_bg_color(group_switch_button, lv_color_hex(0x245675), 0);
+    lv_obj_add_state(group_switch_button, LV_STATE_DISABLED);
+    lv_obj_add_event_cb(group_switch_button, group_switch_event_cb, LV_EVENT_CLICKED, NULL);
+    group_switch_label = group_label(group_switch_button, "切换群组", 0, 0, 140, 0xFFFFFF);
+    lv_obj_set_style_text_align(group_switch_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(group_switch_label);
+    group_status_label = group_label(screen, "已停止", 28, 176, 744, 0x49E5C2);
+    group_detail_label = group_label(screen, "等待 USB 配置后连接群语音", 28, 208, 744, 0xAABCC7);
+    lv_obj_set_height(group_detail_label, 42);
+    lv_label_set_long_mode(group_detail_label, LV_LABEL_LONG_MODE_WRAP);
+
+    lv_obj_t *action = lv_button_create(screen);
+    lv_obj_set_pos(action, 28, 268);
+    lv_obj_set_size(action, 218, 78);
+    lv_obj_set_style_bg_color(action, lv_color_hex(0x245675), 0);
+    lv_obj_add_event_cb(action, group_action_event_cb, LV_EVENT_RELEASED, NULL);
+    group_action_label = group_label(action, "连接群语音", 0, 0, 190, 0xFFFFFF);
+    lv_obj_set_style_text_align(group_action_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(group_action_label);
+    group_ptt_button = lv_button_create(screen);
+    lv_obj_set_pos(group_ptt_button, 270, 268);
+    lv_obj_set_size(group_ptt_button, 502, 78);
+    lv_obj_set_style_bg_color(group_ptt_button, lv_color_hex(0x148A75), 0);
+    lv_obj_add_state(group_ptt_button, LV_STATE_DISABLED);
+    lv_obj_add_event_cb(group_ptt_button, group_ptt_event_cb, LV_EVENT_ALL, NULL);
+    group_ptt_label = group_label(group_ptt_button, "连接后可发言", 0, 0, 470, 0xFFFFFF);
+    lv_obj_set_style_text_align(group_ptt_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(group_ptt_label);
+
+    const uint8_t level = initial_volume <= 100 ? initial_volume : 0;
+    char volume_text[48];
+    snprintf(volume_text, sizeof(volume_text), level ? "收听音量 %u%%" : "收听已静音 %u%%", (unsigned)level);
+    group_volume_label = group_label(screen, volume_text, 28, 378, 230, 0xAABCC7);
+    lv_obj_t *slider = lv_slider_create(screen);
+    lv_obj_set_pos(slider, 270, 386);
+    lv_obj_set_size(slider, 480, 16);
+    lv_slider_set_range(slider, 0, 100);
+    lv_slider_set_value(slider, level, LV_ANIM_OFF);
+    lv_obj_add_event_cb(slider, group_volume_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    group_label(screen, "先选择群组，再点击切换；松手停止发言", 28, 435, 744, 0x6F8998);
+    bsp_display_unlock();
+    if (volume) {
+        volume(level, false, context);
+    }
+    return ESP_OK;
+}
+
+esp_err_t board_display_set_group_state(const char *group, const char *detail,
+                                        bool connected, bool speaking)
+{
+    (void)group; /* The choices publication supplies the authoritative ID/name. */
+    if (!bsp_display_lock(1000)) {
+        return ESP_ERR_TIMEOUT;
+    }
+    if (!group_ptt_button || !group_status_label || !group_name_label || !group_detail_label) {
+        bsp_display_unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
+    group_transport_ready = connected;
+    group_speaking = speaking;
+    group_render_current();
+    lv_label_set_text(group_detail_label, group_switch_pending ? "正在请求切换群组" : detail ? detail : "");
+    group_render_controls();
+    lv_label_set_text(group_action_label, group_stop_action ? "停止连接" : "连接群语音");
+    bsp_display_unlock();
+    return ESP_OK;
+}
+
+esp_err_t board_display_set_group_active(bool active)
+{
+    if (!bsp_display_lock(1000)) {
+        return ESP_ERR_TIMEOUT;
+    }
+    if (!group_ptt_button || !group_action_label) {
+        bsp_display_unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
+    group_stop_action = active;
+    if (!active) {
+        group_force_release();
+        group_transport_ready = false;
+        group_switch_pending = false;
+        lv_dropdown_close(group_dropdown);
+    }
+    group_render_controls();
+    lv_label_set_text(group_action_label, active ? "停止连接" : "连接群语音");
+    bsp_display_unlock();
+    return ESP_OK;
+}
+
+static bool group_valid_text(const char *text, size_t capacity, bool empty)
+{
+    if (!text) {
+        return false;
+    }
+    const size_t size = strnlen(text, capacity);
+    if (size >= capacity || (!empty && !size)) {
+        return false;
+    }
+    for (size_t i = 0; i < size; ++i) {
+        const unsigned char c = (unsigned char)text[i];
+        if (c < 0x20 || c == 0x7f) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static esp_err_t group_choices_error(esp_err_t err, const char *message)
+{
+    group_choices_valid = false;
+    group_candidate_valid = false;
+    group_force_release();
+    lv_dropdown_close(group_dropdown);
+    lv_dropdown_set_text_static(group_dropdown, "群列表不可用");
+    lv_label_set_text(group_detail_label, message);
+    group_render_current();
+    group_render_controls();
+    return err;
+}
+
+esp_err_t board_display_set_group_choices(const board_group_item_t *items,
+                                          size_t count,
+                                          const char *current_group_id,
+                                          uint32_t view_generation,
+                                          bool known,
+                                          bool can_select,
+                                          bool switching)
+{
+    if (!bsp_display_lock(1000)) {
+        return ESP_ERR_TIMEOUT;
+    }
+    if (!group_dropdown || !group_ptt_button) {
+        bsp_display_unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
+    esp_err_t err = ESP_OK;
+    if (count > BOARD_GROUP_CHOICES_MAX) {
+        err = group_choices_error(ESP_ERR_INVALID_SIZE, "已加入群超过128个，无法选择");
+        goto done;
+    }
+    if ((count && !items) || !group_valid_text(current_group_id, 81, true)) {
+        err = group_choices_error(ESP_ERR_INVALID_ARG, "群列表无效，请重新同步");
+        goto done;
+    }
+    size_t options_size = 1;
+    for (size_t i = 0; i < count; ++i) {
+        if (!group_valid_text(items[i].id, sizeof(items[i].id), false) ||
+            !group_valid_text(items[i].name, sizeof(items[i].name), false)) {
+            err = group_choices_error(ESP_ERR_INVALID_ARG, "群列表无效，请重新同步");
+            goto done;
+        }
+        for (size_t j = 0; j < i; ++j) {
+            if (strcmp(items[i].id, items[j].id) == 0) {
+                err = group_choices_error(ESP_ERR_INVALID_ARG, "群列表重复，请重新同步");
+                goto done;
+            }
+        }
+        options_size += strlen(items[i].name) + (i != 0);
+    }
+    bool content_changed = !group_choices || group_choices->count != count ||
+                           strcmp(group_choices->current_id, current_group_id) != 0;
+    for (size_t i = 0; !content_changed && i < count; ++i) {
+        content_changed = strcmp(group_choices->items[i].id, items[i].id) != 0 ||
+                          strcmp(group_choices->items[i].name, items[i].name) != 0;
+    }
+    const bool generation_changed = !group_choices || group_choices->generation != view_generation;
+    const bool was_switching = group_is_switching();
+    const bool pending_completed = was_switching && !switching &&
+                                   (!group_switch_pending || content_changed || generation_changed);
+    const bool known_changed = !group_choices || group_choices->known != known;
+    const bool reset_candidate = content_changed || generation_changed || pending_completed ||
+                                 known_changed || !group_choices_valid;
+    if (content_changed) {
+        group_choices_t *replacement = heap_caps_calloc(1, sizeof(*replacement) + count * sizeof(*items),
+                                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        char *options = count ? heap_caps_malloc(options_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : NULL;
+        if (!replacement || (count && !options)) {
+            free(replacement);
+            free(options);
+            err = group_choices_error(ESP_ERR_NO_MEM, "群列表内存不足，请稍后重试");
+            goto done;
+        }
+        replacement->count = count;
+        strlcpy(replacement->current_id, current_group_id, sizeof(replacement->current_id));
+        if (count) {
+            memcpy(replacement->items, items, count * sizeof(*items));
+            char *cursor = options;
+            for (size_t i = 0; i < count; ++i) {
+                if (i) {
+                    *cursor++ = '\n';
+                }
+                const size_t length = strlen(items[i].name);
+                memcpy(cursor, items[i].name, length);
+                cursor += length;
+            }
+            *cursor = 0;
+        }
+        lv_dropdown_close(group_dropdown);
+        lv_obj_t *list = lv_dropdown_get_list(group_dropdown);
+        if (list && lv_obj_get_child_count(list)) {
+            lv_label_set_text_static(lv_obj_get_child(list, 0), "");
+        }
+        lv_dropdown_set_options_static(group_dropdown, count ? options : "尚未加入群组");
+        free(group_choice_options);
+        free(group_choices);
+        group_choice_options = options;
+        group_choices = replacement;
+    }
+    if (group_switch_pending && (switching || content_changed || view_generation != group_pending_generation)) {
+        group_switch_pending = false;
+    }
+    group_choices->generation = view_generation;
+    group_choices->known = known;
+    group_choices->can_select = can_select;
+    group_choices->switching = switching;
+    group_choices_valid = true;
+    if (reset_candidate) {
+        const int current = group_current_index();
+        group_candidate_valid = current >= 0;
+        lv_dropdown_set_selected(group_dropdown, current >= 0 ? (uint32_t)current : 0);
+    }
+    if (!known) {
+        lv_dropdown_set_text_static(group_dropdown, "群列表尚未同步");
+    } else if (!count) {
+        lv_dropdown_set_text_static(group_dropdown, "尚未加入群组");
+    } else if (!group_candidate_valid) {
+        lv_dropdown_set_text_static(group_dropdown, "请选择已加入群组");
+    } else {
+        lv_dropdown_set_text_static(group_dropdown, NULL);
+    }
+    if (!group_can_choose()) {
+        lv_dropdown_close(group_dropdown);
+    }
+    group_render_current();
+    group_render_controls();
+done:
+    bsp_display_unlock();
+    return err;
 }

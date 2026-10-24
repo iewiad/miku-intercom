@@ -1,5 +1,13 @@
 menu "Miku RTI device"
 
+config MIKU_INTERCOM_DEFAULT_MODE
+    bool "Boot into Shenglu group intercom mode"
+    default y
+    help
+        Wait for private USB intercom configuration and an explicit start.
+        Disable to use the original one-to-one RTA application and credentials.
+
+
 config MIKU_RTI_DEVICE_API_BASE_URL
     string "RTI device API base URL"
     default "https://miku-rtic.qiniuapi.com"

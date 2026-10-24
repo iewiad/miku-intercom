@@ -4,11 +4,11 @@
 
 首版目标：快速建群与口令入群、按住说话、按群名语音切换、断线后可信恢复。根据需求推荐协作群为增强项。普通群音频由独立对讲服务转发，RTA 只用于主动触发的语音指令。
 
-S1 群控制面与 S2 浏览器 WebRTC 群音频已合入 main（[PR #6](https://github.com/iewiad/miku-intercom/pull/6)）。真实系统麦克风采集与传输已有数值验证，诊断扩展及证据见 [PR #7](https://github.com/iewiad/miku-intercom/pull/7)（已合并）；人工听测待完成。板端群接入、主动语音切群与需求推荐仍是后续切片。实际验证以[验收记录](docs/acceptance.md)及对应 PR 为准。
+S1 群控制面与 S2 浏览器 WebRTC 群音频已合入 main（[PR #6](https://github.com/iewiad/miku-intercom/pull/6)）。真实系统麦克风采集与传输已有数值验证，诊断扩展及证据已随 [PR #7](https://github.com/iewiad/miku-intercom/pull/7) 合并；人工听测待完成。S3 首切片已随 [PR #10](https://github.com/iewiad/miku-intercom/pull/10) 合并，验证一板一浏览器的真实麦克风双向传输、松手停发及服务重启恢复。PR #11 已合并板端已加入群切换，已完成三群隔离、十次连续切换及待确认操作跨软重启恢复；人工听测、板端口令键盘、主动语音切群与需求推荐仍待完成。实际验证以[验收记录](docs/acceptance.md)及对应 PR 为准。
 
 ## 系统架构
 
-实线为当前浏览器实现，虚线为后续群接入。控制面和媒体面在同一个 Go 进程中，通过权威状态配合工作。
+实线为当前浏览器及本分支板端实现，虚线为后续语音指令接入。控制面和媒体面在同一个 Go 进程中，通过权威状态配合工作。
 
 ```mermaid
 flowchart LR
@@ -27,20 +27,20 @@ flowchart LR
     B <-->|同源 HTTP · 控制与信令| C
     A <-->|WebRTC · Opus| M
     B <-->|WebRTC · Opus| M
-    subgraph Next[后续群接入]
+    subgraph Device[板端与后续语音指令]
         E[ESP32 终端]
         R[RTA · 主动语音指令]
     end
-    E -.->|控制请求| C
-    E -.->|群音频| M
+    E -->|指定 LAN IP · HTTPS 控制 API| C
+    E -->|WebRTC Opus · S3| M
     E <-.->|语音与最终转写| R
 ```
 
-普通群音频经媒体面转发给同群其他成员，控制面是身份、当前群与麦权的唯一授权来源。源包入队与目标写出前都重新校验权限；麦权与 Peer 只保存在内存，服务重启后清空。RTA 群指令集成待实现；复用固件此前的一对一 RTA 验收见验收记录。当前部署范围为 localhost，局域网、公网与板端兼容后续验证。
+普通群音频经媒体面转发给同群其他成员，控制面是身份、当前群与麦权的唯一授权来源。源包入队与目标写出前都重新校验权限；麦权与 Peer 只保存在内存，服务重启后清空。RTA 群指令集成待实现；复用固件此前的一对一 RTA 验收见验收记录。默认部署保持 localhost；S3 通过完整显式参数开放指定 LAN IP 的设备 HTTPS 与 UDP 入口，配置见[开发指南](docs/development.md#s3-板端-lan-开发入口)。板端实际证据单独记录，不外推到公网。
 
 ## 连接与发言状态
 
-### 音频连接
+### 浏览器音频连接
 
 用户显式启用后才请求麦克风。Peer 已连接、远端播放已启动且绑定仍有效，才进入媒体就绪；它还不代表已经获权讲话。
 
@@ -99,13 +99,16 @@ stateDiagram-v2
 ```mermaid
 sequenceDiagram
     actor U as 用户
-    participant B as 浏览器
+    participant B as 终端（浏览器或板端）
     participant C as Go 控制面
     participant M as Go 媒体面
 
     U->>B: 选择目标群
-    B->>B: 同步停发，停止采集并解绑播放
+    B->>B: 同步停发，暂停旧群接收与播放
     B->>M: 关闭旧 Peer
+    opt 板端
+        B->>B: NVS 保存固定操作，重启后继续确认
+    end
     B->>C: PUT /current-group（目标群 / operation_id / expected_version）
     C->>C: 校验权限与版本，原子保存操作终态
     Note over C,M: 成功切群使旧绑定与麦权失效
@@ -123,15 +126,21 @@ sequenceDiagram
         B->>C: 必要时 GET /state
         C-->>B: 当前权威状态
     end
-    opt 用户已启用音频、页面可见且身份与控制状态已确认
+    opt 板端
+        B->>C: GET /state 获取最新当前群
+        B->>B: 清理待确认操作日志
+    end
+    opt 音频已启用且身份与控制已确认（浏览器还须可见）
         B->>B: 按权威当前群与版本创建新 Peer
         B->>M: 完整 ICE 的 offer / answer
         M-->>B: WebRTC 连接建立
-        B->>B: 播放已启动后媒体就绪，保持未按麦
+        B->>B: 媒体就绪，保持未按麦
     end
 ```
 
 结果未知时保持媒体关闭，并查询或重试同一操作；单次当前群快照不能代替操作终态。成功或拒绝后都以最新权威状态恢复，媒体连接失败时显示失败并保留重试入口。接口字段与完整异常语义见 [002](docs/specs/002-control-api.md) / [003](docs/specs/003-browser-media.md)。
+
+板端通过已加入群下拉列表和确认按钮执行切换，权威当前群单独显示。停止和软重启会保留待确认操作，恢复后保持未按麦。详情与状态图见 [005](docs/specs/005-device-multigroup.md)，实际范围见[多群验收](docs/acceptance.md#s3-板端多群切换)；板端口令键盘与语音切群后续接入。
 
 ## 从这里开始
 

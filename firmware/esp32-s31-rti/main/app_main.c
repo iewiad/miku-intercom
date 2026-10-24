@@ -9,6 +9,8 @@
 #include "freertos/FreeRTOS.h"
 #include "nvs_flash.h"
 #include "rti_controller.h"
+#include "group_config.h"
+#include "group_controller.h"
 #include "sdkconfig.h"
 #include "webrtc_peer.h"
 #include "wifi_manager.h"
@@ -17,21 +19,31 @@
 static const char *TAG = "miku_rti_s31";
 static board_audio_t board_audio;
 
-static esp_err_t enter_rti_after_wifi(void *context)
+static esp_err_t enter_voice_after_wifi(void *context)
 {
+#if CONFIG_MIKU_INTERCOM_DEFAULT_MODE
+    return group_controller_init((const board_audio_t *)context);
+#else
     return rti_controller_init((const board_audio_t *)context);
+#endif
 }
 
 void app_main(void)
 {
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
-    ESP_LOGI(TAG, "booting Miku RTI device on %d-core ESP32-S31", chip_info.cores);
+    ESP_LOGI(TAG, "booting Shenglu voice device on %d-core ESP32-S31", chip_info.cores);
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+#if CONFIG_MIKU_INTERCOM_DEFAULT_MODE
+        /* A group application update must not erase existing Wi-Fi/RTA data. */
+        ESP_LOGE(TAG, "NVS requires explicit repair; preserving all stored configuration");
+        return;
+#else
         ESP_ERROR_CHECK(nvs_flash_erase());
         err = nvs_flash_init();
+#endif
     }
     ESP_ERROR_CHECK(err);
 
@@ -55,13 +67,29 @@ void app_main(void)
 
     ESP_ERROR_CHECK(wifi_manager_init());
     ESP_ERROR_CHECK(wifi_serial_cli_start());
+#if CONFIG_MIKU_INTERCOM_DEFAULT_MODE
+    /* Group mode never starts the RTA application or writes its credentials.
+     * USB Wi-Fi provisioning remains available without a network UI here. */
+    ESP_ERROR_CHECK(board_audio_set_output_volume(&board_audio, 0, false));
+    ESP_ERROR_CHECK(group_controller_init(&board_audio));
+    if (!group_config_ready()) {
+        ESP_ERROR_CHECK(board_display_set_group_state(NULL, "等待 USB 配置群语音", false, false));
+    }
+    if (wifi_manager_has_saved_credentials()) {
+        err = wifi_manager_connect_saved();
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "group Wi-Fi connection unavailable; provision over USB");
+        }
+    }
+    return;
+#endif
     err = wifi_manager_has_saved_credentials()
               ? wifi_manager_connect_saved()
               : ESP_ERR_NOT_FOUND;
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "device needs Wi-Fi setup: %s", esp_err_to_name(err));
-        ESP_ERROR_CHECK(board_display_show_wifi_setup(enter_rti_after_wifi, &board_audio));
+        ESP_ERROR_CHECK(board_display_show_wifi_setup(enter_voice_after_wifi, &board_audio));
         return;
     }
-    ESP_ERROR_CHECK(rti_controller_init(&board_audio));
+    ESP_ERROR_CHECK(enter_voice_after_wifi(&board_audio));
 }
