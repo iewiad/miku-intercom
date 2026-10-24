@@ -208,6 +208,16 @@ func (p *Proxy) exchangeMethod(ctx context.Context, method, endpoint, token stri
 	return body, resp.StatusCode, nil
 }
 func (p *Proxy) Start(device, id string) error {
+	return p.start(device, id, false)
+}
+
+// StartText shares the original approved route, admission and durable cleanup.
+// Recommendation turns explicitly disable provider search at session creation.
+func (p *Proxy) StartText(device, id string) error {
+	return p.start(device, id, true)
+}
+
+func (p *Proxy) start(device, id string, text bool) error {
 	if !validID.MatchString(id) {
 		return fail(400, "invalid_request")
 	}
@@ -248,6 +258,10 @@ func (p *Proxy) Start(device, id string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
 	defer cancel()
 	payload := map[string]any{"app_id": p.config.AppID, "user_id": device, "client_id": device, "model_profile": p.config.ModelProfile, "role_profile": p.config.RoleProfile, "voice_profile": p.config.VoiceProfile, "scenario": "shenglu_voice_switch", "client_transport": "platform_rtc", "region": p.config.Region}
+	if text {
+		payload["enable_search"] = false
+		payload["scenario"] = "shenglu_group_recommendation"
+	}
 	body, status, e := p.exchange(ctx, p.base.String()+"/rtic/v1/realtime/sessions", p.config.Token, payload)
 	var created struct {
 		ID       string `json:"session_id"`
@@ -322,6 +336,14 @@ func (p *Proxy) Offer(ctx context.Context, device, id string, offer json.RawMess
 	return r.answer, nil
 }
 func (p *Proxy) Stop(device, id string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
+	defer cancel()
+	return p.StopContext(ctx, device, id)
+}
+
+// StopContext preserves the same terminal verification while letting a caller
+// bound several asynchronous stop checks by one overall cleanup deadline.
+func (p *Proxy) StopContext(ctx context.Context, device, id string) error {
 	if !validID.MatchString(id) {
 		return fail(400, "invalid_request")
 	}
@@ -344,8 +366,6 @@ func (p *Proxy) Stop(device, id string) error {
 	if r.session == "" {
 		return fail(503, "voice_cleanup_unconfirmed")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
-	defer cancel()
 	_, status, e := p.exchange(ctx, p.base.String()+"/rtic/v1/realtime/sessions/"+r.session+"/stop", p.config.Token, map[string]string{"reason": "voice_command_finished"})
 	if e != nil || status < 200 || status >= 300 {
 		r.phase = "stop_unconfirmed"

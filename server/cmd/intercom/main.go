@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/iewiad/miku-intercom/server/internal/lan"
 	"github.com/iewiad/miku-intercom/server/internal/media"
 	"github.com/iewiad/miku-intercom/server/internal/persist"
+	"github.com/iewiad/miku-intercom/server/internal/recommendmodel"
 	"github.com/iewiad/miku-intercom/server/internal/rta"
 )
 
@@ -27,6 +29,7 @@ func run() error {
 	deviceUDPMin := flag.Int("device-udp-min", 0, "device media minimum UDP port")
 	deviceUDPMax := flag.Int("device-udp-max", 0, "device media maximum UDP port")
 	voiceConfig := flag.String("voice-config", "", "opt-in private JSON RTA configuration; browser signalling stays local")
+	recommendationModel := flag.Bool("recommendation-model", false, "opt-in bounded text recommendation using the same approved voice-config route")
 	flag.Parse()
 	if err := validateBrowserAddress(*addr); err != nil {
 		return err
@@ -51,7 +54,22 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	service, err := control.New(snapshot, store, control.Options{})
+	var voice *rta.Proxy
+	if *voiceConfig != "" {
+		voice, err = rta.Load(*voiceConfig, *data+".voice.json")
+		if err != nil {
+			return err
+		}
+		defer voice.Close()
+	}
+	opts := control.Options{}
+	if *recommendationModel {
+		if voice == nil {
+			return errors.New("recommendation-model requires the existing private voice-config")
+		}
+		opts.Recommender = recommendmodel.New(voice)
+	}
+	service, err := control.New(snapshot, store, opts)
 	if err != nil {
 		return err
 	}
@@ -66,16 +84,6 @@ func run() error {
 		return err
 	}
 	defer hub.Close()
-	var voice *rta.Proxy
-	if *voiceConfig != "" {
-		voice, err = rta.Load(*voiceConfig, *data+".voice.json")
-		if err != nil {
-			return err
-		}
-	}
-	if voice != nil {
-		defer voice.Close()
-	}
 	browserServer := httpServer(*addr, httpapi.NewWithVoice(service, hub, voice))
 	var deviceServer *http.Server
 	if device != nil {

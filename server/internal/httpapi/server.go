@@ -170,7 +170,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	static := map[string]string{"/": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/audio.js": "audio.js", "/voice.js": "voice.js"}
+	static := map[string]string{"/": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/audio.js": "audio.js", "/voice.js": "voice.js", "/recommendation.js": "recommendation.js"}
 	if s.media != nil && s.media.DiagnosticsEnabled() {
 		static["/diagnostics"] = "diagnostics.html"
 		static["/diagnostics.js"] = "diagnostics.js"
@@ -187,7 +187,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, err)
 			return
 		}
-		typ := map[string]string{"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8", "audio.js": "text/javascript; charset=utf-8", "voice.js": "text/javascript; charset=utf-8", "diagnostics.html": "text/html; charset=utf-8", "diagnostics.js": "text/javascript; charset=utf-8", "lifecycle.js": "text/javascript; charset=utf-8"}[file]
+		typ := map[string]string{"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8", "audio.js": "text/javascript; charset=utf-8", "voice.js": "text/javascript; charset=utf-8", "recommendation.js": "text/javascript; charset=utf-8", "diagnostics.html": "text/html; charset=utf-8", "diagnostics.js": "text/javascript; charset=utf-8", "lifecycle.js": "text/javascript; charset=utf-8"}[file]
 		w.Header().Set("Content-Type", typ)
 		_, _ = w.Write(b)
 		return
@@ -197,8 +197,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1")
-	methods := map[string]string{"/devices": "POST", "/state": "GET", "/groups": "POST", "/memberships": "POST", "/current-group": "PUT", "/floor/acquire": "POST", "/floor/renew": "POST", "/floor/release": "POST", "/voice/resolve": "POST", "/voice": "GET", "/voice/sessions": "POST"}
+	methods := map[string]string{"/devices": "POST", "/state": "GET", "/groups": "POST", "/memberships": "POST", "/current-group": "PUT", "/floor/acquire": "POST", "/floor/renew": "POST", "/floor/release": "POST", "/voice/resolve": "POST", "/voice": "GET", "/voice/sessions": "POST", "/recommendations": "GET", "/recommendations/confirm": "PUT"}
 	method, ok := methods[path]
+	if path == "/recommendations" {
+		method = "GET, POST"
+		if r.Method == "GET" || r.Method == "POST" {
+			method = r.Method
+		}
+	}
 	if strings.HasPrefix(path, "/voice/sessions/") {
 		parts := strings.Split(strings.TrimPrefix(path, "/voice/sessions/"), "/")
 		if len(parts) == 2 && (parts[1] == "offer" || parts[1] == "stop") {
@@ -253,6 +259,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (s *Server) handle(w http.ResponseWriter, r *http.Request, path, id string) error {
+	if path == "/recommendations" || path == "/recommendations/confirm" {
+		if s.deviceHost != "" {
+			return invalid("not_found", "resource not found", 404)
+		}
+		return s.handleRecommendations(w, r, path, id)
+	}
 	if s.voice != nil && (path == "/voice/sessions" || path == "/media/peers") {
 		value, _ := s.voiceAdmissions.LoadOrStore(id, &sync.Mutex{})
 		gate := value.(*sync.Mutex)

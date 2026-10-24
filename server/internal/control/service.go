@@ -23,22 +23,24 @@ const LeaseDuration = 3 * time.Second
 const RequestProtection = 60 * time.Second
 
 type Service struct {
-	mediaPeers map[string]MediaBinding
-	mu         sync.Mutex
-	disk       diskState
-	saver      Saver
-	opts       Options
-	epoch      string
-	tokens     map[string]string
-	codes      map[string]string
-	floors     map[string]*lease
-	requests   map[string]map[string]*requestRecord
-	badCodes   map[string][]time.Time
+	mediaPeers         map[string]MediaBinding
+	mu                 sync.Mutex
+	disk               diskState
+	saver              Saver
+	opts               Options
+	epoch              string
+	tokens             map[string]string
+	codes              map[string]string
+	floors             map[string]*lease
+	requests           map[string]map[string]*requestRecord
+	badCodes           map[string][]time.Time
+	recommendations    map[string]map[string]*recommendationRecord
+	recommendationLast map[string]time.Time
 }
 
 func New(snapshot []byte, saver Saver, opts Options) (*Service, error) {
 	opts.defaults()
-	s := &Service{mediaPeers: map[string]MediaBinding{}, saver: saver, opts: opts, floors: map[string]*lease{}, requests: map[string]map[string]*requestRecord{}, badCodes: map[string][]time.Time{}}
+	s := &Service{mediaPeers: map[string]MediaBinding{}, saver: saver, opts: opts, floors: map[string]*lease{}, requests: map[string]map[string]*requestRecord{}, badCodes: map[string][]time.Time{}, recommendations: map[string]map[string]*recommendationRecord{}, recommendationLast: map[string]time.Time{}}
 	s.disk = diskState{FormatVersion: 1, Devices: map[string]*deviceRecord{}, Groups: map[string]*groupRecord{}}
 	if len(snapshot) > 0 {
 		if !utf8.Valid(snapshot) {
@@ -93,6 +95,9 @@ func (s *Service) validateDisk() error {
 			}
 		}
 		for opid, op := range d.Operations {
+			if (op.RecommendationID == "") != (op.RecommendationEpoch == "") || (op.RecommendationID != "" && (!validID(op.RecommendationID) || !validID(op.RecommendationEpoch))) {
+				return errors.New("invalid recommendation operation snapshot")
+			}
 			if !validID(opid) || opid != op.OperationID || (op.Status != "applied" && op.Status != "rejected") {
 				return errors.New("invalid operation snapshot")
 			}
@@ -358,6 +363,12 @@ func (s *Service) Switch(id string, req SwitchRequest) (Operation, State, error)
 	defer s.mu.Unlock()
 	now := s.opts.Now().UTC()
 	s.expire(now)
+	return s.switchLocked(id, req, now, "", "", "")
+}
+
+// switchLocked commits both the original switch and a recommendation consumption
+// as one durable terminal. The caller holds the sole control lock.
+func (s *Service) switchLocked(id string, req SwitchRequest, now time.Time, recommendationID, recommendationEpoch, rejection string) (Operation, State, error) {
 	d, err := s.identity(id)
 	if err != nil {
 		return Operation{}, State{}, err
@@ -366,7 +377,7 @@ func (s *Service) Switch(id string, req SwitchRequest) (Operation, State, error)
 		return Operation{}, State{}, fail(400, "invalid_request", "valid operation_id and group_id required")
 	}
 	if op, ok := d.Operations[req.OperationID]; ok {
-		if op.GroupID != req.GroupID || op.ExpectedVersion != req.ExpectedVersion {
+		if op.GroupID != req.GroupID || op.ExpectedVersion != req.ExpectedVersion || op.RecommendationID != recommendationID || op.RecommendationEpoch != recommendationEpoch {
 			return Operation{}, State{}, fail(409, "operation_conflict", "operation_id was used with a different payload")
 		}
 		return op, s.state(id, now), nil
@@ -376,8 +387,11 @@ func (s *Service) Switch(id string, req SwitchRequest) (Operation, State, error)
 	}
 	next := s.clone()
 	nd := next.Devices[id]
-	op := Operation{OperationID: req.OperationID, GroupID: req.GroupID, ExpectedVersion: req.ExpectedVersion, Status: "applied"}
+	op := Operation{OperationID: req.OperationID, GroupID: req.GroupID, ExpectedVersion: req.ExpectedVersion, Status: "applied", RecommendationID: recommendationID, RecommendationEpoch: recommendationEpoch}
 	switch {
+	case rejection != "":
+		op.Status = "rejected"
+		op.ErrorCode = rejection
 	case req.ExpectedVersion != d.CurrentVersion:
 		op.Status = "rejected"
 		op.ErrorCode = "version_conflict"

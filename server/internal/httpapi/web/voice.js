@@ -42,7 +42,7 @@ export class VoiceCommandClient {
   }
   currentSession(s){return this.current===s && s.generation===this.generation && !s.finishing;}
   async start(){
-    if(this.blocking || !this.available || !this.control.allowed() || !this.control.connected || this.control.pendingSwitch || this.control.mutationBusy || !this.control.state?.current_group_id)return;
+    if(this.blocking || !this.available || !this.control.allowed() || !this.control.connected || this.control.uiBlocked || this.control.recommendation?.blocking || this.control.pendingSwitch || this.control.mutationBusy || !this.control.state?.current_group_id)return;
     const s={id:this.random(),request:this.scopeRequest(),generation:++this.generation,createRequested:false,submitted:false,accepted:false};
     this.current=s;this.phase='preparing';this.message='正在关闭群音频，准备语音指令。';
     this.control.cancelFloor();this.audio.suspend('语音指令期间群音频暂停，结束后恢复。');this.emit();
