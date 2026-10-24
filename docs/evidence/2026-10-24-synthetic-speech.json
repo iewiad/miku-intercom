@@ -37,7 +37,7 @@
     "raw_environment_audio_saved": false
   },
   "full_phrase_retest": {
-    "status": "human_complete_phrase_confirmed, latest source reports pending",
+    "status": "human_complete_phrase_confirmed; final browser closeout exports collected separately",
     "source_a_to_board_complete_phrase": true,
     "source_b_to_board_complete_phrase": true,
     "foreground_instruction_seconds": 8,
@@ -55,7 +55,7 @@
     "b_to_a_headphone_human_complete_phrase": true,
     "board_audio_stopped_during_b_to_a_control": true,
     "external_acoustic_source_played_during_control": false,
-    "latest_receiver_report": "not required for human listening result; pending final collection"
+    "latest_receiver_report": "collected in cleanup.browser_closeout; human listening remains a separate user confirmation"
   },
   "board_to_two_browsers": {
     "status": "A and B individually passed near-microphone human listening on current gain image",
@@ -68,7 +68,7 @@
       "http_failures": 0,
       "source_pcm_peak_is_cumulative": true,
       "known_phrase_captured_by_board_confirmed": false,
-      "receiver_a_latest_report": "pending",
+      "receiver_a_latest_report": "initial failed attempt not isolated by final export; final browser closeout recorded separately in cleanup.browser_closeout",
       "receiver_a_baseline": {
         "report_sha256": "fd5be6c729d04cc35e6a88a55b0584793207afde0c0de9c52656156f12490e87",
         "finished_at": "2026-10-24T14:16:37.131Z",
@@ -308,7 +308,92 @@
     "http_failures": 1,
     "board_audio_stopped_after_test": true,
     "http_failure_scope": "one failure observed during final restoration; normal operation converged to original group/version 21 and audio stopped",
-    "browser_close_reports": "pending user export after stop"
+    "browser_close_reports": "passed; both user-exported final close reports verified on 2026-10-25 Asia/Shanghai",
+    "browser_closeout": {
+      "status": "passed",
+      "verified_local_date": "2026-10-25",
+      "method": "user stopped each original diagnostic page and exported its in-memory report; original files retained privately, only whitelisted summary committed",
+      "browser_assets": "previously loaded af6111b diagnostic pages; no new progress-UI manual acceptance",
+      "reports": [
+        {
+          "terminal": "单端A",
+          "report_filename": "shenglu-audio-1792858824317.json",
+          "report_sha256": "8adae0bcf9d9a136f8a337de03769c78c2fc2acdfac581bb8ff071f65378004e",
+          "report_bytes": 144760,
+          "schema": "shenglu.browser-audio-diagnostic.v1",
+          "mode": "single-independent-window",
+          "source_kind": "synthetic_speech",
+          "report_status": "observations-only",
+          "report_human_listening": "not_performed",
+          "finished_at": "2026-10-24T16:20:22.070Z",
+          "finished_at_local": "2026-10-25T00:20:22.070000+08:00",
+          "created_peers": 9,
+          "open_peers": 0,
+          "capture": {
+            "track_state": "none",
+            "enabled": false
+          },
+          "final_lifecycle": {
+            "event_type": "disabled-closed",
+            "at": "2026-10-24T16:20:22.068Z",
+            "phase": "disabled",
+            "desired": false,
+            "pressed": false,
+            "floor_phase": "idle",
+            "peer": null,
+            "capture": null,
+            "open_peers": 0,
+            "output_attached": false
+          },
+          "lifecycle_events_retained": 128,
+          "lifecycle_events_dropped": 38,
+          "active_ptt_windows": 0,
+          "before_explicit_disable": "already waiting with no current Peer or capture; final disabled snapshot confirms audio opt-out"
+        },
+        {
+          "terminal": "单端B",
+          "report_filename": "shenglu-audio-1792858834221.json",
+          "report_sha256": "a045740e5d3f209fa82bf238f1f137912382cb28807966f5333a22d9fa90351f",
+          "report_bytes": 140048,
+          "schema": "shenglu.browser-audio-diagnostic.v1",
+          "mode": "single-independent-window",
+          "source_kind": "synthetic_speech",
+          "report_status": "observations-only",
+          "report_human_listening": "not_performed",
+          "finished_at": "2026-10-24T16:20:32.420Z",
+          "finished_at_local": "2026-10-25T00:20:32.420000+08:00",
+          "created_peers": 8,
+          "open_peers": 0,
+          "capture": {
+            "track_state": "none",
+            "enabled": false
+          },
+          "final_lifecycle": {
+            "event_type": "disabled-closed",
+            "at": "2026-10-24T16:20:32.420Z",
+            "phase": "disabled",
+            "desired": false,
+            "pressed": false,
+            "floor_phase": "idle",
+            "peer": null,
+            "capture": null,
+            "open_peers": 0,
+            "output_attached": false
+          },
+          "lifecycle_events_retained": 128,
+          "lifecycle_events_dropped": 25,
+          "active_ptt_windows": 0,
+          "before_explicit_disable": "already waiting with no current Peer or capture; final disabled snapshot confirms audio opt-out"
+        }
+      ],
+      "limits": [
+        "Client-side final resource snapshots only; no new server-global Peer or floor query.",
+        "Lifecycle buffers retain the final 128 events and dropped earlier events; this is not a complete session audit or a long-duration quality test.",
+        "last_capture and PCM/PTT windows are historical; their live track state or old samples do not indicate current capture.",
+        "Both reports are synthetic_speech observations-only with human_listening=not_performed; earlier six-direction human confirmations remain separate evidence.",
+        "No new audio playback, microphone capture, board operation or RTA call was performed to inspect these exports."
+      ]
+    }
   },
   "browser_assets_under_test": "af6111b already-loaded diagnostic pages; later progress UI validated by unit tests, not claimed as manual UI acceptance"
 }
