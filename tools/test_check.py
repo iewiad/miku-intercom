@@ -53,7 +53,7 @@ class OfflineCheckTest(unittest.TestCase):
              contextlib.redirect_stdout(output):
             self.assertEqual(check.main(["--list"]), 0)
         text = output.getvalue()
-        self.assertEqual(sum(line[:2].isdigit() for line in text.splitlines()), 22)
+        self.assertEqual(sum(line[:2].isdigit() for line in text.splitlines()), 24)
         self.assertIn("<temporary-lvgl-cache>", text)
         self.assertIn("test_*.py", text)
         self.assertIn("GOTOOLCHAIN=local", text)
@@ -64,13 +64,17 @@ class OfflineCheckTest(unittest.TestCase):
         root, args = self.fixture()
         build, temporary = root / "dedicated cache", root / "temporary output"
         suite = check.steps(args.cjson_dir, args.lvgl_dir, build, temporary, root)
-        self.assertEqual(len(suite), 22)
+        self.assertEqual(len(suite), 24)
         self.assertEqual(suite[0].command, ("go", "test", "-race", "-count=1", "./..."))
         self.assertEqual(suite[0].cwd, root / "server")
         self.assertEqual(suite[2].command[3], str(temporary / "intercom"))
         self.assertIn("test_*.py", suite[4].command)
         peer_startup = next(step.command for step in suite if step.name == "run_peer_startup")
         self.assertIn("--sanitize", peer_startup)
+        rtc_diagnostics = next(step.command for step in suite if step.name == "run_rtc_diagnostics")
+        voice_diagnostics = next(step.command for step in suite if step.name == "run_voice_diagnostics")
+        self.assertIn("--sanitize", rtc_diagnostics)
+        self.assertIn("--sanitize", voice_diagnostics)
         for step in suite[5:]:
             self.assertEqual(step.cwd, root)
             self.assertEqual(step.command[0], sys.executable)

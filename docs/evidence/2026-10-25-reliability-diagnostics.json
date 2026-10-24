@@ -1,0 +1,55 @@
+{
+  "date": "2026-10-25",
+  "issue": "https://github.com/iewiad/miku-intercom/issues/16",
+  "merged_prior_fix": {
+    "pull_request": 15,
+    "commit": "e6c6a3076ee9bd4d7b468ad8d386e4ee13b9863c"
+  },
+  "status": "offline_implementation_verified_target_build_pending",
+  "validation": {
+    "unified_host_checks_passed": 24,
+    "node_tests": 109,
+    "python_tool_tests": 34,
+    "firmware_host_suites": 19,
+    "analyzer_tests": 20,
+    "rtc_callback_concurrency_calls": 80000,
+    "go_race_vet_build": true,
+    "independent_review": "passed; two board metadata findings and two analyzer robustness findings corrected"
+  },
+  "diagnostic_changes": [
+    "single authorized resolution snapshot and fixed result categories; input evaluation explicitly distinguished",
+    "board response evidence prevents stale IDF HTTP status from classifying an early transport error",
+    "bounded error-envelope parsing disambiguates escaped NUL, duplicate error/code fields and raw controls",
+    "separate actual wait deadline, failure bit and cancellation; preserve returned bits and last state",
+    "separate DONE events, worker retirement and completed cleanup",
+    "eight pending process-wide active-RTC allocation samples; callback does not allocate/log/wait; heap metrics at drain only",
+    "metadata-only offline report with bounded input/output and explicit hypotheses/gaps"
+  ],
+  "legacy_reanalysis": {
+    "source_sha256": "7261bc5f54f56fe1adc3be51309ffd8b80bbca39d63f971a70c8c5ae53e37a16",
+    "report_sha256": "f8f3c485ce118afb209a154ce5cdbb88d668424233cb603051d8709ff1718b22",
+    "start_cycles": 29,
+    "completed_cleanup_cycles": 28,
+    "scope_correction": "26/26 was an earlier stopped checkpoint; complete retained input is29/28 ending with active ready/unpressed cycle29, not a machine-verified final stop and not proof of leak",
+    "old_wait_bits_absent": true,
+    "old_peer_state_for_failure_absent": true,
+    "old_allocation_failure_observer_absent": true,
+    "old_per_resolve_codes_absent": true,
+    "root_cause": "not established; low DMA and ~25s timing remain hypotheses"
+  },
+  "hardware_and_runtime": {
+    "serial_opened": false,
+    "commands_sent": false,
+    "microphone_opened": false,
+    "sound_played": false,
+    "firmware_flashed": false,
+    "gateway_called_by_this_task": false,
+    "existing_product_server_restarted": false,
+    "usb_serial_absent_on_enumeration": true
+  },
+  "remaining": [
+    "complete target build and verify callback IRAM/internal data",
+    "on next device session deploy candidate and collect one-reader logs through actual final stop",
+    "correlate metadata to establish voice rejection and connection failure root cause; retain Issue16 open"
+  ]
+}

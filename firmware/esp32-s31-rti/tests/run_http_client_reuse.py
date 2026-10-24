@@ -45,12 +45,12 @@ def main() -> None:
     fixture = Path(__file__).with_name("http_client_reuse_fixture.c.in").read_text()
     production = controller.read_text()
     functions = "\n\n".join(extract_function(production, name) for name in (
-        "drop_http_client", "set_request_body", "request",
+        "http_event", "drop_http_client", "set_request_body", "request",
     ))
     marker = "/* @production-functions */"
     if fixture.count(marker) != 1:
         raise RuntimeError("The HTTP fixture must contain one production insertion marker.")
-    flags = ["-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror"]
+    flags = ["-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror", "-I", str(project / "main")]
     with tempfile.TemporaryDirectory(prefix="intercom-http-reuse-") as temporary:
         temporary = Path(temporary)
         generated = temporary / "http_client_reuse.c"

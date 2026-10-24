@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include "group_voice_diagnostics.h"
 
 typedef int esp_err_t;
 typedef int esp_http_client_method_t;
@@ -20,6 +21,12 @@ typedef int esp_http_client_method_t;
 #define ESP_ERR_NOT_FOUND 261
 #define ESP_ERR_INVALID_RESPONSE 264
 #define ESP_ERR_HTTP_INCOMPLETE_DATA 28673
+#define ESP_ERR_HTTP_CONNECT 28674
+#define HTTP_EVENT_ON_CONNECTED 1
+#define HTTP_EVENT_ON_DATA 2
+#define HTTP_EVENT_ON_HEADER 3
+#define HTTP_EVENT_ON_FINISH 4
+#define HTTP_EVENT_HEADERS_SENT 5
 #define HTTP_METHOD_GET 0
 #define HTTP_METHOD_POST 1
 #define HTTP_METHOD_DELETE 2
@@ -31,7 +38,8 @@ typedef int esp_http_client_method_t;
 
 static int guard;
 typedef struct { int fixture; } cJSON;
-typedef struct { char *data; size_t used; bool overflow; } response_t;
+typedef struct { char *data; size_t used; bool overflow; bool observed; } response_t;
+typedef struct { int event_id;void *user_data;const void *data;int data_len; } esp_http_client_event_t;
 typedef struct {
     bool content_type;
     bool authorization;
@@ -39,13 +47,14 @@ typedef struct {
     const char *body;
     void *user_data;
     int method;
+    int status_code;
 } client_t;
 typedef client_t *esp_http_client_handle_t;
 typedef struct {
     const char *url;
     const char *cert_pem;
     int timeout_ms;
-    int (*event_handler)(void *);
+    int (*event_handler)(esp_http_client_event_t *);
     bool disable_auto_redirect;
     bool skip_cert_common_name_check;
     int buffer_size;
@@ -56,10 +65,18 @@ static struct {
     char server_url[192], ca_pem[2048], token[129];
 } config = {"https://192.168.1.2:1234", "fixture-ca", "fixture-token"};
 static int last_http_status;
-static uint64_t http_requests, http_failures;
+static group_voice_api_error_t last_voice_api_error;
+static unsigned voice_error_parses;
+static group_voice_api_error_t read_voice_api_error(const char *data, size_t used)
+{
+    assert(data && used == 2 && strcmp(data, "{}") == 0);
+    ++voice_error_parses;
+    return GROUP_VOICE_API_UNKNOWN_TARGET;
+}
+static uint64_t http_requests, http_failures, tls_connections;
 static unsigned creations, connections, cleanups, transfers;
 static int forced_body_error, forced_clear_error;
-enum response_mode { SUCCESS, INCOMPLETE, HTTP_500, OVERFLOW, INVALID_JSON, SERVER_CLOSE };
+enum response_mode { SUCCESS, INCOMPLETE, HTTP_500, OVERFLOW, INVALID_JSON, SERVER_CLOSE, EARLY_FAILURE };
 static enum response_mode mode;
 
 static bool trusted_clock(void) { return true; }
@@ -80,7 +97,7 @@ static cJSON *cJSON_ParseWithLengthOpts(const char *data, size_t size, void *end
     return mode == INVALID_JSON ? NULL : calloc(1, sizeof(cJSON));
 }
 static void cJSON_Delete(cJSON *json) { free(json); }
-static int http_event(void *event) { (void)event; return ESP_OK; }
+static int http_event(esp_http_client_event_t *event);
 static esp_http_client_handle_t esp_http_client_init(const esp_http_client_config_t *options)
 {
     assert(options->disable_auto_redirect && !options->skip_cert_common_name_check);
@@ -150,17 +167,25 @@ static int esp_http_client_perform(client_t *client)
     if (!client->connected) {
         ++connections;
         client->connected = true;
+        esp_http_client_event_t event={.event_id=HTTP_EVENT_ON_CONNECTED,.user_data=client->user_data};
+        assert(http_event(&event)==ESP_OK);
     }
     response_t *response = client->user_data;
-    memcpy(response->data, "{}", 3);
-    response->used = 2;
+    esp_http_client_event_t event={.event_id=HTTP_EVENT_HEADERS_SENT,.user_data=response};
+    assert(http_event(&event)==ESP_OK&&!response->observed);
+    /* Like IDF6.2, prepare/connect/send errors can leave last response status. */
+    if(mode==EARLY_FAILURE)return ESP_ERR_HTTP_CONNECT;
+    client->status_code=mode==HTTP_500?500:200;
+    event.event_id=HTTP_EVENT_ON_HEADER;assert(http_event(&event)==ESP_OK&&response->observed);
+    event.event_id=HTTP_EVENT_ON_DATA;event.data="{}";event.data_len=2;
+    assert(http_event(&event)==ESP_OK&&response->used==2);
+    if(mode!=INCOMPLETE){event.event_id=HTTP_EVENT_ON_FINISH;assert(http_event(&event)==ESP_OK);}
     response->overflow = mode == OVERFLOW;
     return ESP_OK;
 }
 static int esp_http_client_get_status_code(client_t *client)
 {
-    (void)client;
-    return mode == HTTP_500 ? 500 : 200;
+    return client->status_code;
 }
 static bool esp_http_client_is_complete_data_received(client_t *client)
 {
@@ -252,6 +277,31 @@ int main(void)
     success("/floor/renew", HTTP_METHOD_POST, &body);
     drop_http_client();
     assert(control_client == NULL && cleanups == creations);
+    /* Only a complete voice error envelope is classified, and metadata is
+     * reset before the next request. Actual JSON parsing is tested separately. */
+    assert(voice_error_parses == 0);
+    mode = HTTP_500;
+    assert(request("/voice/resolve", HTTP_METHOD_POST, &body, &out) != ESP_OK);
+    assert(!out && !control_client && voice_error_parses == 1);
+    assert(last_voice_api_error == GROUP_VOICE_API_UNKNOWN_TARGET);
+    mode = SUCCESS;
+    success("/state", HTTP_METHOD_GET, NULL);
+    assert(last_voice_api_error == GROUP_VOICE_API_NONE && voice_error_parses == 1);
+    mode = INCOMPLETE;
+    assert(request("/voice/resolve", HTTP_METHOD_POST, &body, &out) != ESP_OK);
+    assert(last_voice_api_error == GROUP_VOICE_API_NONE && voice_error_parses == 1);
+    drop_http_client();
+    assert(cleanups == creations);
+    for(unsigned i=0;i<3;++i) {
+        const int previous_status[]={200,401,503};
+        mode=SUCCESS;success("/state",HTTP_METHOD_GET,NULL);
+        control_client->status_code=previous_status[i];
+        mode=EARLY_FAILURE;
+        assert(request("/voice/resolve",HTTP_METHOD_POST,&body,&out)==ESP_ERR_HTTP_CONNECT);
+        assert(!out&&!control_client&&last_http_status==0&&last_voice_api_error==GROUP_VOICE_API_NONE);
+        assert(group_voice_classify(true,false,last_http_status,last_voice_api_error,false,false,false)==GROUP_VOICE_TRANSPORT_ERROR);
+    }
+    assert(cleanups==creations);
     puts("HTTP reuse regression: passed (production GET/POST/renew/GET/DELETE reuse, SDK Content-Type errors, complete-response cleanup, pointer detach)");
     return 0;
 }

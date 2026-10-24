@@ -20,6 +20,7 @@ idf_component_register(
         "wifi_serial_cli.c"
         "rti_session.c"
         "rta_command_events.c"
+        "rtc_alloc_diagnostics.c"
         "webrtc_peer.c"
     INCLUDE_DIRS "."
     REQUIRES
