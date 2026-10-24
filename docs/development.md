@@ -1,6 +1,6 @@
 # 开发指南
 
-PR #10 已合并，S3 首切片的镜像已通过板↔浏览器双向数值、PTT 取消与短时故障恢复验证。[005 板端已加入群切换](specs/005-device-multigroup.md) 已完成本轮多群数值、十次连续切换及软重启恢复验证。用户确认显示正常；主要串口驱动不代表完整触控验收，两次软重启不代表实际断电。本分支补齐板端口令键盘、主动语音切群、浏览器信令代理与启动工具；实际 RTA、取消恢复与最终人工验收分别记录。实际证据见 [acceptance.md](acceptance.md)，控制接口见 [002](specs/002-control-api.md)，媒体接口见 [003](specs/003-browser-media.md)，板端 LAN 增量见 [004](specs/004-device-lan.md)。S1 控制面评审记录见 [PR #5](https://github.com/iewiad/miku-intercom/pull/5)。
+PR #10 已合并，S3 首切片的镜像已通过板↔浏览器双向数值、PTT 取消与短时故障恢复验证。[005 板端已加入群切换](specs/005-device-multigroup.md) 已完成本轮多群数值、十次连续切换及软重启恢复验证。用户确认显示正常；主要串口驱动不代表完整触控验收，两次软重启不代表实际断电。PR #12 已合并板端口令键盘、主动语音切群、浏览器信令代理与启动工具；实际 RTA、取消恢复、六方向听测与两份关闭报告分别留证。新职责字段与浏览器列表筛选见 [007](specs/007-group-purpose.md)，不增加模型或音频调用。实际证据见 [acceptance.md](acceptance.md)，控制接口见 [002](specs/002-control-api.md)，媒体接口见 [003](specs/003-browser-media.md)，板端 LAN 增量见 [004](specs/004-device-lan.md)。S1 控制面评审记录见 [PR #5](https://github.com/iewiad/miku-intercom/pull/5)。
 
 ## 启动浏览器群音频
 

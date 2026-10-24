@@ -34,11 +34,19 @@
       <aside class="sidebar">
         <section class="panel groups-panel">
           <div class="section-heading"><h2>已加入的群</h2><span class="count" id="group-count">0 个</span></div>
+          <label for="group-filter" class="group-filter-label">按群名或职责筛选</label>
+          <input id="group-filter" type="search" placeholder="输入群名或职责关键词" maxlength="512" autocomplete="off" spellcheck="false" aria-describedby="group-filter-help group-filter-status">
+          <p id="group-filter-help" class="field-help">仅筛选当前列表，仍需手动选择“进入”。</p>
+          <p id="group-filter-status" class="field-help" role="status" aria-live="polite">仅筛选已加入群的列表</p>
           <ul class="group-list" id="group-list" aria-label="已加入的群"></ul>
           <div id="empty-groups" class="empty-state"><span aria-hidden="true">◎</span><p>第一段同行，从一个群开始。</p><small>创建群，或向伙伴要一个口令。</small></div>
+          <div id="empty-filter" class="empty-state" hidden><p>没有匹配的群</p><small>试试群名或职责中的其他文字，或清空筛选。</small></div>
           <div class="panel-divider"></div>
           <form id="create-form" class="compact-form">
             <label for="create-name">创建新群</label><div class="input-row"><input id="create-name" placeholder="例如：全员群" maxlength="64" required autocomplete="off"><button id="create-group" class="button secondary" type="submit">创建</button></div>
+            <label for="create-purpose" class="purpose-label">职责简介（可选）</label>
+            <input id="create-purpose" placeholder="例如：设备排障、物资协助" maxlength="512" autocomplete="off" aria-describedby="create-purpose-help">
+            <p id="create-purpose-help" class="field-help">最多 256 个字符，简要说明这个群能协助什么。</p>
           </form>
           <form id="join-form" class="compact-form">
             <label for="join-code">用口令加入</label><div class="input-row"><input id="join-code" class="code-input" placeholder="8 位入群口令" maxlength="24" required autocomplete="off" autocapitalize="characters" spellcheck="false"><button id="join-group" class="button secondary" type="submit">加入</button></div>

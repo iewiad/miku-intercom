@@ -40,6 +40,15 @@ export function bindAudioDisable(button, client) {
   });
 }
 export const validName = value => typeof value === 'string' && [...value.trim()].length >= 1 && [...value.trim()].length <= 32;
+// Unicode White_Space matches Go strings.TrimSpace; JS trim also removes FEFF
+// and does not remove NEL, so it would normalize this API field differently.
+const trimPurpose = value => value.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
+export const validPurpose = value => typeof value === 'string' && [...trimPurpose(value)].length <= 256 && !/\p{Cc}/u.test(trimPurpose(value));
+const groupPurpose = group => typeof group.purpose === 'string' ? group.purpose : '';
+export function filterGroups(groups, query = '') {
+  const term = query.trim().toLowerCase();
+  return term ? groups.filter(group => `${group.name}\n${groupPurpose(group)}`.toLowerCase().includes(term)) : groups;
+}
 export class APIError extends Error {
   constructor(status, code, message) { super(message); this.status = status; this.code = code; }
 }
@@ -141,9 +150,11 @@ export class ControlClient {
     } catch (error) { if (epoch === this.epoch) this.inform(errorText(error), 'error'); }
     finally { this.mutationBusy = false; this.emit(); }
   }
-  createGroup(name) {
+  createGroup(name, purpose = '') {
     if (!validName(name)) { this.inform('群名请输入 1–32 个字符。', 'error'); return Promise.resolve(); }
-    return this.mutate('/groups', {name});
+    if (!validPurpose(purpose)) { this.inform('职责简介最多 256 个字符，不能包含控制字符。', 'error'); return Promise.resolve(); }
+    const normalized = trimPurpose(purpose);
+    return this.mutate('/groups', normalized ? {name, purpose: normalized} : {name});
   }
   joinGroup(code) { return this.mutate('/memberships', {code}); }
   async switchGroup(groupID) {
@@ -293,7 +304,7 @@ function boot() {
     text('lock-description', client.authInvalid ? '服务不再识别此浏览器保存的身份。重新建立本机身份后，需要重新加入原来的群。' : identityChanged ? '本浏览器保存的身份已被其他标签页更新。重新载入后才能继续。' : '同一身份一次只在一个标签页操作，避免抢麦与切群互相干扰。');
     text('takeover', client.authInvalid ? '重新建立本机身份' : identityChanged ? '重新载入此页面' : '改用当前标签页');
     const operable = client.allowed() && !client.mutationBusy && !client.pendingSwitch && !client.voice?.blocking;
-    for (const id of ['create-name', 'join-code', 'create-group', 'join-group']) $(id).disabled = !operable;
+    for (const id of ['create-name', 'create-purpose', 'join-code', 'create-group', 'join-group']) $(id).disabled = !operable;
     $('identity-submit').disabled = client.mutationBusy;
     $('refresh-state').disabled = !client.allowed() || !!client.pendingSwitch || client.mutationBusy;
     $('retry-switch').hidden = !client.pendingSwitch;
@@ -304,17 +315,22 @@ function boot() {
     const state = client.state;
     const groups = state?.groups || [];
     const current = groups.find(group => group.id === state?.current_group_id);
+    const visibleGroups = filterGroups(groups, $('group-filter').value);
     text('group-count', `${groups.length} 个`);
+    $('group-filter').disabled = groups.length === 0;
+    text('group-filter-status', groups.length ? `显示 ${visibleGroups.length} / ${groups.length} 个已加入群` : '仅筛选已加入群的列表');
     const list = $('group-list'); list.replaceChildren();
-    for (const group of groups) {
+    for (const group of visibleGroups) {
       const row = element('li', `group-row${group.id === current?.id ? ' selected' : ''}`);
       const labels = element('div', 'group-labels'); labels.append(element('strong', '', group.name), element('span', '', `已加入成员 ${group.member_count} 人`));
+      if (groupPurpose(group)) labels.append(element('span', 'group-purpose', group.purpose));
       const button = element('button', 'group-enter', group.id === current?.id ? '当前群' : '进入');
       button.type = 'button'; button.disabled = !operable || group.id === current?.id;
       button.addEventListener('click', () => { void client.switchGroup(group.id); });
       row.append(labels, button); list.append(row);
     }
     $('empty-groups').hidden = groups.length > 0;
+    $('empty-filter').hidden = groups.length === 0 || visibleGroups.length > 0;
     text('current-name', client.pendingSwitch ? '正在确认切群结果' : current?.name || (identity ? '还没有当前群' : '先建立你的身份'));
     text('current-detail', client.pendingSwitch ? '操作终态确认前，麦权按钮暂停使用' : current ? `已加入成员 ${current.member_count} 人 · 可手动切换当前群` : '创建群或输入口令，然后启用音频');
     text('sync-label', !identity ? '本机演示' : !client.active ? '此标签页已暂停' : !state ? '等待状态同步' : !client.connected ? '连接未确认' : '服务端状态已同步');
@@ -363,8 +379,15 @@ function boot() {
   for (const [id, label] of [['nickname', '昵称'], ['create-name', '群名']]) {
     $(id).addEventListener('input', () => $(id).setCustomValidity(validName($(id).value) ? '' : `${label}请输入 1–32 个字符。`));
   }
+  $('create-purpose').addEventListener('input', () => $('create-purpose').setCustomValidity(validPurpose($('create-purpose').value) ? '' : '职责简介最多 256 个字符，不能包含控制字符。'));
+  $('group-filter').addEventListener('input', render);
   $('identity-form').addEventListener('submit', event => { event.preventDefault(); void client.createIdentity($('nickname').value.trim()); });
-  $('create-form').addEventListener('submit', async event => { event.preventDefault(); if (await client.createGroup($('create-name').value.trim())) $('create-name').value = ''; });
+  $('create-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (await client.createGroup($('create-name').value.trim(), $('create-purpose').value)) {
+      $('create-name').value = ''; $('create-purpose').value = ''; $('create-purpose').setCustomValidity('');
+    }
+  });
   $('join-form').addEventListener('submit', async event => { event.preventDefault(); if (await client.joinGroup($('join-code').value.trim())) $('join-code').value = ''; });
   $('retry-switch').addEventListener('click', () => { void client.confirmSwitch(); });
   $('refresh-state').addEventListener('click', () => { void client.refresh(); });

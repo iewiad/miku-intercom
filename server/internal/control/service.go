@@ -18,6 +18,7 @@ import (
 
 const MaxOperations = 1024
 const MaxRequests = 256
+const MaxPurposeRunes = 256
 const LeaseDuration = 3 * time.Second
 const RequestProtection = 60 * time.Second
 
@@ -40,6 +41,9 @@ func New(snapshot []byte, saver Saver, opts Options) (*Service, error) {
 	s := &Service{mediaPeers: map[string]MediaBinding{}, saver: saver, opts: opts, floors: map[string]*lease{}, requests: map[string]map[string]*requestRecord{}, badCodes: map[string][]time.Time{}}
 	s.disk = diskState{FormatVersion: 1, Devices: map[string]*deviceRecord{}, Groups: map[string]*groupRecord{}}
 	if len(snapshot) > 0 {
+		if !utf8.Valid(snapshot) {
+			return nil, errors.New("invalid UTF-8 snapshot")
+		}
 		s.disk = diskState{}
 		dec := json.NewDecoder(strings.NewReader(string(snapshot)))
 		dec.DisallowUnknownFields()
@@ -69,7 +73,7 @@ func (s *Service) validateDisk() error {
 	tokens := map[string]bool{}
 	codes := map[string]bool{}
 	for id, g := range s.disk.Groups {
-		if g == nil || id != g.ID || !validName(g.Name) || len(g.CodeHash) != 64 || names[g.Name] || codes[g.CodeHash] {
+		if g == nil || id != g.ID || !validName(g.Name) || !validPurpose(g.Purpose) || len(g.CodeHash) != 64 || names[g.Name] || codes[g.CodeHash] {
 			return errors.New("invalid group snapshot")
 		}
 		names[g.Name] = true
@@ -112,6 +116,17 @@ func validName(name string) bool {
 		return false
 	}
 	for _, r := range name {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+func validPurpose(purpose string) bool {
+	if !utf8.ValidString(purpose) || utf8.RuneCountInString(purpose) > MaxPurposeRunes || strings.TrimSpace(purpose) != purpose {
+		return false
+	}
+	for _, r := range purpose {
 		if unicode.IsControl(r) {
 			return false
 		}
@@ -203,7 +218,7 @@ func (s *Service) CreateDevice(name string) (Device, string, error) {
 }
 func (s *Service) publicGroup(gid string) Group {
 	g := s.disk.Groups[gid]
-	out := Group{ID: g.ID, Name: g.Name}
+	out := Group{ID: g.ID, Name: g.Name, Purpose: g.Purpose}
 	for _, d := range s.disk.Devices {
 		if d.Memberships[gid] {
 			out.MemberCount++
@@ -235,6 +250,9 @@ func (s *Service) State(id string) (State, error) {
 	return s.state(id, now), nil
 }
 func (s *Service) CreateGroup(id, name string) (Group, string, State, error) {
+	return s.CreateGroupWithPurpose(id, name, "")
+}
+func (s *Service) CreateGroupWithPurpose(id, name, purpose string) (Group, string, State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.opts.Now().UTC()
@@ -245,6 +263,10 @@ func (s *Service) CreateGroup(id, name string) (Group, string, State, error) {
 	name = strings.TrimSpace(name)
 	if !validName(name) {
 		return Group{}, "", State{}, fail(400, "invalid_name", "group name must contain 1 to 32 Unicode characters")
+	}
+	purpose = strings.TrimSpace(purpose)
+	if !validPurpose(purpose) {
+		return Group{}, "", State{}, fail(400, "invalid_purpose", "purpose must contain at most 256 Unicode characters without control characters")
 	}
 	for _, g := range s.disk.Groups {
 		if g.Name == name {
@@ -275,7 +297,7 @@ func (s *Service) CreateGroup(id, name string) (Group, string, State, error) {
 		return Group{}, "", State{}, fail(500, "random_failed", "identifier collision")
 	}
 	next := s.clone()
-	next.Groups[gid] = &groupRecord{ID: gid, Name: name, CodeHash: digest(code)}
+	next.Groups[gid] = &groupRecord{ID: gid, Name: name, Purpose: purpose, CodeHash: digest(code)}
 	d := next.Devices[id]
 	d.Memberships[gid] = true
 	if d.CurrentGroupID == "" {
