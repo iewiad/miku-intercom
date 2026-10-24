@@ -39,5 +39,12 @@
     "idf_build": "passed",
     "independent_flash_verify": "digest matched"
   },
-  "human_retest": "pending"
+  "human_retest": {
+    "status": "passed",
+    "user_observation": "complete keyboard visible; physical touch join succeeded",
+    "memberships_before": 5,
+    "memberships_after": 6,
+    "current_group_retained": true,
+    "current_version_retained": 15
+  }
 }

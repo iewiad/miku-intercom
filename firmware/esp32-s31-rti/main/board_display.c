@@ -1700,6 +1700,7 @@ static lv_obj_t *group_voice_button;
 static lv_obj_t *group_command_overlay;
 static lv_obj_t *group_command_title;
 static lv_obj_t *group_command_detail;
+static lv_obj_t *group_command_current;
 static lv_obj_t *group_command_submit;
 static lv_obj_t *group_command_submit_label;
 static lv_obj_t *group_command_cancel;
@@ -1873,6 +1874,7 @@ static void group_render_current(void)
     } else {
         lv_label_set_text(group_name_label, "当前群待确认，请等待同步");
     }
+    group_render_command();
 }
 
 static void group_ptt_event_cb(lv_event_t *event)
@@ -2063,6 +2065,7 @@ static void group_modal_delete_event_cb(lv_event_t *event)
     group_command_overlay = NULL;
     group_command_title = NULL;
     group_command_detail = NULL;
+    group_command_current = NULL;
     group_command_submit = NULL;
     group_command_submit_label = NULL;
     group_command_cancel = NULL;
@@ -2090,13 +2093,23 @@ static void group_render_command(void)
         return;
     }
     const bool waiting = group_voice_active || group_command_pending;
+    const int current = group_current_index();
+    const bool restored = group_voice_submitted && !waiting && group_transport_ready && current >= 0;
     lv_label_set_text(group_command_title,
                       !group_voice_submitted ? "准备语音切群" :
                       group_command_pending ? "正在准备" :
-                      group_voice_active ? "语音切群" : "语音切群已结束");
+                      group_voice_active ? "语音切群" :
+                      restored ? "当前群音频已就绪" : "语音切群已结束");
     lv_label_set_text(group_command_detail,
                       group_voice_submitted && group_command_detail_text[0] ? group_command_detail_text :
                       "点击开始后，说出目标群的完整名称。\n只会切换到你已加入的群组。");
+    if (current >= 0) {
+        /* Keep the authoritative name separate from bounded command details.
+         * LVGL owns the formatted string, including long UTF-8 group names. */
+        lv_label_set_text_fmt(group_command_current, "当前群：%s", group_choices->items[current].name);
+    } else {
+        lv_label_set_text(group_command_current, "当前群尚未确认");
+    }
     if (!group_voice_submitted) {
         lv_obj_remove_flag(group_command_submit, LV_OBJ_FLAG_HIDDEN);
         if (group_command_ready() && group_transport_ready && group_current_index() >= 0 && group_voice_callback) {
@@ -2115,7 +2128,7 @@ static void group_render_command(void)
     }
     lv_label_set_text(group_command_cancel_label,
                       !group_voice_submitted ? "取消" :
-                      waiting ? (can_close ? "取消语音" : "请等待恢复") : "关闭");
+                      waiting ? (can_close ? "取消语音" : "请等待恢复") : "返回对讲");
 }
 
 static void group_command_cancel_event_cb(lv_event_t *event)
@@ -2300,8 +2313,11 @@ static void group_voice_open_event_cb(lv_event_t *event)
     lv_obj_t *overlay = group_create_command_overlay(GROUP_MODAL_VOICE);
     group_command_title = group_label(overlay, "准备语音切群", 48, 54, 704, 0xF4FAFC);
     group_command_detail = group_label(overlay, "", 48, 122, 704, 0xAABCC7);
-    lv_obj_set_height(group_command_detail, 174);
+    lv_obj_set_height(group_command_detail, 154);
     lv_label_set_long_mode(group_command_detail, LV_LABEL_LONG_MODE_WRAP);
+    group_command_current = group_label(overlay, "", 48, 284, 704, 0xF4FAFC);
+    lv_obj_set_height(group_command_current, 44);
+    lv_label_set_long_mode(group_command_current, LV_LABEL_LONG_MODE_DOTS);
     group_command_submit = group_command_button(overlay, "开始语音", 80, 336, 280,
                                                 group_voice_submit_event_cb, &group_command_submit_label);
     group_command_cancel = group_command_button(overlay, "取消", 440, 336, 280,

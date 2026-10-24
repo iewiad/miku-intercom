@@ -63,6 +63,7 @@ def run(project, lvgl, build):
     source = (project / "main/board_display.c").read_text()
     names = (
         "create_rti_keyboard", "group_label", "group_command_busy", "group_command_ready",
+        "group_current_index", "group_render_current", "board_display_set_group_state",
         "group_modal_delete_event_cb", "group_close_command", "group_render_command",
         "group_command_cancel_event_cb", "group_voice_submit_event_cb", "group_join_submit",
         "group_join_submit_event_cb", "group_join_keyboard_event_cb", "group_command_button",
