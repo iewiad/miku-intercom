@@ -18,7 +18,7 @@
 | --- | --- | --- |
 | POST `/devices` | `{name}` | 201：`{device:{id,name},token}`。昵称 1–32 个 Unicode 字符 |
 | GET `/state` | — | 200：当前权威状态，见下文 |
-| POST `/groups` | `{name}` | 201：`{group,code,state}`。群名 1–32 字符，服务内唯一；创建者自动加入，首次自动进入 |
+| POST `/groups` | `{name,purpose?}` | 201：`{group,code,state}`。群名 1–32 字符，服务内唯一；职责可省略，去除两端空白后最多 256 码点；创建者自动加入，首次自动进入。职责校验与兼容规则见 [007](007-group-purpose.md) |
 | POST `/memberships` | `{code}` | 200：`{state}`。8 位大写随机口令（去掉易混字符），大小写与首尾空白归一；只存摘要；重复加入无副作用。每身份累计 5 次错误口令后暂停入群，合法/错误口令均 429，从第五次失败起暂停一分钟后恢复 |
 | PUT `/current-group` | `{operation_id,group_id,expected_version}` | 返回 `{operation,state}`；原子核权、版本比较、释放原麦权、修改当前群。操作结果持久化 |
 | GET `/operations/{id}` | — | 返回本身份对应操作的不可变终态；未知 404。不能用未知推断请求永不生效，应重试同一操作 |
@@ -26,7 +26,7 @@
 | POST `/floor/renew` | `{group_id,current_version,request_id,lease_id,server_epoch}` | 200：`{floor}`；仅当前持有人、相同群/版本/申请/租约可续租 |
 | POST `/floor/release` | `{group_id,current_version,request_id,server_epoch}` | 200：`{released:true}`；同时取消此申请。未收到 acquire 响应也可先调用，之后迟到申请不得获权 |
 
-`state` 形状：`{device:{id,name},server_epoch,server_time,current_group_id,current_version,groups:[{id,name,member_count,floor}],media_ready:false}`。只列本身份已加入群。`member_count` 是已加入成员数，不是在线人数；首切片没有 presence。`floor` 空闲时为 null，否则 `{device_id,device_name,request_id,lease_id,expires_at}`；时间为服务端 UTC RFC3339。客户端通过轮询刷新状态，不能把轮询结果称为实时媒体连接。
+本机浏览器入口的 `state` 形状：`{device:{id,name},server_epoch,server_time,current_group_id,current_version,groups:[{id,name,purpose?,member_count,floor}],media_ready:false}`。非空职责才返回 `purpose`，原设备 HTTPS 入口省略该字段以保持目录响应规模，见 [007](007-group-purpose.md)。只列本身份已加入群。`member_count` 是已加入成员数，不是在线人数；首切片没有 presence。`floor` 空闲时为 null，否则 `{device_id,device_name,request_id,lease_id,expires_at}`；时间为服务端 UTC RFC3339。客户端通过轮询刷新状态，不能把轮询结果称为实时媒体连接。
 
 ## 切群幂等与版本
 

@@ -295,19 +295,20 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request, path, id string)
 		if err != nil {
 			return err
 		}
-		send(w, 200, state)
+		send(w, 200, s.stateView(state))
 	case "/groups":
 		var req struct {
-			Name string `json:"name"`
+			Name    string       `json:"name"`
+			Purpose groupPurpose `json:"purpose"`
 		}
 		if err := decode(w, r, &req); err != nil {
 			return err
 		}
-		g, c, state, err := s.service.CreateGroup(id, req.Name)
+		g, c, state, err := s.service.CreateGroupWithPurpose(id, req.Name, string(req.Purpose))
 		if err != nil {
 			return err
 		}
-		send(w, 201, map[string]any{"group": g, "code": c, "state": state})
+		send(w, 201, map[string]any{"group": s.groupView(g), "code": c, "state": s.stateView(state)})
 	case "/memberships":
 		var req struct {
 			Code string `json:"code"`
@@ -319,7 +320,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request, path, id string)
 		if err != nil {
 			return err
 		}
-		send(w, 200, map[string]any{"state": state})
+		send(w, 200, map[string]any{"state": s.stateView(state)})
 	case "/current-group":
 		var req struct {
 			OperationID     string  `json:"operation_id"`
@@ -336,7 +337,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request, path, id string)
 		if err != nil {
 			return err
 		}
-		send(w, 200, map[string]any{"operation": op, "state": state})
+		send(w, 200, map[string]any{"operation": op, "state": s.stateView(state)})
 	case "/floor/acquire", "/floor/renew", "/floor/release":
 		return s.handleFloor(w, r, path, id)
 	default:

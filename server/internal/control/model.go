@@ -21,6 +21,7 @@ type Floor struct {
 type Group struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
+	Purpose     string `json:"purpose,omitempty"`
 	MemberCount int    `json:"member_count"`
 	Floor       *Floor `json:"floor"`
 }
@@ -96,6 +97,7 @@ type deviceRecord struct {
 type groupRecord struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
+	Purpose  string `json:"purpose,omitempty"`
 	CodeHash string `json:"code_hash"`
 }
 type diskState struct {

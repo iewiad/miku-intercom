@@ -23,6 +23,26 @@ function setup(handler = () => response(200, {released: true})) {
   client.load(identity); client.applyState(state(), client.epoch);
   return {client, calls, timers, pending, advance(ms) { clock += ms; }};
 }
+test('optional group purpose preserves legacy payload and normalizes using Go-compatible whitespace', async () => {
+  const h = setup(() => response(200, {state: state()}));
+  await h.client.createGroup('新群');
+  await h.client.createGroup('新群', '\u0085\u3000\t ');
+  await h.client.createGroup('新群', '\u0085\u3000设备排障\u2029');
+  await h.client.createGroup('新群', '\uFEFF职责');
+  assert.deepEqual(h.calls.map(call => call.body), [{name: '新群'}, {name: '新群'}, {name: '新群', purpose: '设备排障'}, {name: '新群', purpose: '\uFEFF职责'}]);
+  assert.ok(h.calls.every(call => call.url.endsWith('/groups') && call.method === 'POST'));
+});
+test('purpose limit counts Unicode codepoints and rejects interior Cc before any mutation', async () => {
+  const h = setup(() => response(200, {state: state()}));
+  const purpose = '🛠'.repeat(256);
+  await h.client.createGroup('新群', purpose);
+  assert.equal(h.calls.length, 1); assert.equal(h.calls[0].body.purpose, purpose);
+  for (const invalid of ['🛠'.repeat(257), '字'.repeat(257), '维\u0000修', '维\t修', '维\n修', '维\u007F修', '维\u0085修', null, 1]) {
+    await h.client.createGroup('新群', invalid);
+    assert.match(h.client.notice, /256.*控制字符/);
+  }
+  assert.equal(h.calls.length, 1); assert.equal(h.client.mutationBusy, false);
+});
 const grant = request => ({floor: {device_id: identity.device.id, device_name: identity.device.name,
   request_id: request.request_id, lease_id: 'lease_one', expires_at: new Date(NOW + 3000).toISOString()}});
 const applied = request => ({operation: {...request, status: 'applied', current_group_id: request.group_id, current_version: 2},
