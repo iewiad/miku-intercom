@@ -1,0 +1,288 @@
+{
+  "schema": "shenglu.system-microphone-recheck.v1",
+  "source_revision": "0a8d36c40362f8da209c0c382e8ee730f066288e",
+  "runtime_implementation_revision": "68e8efe6467b6c88fbed478d31bde79acbff9933",
+  "source_kind": "system_microphone",
+  "mode": "two visible Chrome windows with separate identities; normal AudioClient getUserMedia and floor/PTT",
+  "recording_saved": false,
+  "human_listening": "not_performed",
+  "listening_muted": true,
+  "capture_settings": {
+    "sampleRate": 48000,
+    "channelCount": 1,
+    "latency": 0.01,
+    "echoCancellation": true,
+    "noiseSuppression": true,
+    "autoGainControl": true
+  },
+  "directions": [
+    {
+      "direction": "B->A",
+      "started_at": "2026-10-24T03:22:04.817Z",
+      "ended_at": "2026-10-24T03:22:07.824Z",
+      "duration_ms": 3007,
+      "source_pcm": {
+        "total_samples": 30,
+        "valid_samples": 30,
+        "rms_peak": 0.0669,
+        "rms_mean": 0.00984,
+        "rms_latest": 0.03315,
+        "enabled_samples": 30,
+        "live_samples": 30
+      },
+      "enabled_at_grant": true,
+      "enabled_at_end": false,
+      "receiver_cumulative_remote_pcm": {
+        "total_samples": 808,
+        "valid_samples": 808,
+        "rms_peak": 0.07557,
+        "rms_mean": 0.00046,
+        "rms_latest": 0,
+        "rolling_window": {
+          "from_ms": 27202,
+          "to_ms": 107902,
+          "sample_limit": 3000
+        }
+      },
+      "receiver_cumulative_inbound": [
+        {
+          "packetsReceived": 3920,
+          "bytesReceived": 22713,
+          "totalAudioEnergy": 0,
+          "totalSamplesDuration": 80.83,
+          "codec": "audio/opus",
+          "clockRate": 48000
+        }
+      ]
+    },
+    {
+      "direction": "A->B",
+      "started_at": "2026-10-24T03:23:06.167Z",
+      "ended_at": "2026-10-24T03:23:09.176Z",
+      "duration_ms": 3009,
+      "source_pcm": {
+        "total_samples": 30,
+        "valid_samples": 30,
+        "rms_peak": 0.02381,
+        "rms_mean": 0.00646,
+        "rms_latest": 0.00054,
+        "enabled_samples": 30,
+        "live_samples": 30
+      },
+      "enabled_at_grant": true,
+      "enabled_at_end": false,
+      "receiver_cumulative_remote_pcm": {
+        "total_samples": 1073,
+        "valid_samples": 1072,
+        "rms_peak": 0.01414,
+        "rms_mean": 0.00016,
+        "rms_latest": 0,
+        "rolling_window": {
+          "from_ms": 729,
+          "to_ms": 107927,
+          "sample_limit": 3000
+        }
+      },
+      "receiver_cumulative_inbound": [
+        {
+          "packetsReceived": 5206,
+          "bytesReceived": 26517,
+          "totalAudioEnergy": 0,
+          "totalSamplesDuration": 107.29,
+          "codec": "audio/opus",
+          "clockRate": 48000
+        }
+      ]
+    }
+  ],
+  "ordinary_pointer_ptt": {
+    "duration_ms": 1206,
+    "source_pcm": {
+      "total_samples": 13,
+      "valid_samples": 13,
+      "rms_peak": 0.06657,
+      "rms_mean": 0.03149,
+      "rms_latest": 0.01725,
+      "enabled_samples": 12,
+      "live_samples": 13
+    },
+    "enabled_at_end": false
+  },
+  "immediate_cancel": {
+    "duration_ms": 295,
+    "enabled_before": true,
+    "enabled_after": false
+  },
+  "cross_group": {
+    "different_groups": true,
+    "overlap_ms": 959,
+    "windows": [
+      {
+        "terminal": "A",
+        "current_version": 2,
+        "duration_ms": 3018,
+        "source_pcm": {
+          "total_samples": 30,
+          "valid_samples": 30,
+          "rms_peak": 0.03086,
+          "rms_mean": 0.01726,
+          "rms_latest": 0.01504,
+          "enabled_samples": 30,
+          "live_samples": 30
+        },
+        "remote_pcm": {
+          "total_samples": 30,
+          "valid_samples": 30,
+          "rms_peak": 0,
+          "rms_mean": 0,
+          "rms_latest": 0
+        }
+      },
+      {
+        "terminal": "B",
+        "current_version": 1,
+        "duration_ms": 3013,
+        "source_pcm": {
+          "total_samples": 30,
+          "valid_samples": 30,
+          "rms_peak": 0.0449,
+          "rms_mean": 0.02295,
+          "rms_latest": 0.02679,
+          "enabled_samples": 30,
+          "live_samples": 30
+        },
+        "remote_pcm": {
+          "total_samples": 30,
+          "valid_samples": 30,
+          "rms_peak": 0,
+          "rms_mean": 0,
+          "rms_latest": 0
+        }
+      }
+    ]
+  },
+  "manual_switch": {
+    "versions": [
+      2,
+      3
+    ],
+    "enabled_after_switch": [
+      false,
+      false
+    ],
+    "restored_segment": {
+      "current_version": 3,
+      "remote_pcm": {
+        "total_samples": 293,
+        "valid_samples": 293,
+        "rms_peak": 0.08929,
+        "rms_mean": 0.00428,
+        "rms_latest": 0
+      },
+      "inbound": [
+        {
+          "packetsReceived": 1428,
+          "bytesReceived": 15816,
+          "totalAudioEnergy": 0,
+          "totalSamplesDuration": 29.27,
+          "codec": "audio/opus",
+          "clockRate": 48000
+        }
+      ]
+    }
+  },
+  "cleanup": [
+    {
+      "terminal": "复验A",
+      "capture": {
+        "track_state": "none",
+        "enabled": false,
+        "muted": false,
+        "settings": {}
+      },
+      "resources_after_close": [
+        {
+          "terminal": "复验A",
+          "created_peers": 3,
+          "open_peers": 0
+        }
+      ],
+      "finished_at": "2026-10-24T03:28:27.273Z"
+    },
+    {
+      "terminal": "复验B",
+      "capture": {
+        "track_state": "none",
+        "enabled": false,
+        "muted": false,
+        "settings": {}
+      },
+      "resources_after_close": [
+        {
+          "terminal": "复验B",
+          "created_peers": 1,
+          "open_peers": 0
+        }
+      ],
+      "finished_at": "2026-10-24T03:28:27.541Z"
+    }
+  ],
+  "limits": [
+    "Receiver peaks and decoder counters in directions are cumulative; they are not strict sender-window deltas.",
+    "Latest RMS zero alone does not prove a continuous silence interval.",
+    "Native hidden/restore was attempted but no effective hidden event was observed; not passed.",
+    "Human listening and speech clarity remain unverified."
+  ],
+  "raw_reports": [
+    {
+      "artifact": "outputs/browser-unlocked-A-to-B-source.json",
+      "sha256": "01f9b89ef2e2bcfd58d949d35634a3ab80924986c2250ede78e4d29747bda358"
+    },
+    {
+      "artifact": "outputs/browser-unlocked-A-to-B-receiver.json",
+      "sha256": "48363246e00e682f0b510bae033b31578c6aea53187414c1cd251ea705f7413b"
+    },
+    {
+      "artifact": "outputs/browser-unlocked-B-to-A-source.json",
+      "sha256": "dfb053edc8f780c54fb9f1cd4fd039705e9dda9f6e3e2d27a84e9948cf37e37f"
+    },
+    {
+      "artifact": "outputs/browser-unlocked-B-to-A-receiver.json",
+      "sha256": "012d70b59a51fda84edb2e6941d9da9a3d89462cf9085498fb5bbc60872b0637"
+    },
+    {
+      "artifact": "outputs/browser-unlocked-normal-ptt.json",
+      "sha256": "1367bd07953f446269561223725253810dd1770c6d920778919fb8f02bb6e326"
+    },
+    {
+      "artifact": "outputs/browser-unlocked-cancel.json",
+      "sha256": "8088eb9bd52cdfb55af77727a864c4c0a8c376c82946c86b55c161f419d3cee1"
+    },
+    {
+      "artifact": "outputs/browser-unlocked-isolation-A.json",
+      "sha256": "ebfd70b6db72088f38a65bac8e1008fbadd07f43ce8a60a8f97dae69b4c32b33"
+    },
+    {
+      "artifact": "outputs/browser-unlocked-isolation-B.json",
+      "sha256": "40c36e8b9a845c495f7a654ba6da42c80d2a1c9a42addcfa8474f176ba5de88f"
+    },
+    {
+      "artifact": "outputs/browser-unlocked-switch-away.json",
+      "sha256": "94940858cea4da85ee016dfc6a4113541d71f39cf4bc77be2534e43d17d1f6da"
+    },
+    {
+      "artifact": "outputs/browser-unlocked-switch-back.json",
+      "sha256": "c8bd17f0ca03d2d65e1e7e0f8a61e04916fb01a2a58bd53ea4e9a09577610afb"
+    },
+    {
+      "artifact": "outputs/browser-unlocked-closed-A.json",
+      "sha256": "0f5f8aab2e1d2245964558b69bd43ce18609cd21452e783e196c072e59c43aa6"
+    },
+    {
+      "artifact": "outputs/browser-unlocked-closed-B.json",
+      "sha256": "5845fd6384d81bcde497d4887fb4e3b951d89799502b399d321f24337b3a001d"
+    }
+  ],
+  "board_used": false,
+  "rta_used": false
+}
