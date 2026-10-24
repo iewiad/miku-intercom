@@ -1,5 +1,6 @@
 import {ControlClient, bindPTTPointer} from './app.js';
 import {AudioClient} from './audio.js';
+import {LifecycleLog} from './lifecycle.js';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const uid = () => crypto.randomUUID();
@@ -127,6 +128,7 @@ export class Terminal {
     this.samples = []; this.peers = new Set(); this.analyser = null; this.receiver = null;
     this.observed = new Map(); this.rtpLatest = []; this.startedAt = performance.now();
     this.binding = null; this.closed = false; this.pollTimer = null;
+    this.lifecycle = new LifecycleLog({startedAt: this.startedAt}); this.lifecyclePhase = null; this.lifecyclePeer = null;
     this.output = document.createElement('audio'); this.output.muted = true; this.output.autoplay = true;
     this.output.hidden = true; document.body.append(this.output);
     this.control = new ControlClient({onChange: () => { this.observePTT(); changed(); }, onIdentity: () => changed()});
@@ -141,12 +143,32 @@ export class Terminal {
       ...diagnosticSourceOptions(sourceKind, context, frequency),
       output: this.output,
       onRemoteStream: (stream, binding) => this.attachRemote(stream, binding),
-      onChange: () => { if (this.audio?.peer) this.peers.add(this.audio.peer); if (this.audio?.localStream) this.lastCapture = captureStatus(this.audio.localStream); changed(); },
+      onChange: () => {
+        if (this.audio?.peer) this.peers.add(this.audio.peer);
+        if (this.audio?.localStream) this.lastCapture = captureStatus(this.audio.localStream);
+        if (this.audio && (this.audio.phase !== this.lifecyclePhase || this.audio.peer !== this.lifecyclePeer)) {
+          this.lifecyclePhase = this.audio.phase; this.lifecyclePeer = this.audio.peer;
+          this.recordLifecycle('audio-state');
+        }
+        changed();
+      },
       onFailure: () => this.control.cancelFloor('媒体连接失败'),
     });
     this.audio.setListeningMuted(true);
     this.control.audio = this.audio;
     this.sampler = setInterval(() => this.sample(), 100);
+  }
+  recordLifecycle(event, nativeEvent = null, previous = {}) {
+    if (this.sourceKind !== 'system_microphone' || !this.lifecycle) return;
+    this.lifecycle.record(event, {
+      isTrusted: nativeEvent?.isTrusted, visibility: document.visibilityState,
+      hidden: document.hidden, focused: document.hasFocus(), phase: this.audio?.phase,
+      desired: this.audio?.desired, pressed: this.control.pressed, floorPhase: this.control.floorPhase,
+      currentVersion: this.control.state?.current_version, peer: this.audio?.peer,
+      track: this.audio?.localStream?.getAudioTracks?.()[0],
+      openPeers: [...this.peers].filter(peer => peer.connectionState !== 'closed').length,
+      outputAttached: !!this.output.srcObject, ...previous,
+    });
   }
   attachRemote(stream, binding) {
     if (this.analyser && this.binding) {
@@ -196,6 +218,7 @@ export class Terminal {
     const windows = [...this.windows, ...(this.activeWindow ? [{...this.activeWindow, ended: performance.now(), ended_at: null, capture_at_end: captureStatus(this.audio.localStream), inbound_after: this.rtpLatest}] : [])];
     return {terminal: this.label, source_kind: 'system_microphone', current_version: this.control.state?.current_version,
       capture: captureStatus(this.audio.localStream), last_capture: this.lastCapture,
+      lifecycle: this.lifecycle?.snapshot() || {events: [], dropped_events: 0},
       source_pcm: {...sourceObservation(this.sourceSamples), rolling_window: sampleWindow(this.sourceSamples, this.startedAt)},
       remote_pcm: {...remoteObservation(this.samples), rolling_window: sampleWindow(this.samples, this.startedAt)},
       inbound: this.rtpLatest, receive_history: this.history,
@@ -275,7 +298,9 @@ export class Terminal {
   }
   async close() {
     this.closed = true; clearInterval(this.sampler); clearInterval(this.pollTimer);
+    const previous = {previousPeer: this.audio.peer, previousTrack: this.audio.localStream?.getAudioTracks?.()[0]};
     this.control.cancelFloor(); await this.audio.disable(); this.attachRemote(null, null); this.attachLocal(null); this.output.remove();
+    this.recordLifecycle('disabled-closed', null, previous);
   }
 }
 
@@ -316,6 +341,9 @@ function bootDiagnostics() {
     selector.disabled = !single || !!single.control.pendingSwitch;
     $('single-switch').disabled = !single || !selector.value || !!single.control.pendingSwitch;
     $('single-media-state').textContent = single ? `音频：${single.audio.phase}；${single.audio.message || (single.audio.listeningMuted ? '收听静音；远端PCM仍测量，未做人工听测。' : '已允许播放；仍未记录人工听测结论。')}` : '尚未采集麦克风。';
+    const events = single?.lifecycle.snapshot().events || [], hiddenClose = events.filter(event => event.event_type === 'hidden-closed');
+    const last = events.at(-1), closed = hiddenClose.at(-1);
+    $('single-lifecycle-state').textContent = single ? `被动生命周期：${events.length} 条；隐藏关闭 ${hiddenClose.length} 次；最近 ${last?.event_type || '无'}；${closed ? `旧采集 ${closed.previous_capture?.track_state || 'none'} / 旧Peer ${closed.previous_peer?.state || 'none'}` : '尚未观察到隐藏关闭'}。` : '被动生命周期尚未开始；停止后的事件保留在报告中。';
   };
   initialization = new SingleInitialization(render);
   async function ensureContext() {
@@ -527,11 +555,19 @@ function bootDiagnostics() {
     catch (error) { $('single-status').textContent = `切群未完成：${String(error.message).slice(0, 120)}`; }
   });
   $('single-source').addEventListener('change', render);
-  window.addEventListener('blur', () => { if (!running) endPress(); });
-  document.addEventListener('visibilitychange', () => {
+  window.addEventListener('blur', event => {
     if (running || !single) return;
-    if (document.hidden) { endPress(); single.audio.suspend('页面隐藏，采集与旧Peer已关闭。'); }
-    else void single.control.refresh();
+    single.recordLifecycle('window-blur', event); endPress(); single.recordLifecycle('blur-cancelled', event);
+  });
+  window.addEventListener('focus', event => { if (!running && single) single.recordLifecycle('window-focus', event); });
+  document.addEventListener('visibilitychange', event => {
+    if (running || !single) return;
+    if (document.hidden) {
+      single.recordLifecycle('visibility-hidden', event);
+      const previous = {previousPeer: single.audio.peer, previousTrack: single.audio.localStream?.getAudioTracks?.()[0]};
+      endPress(); single.audio.suspend('页面隐藏，采集与旧Peer已关闭。');
+      single.recordLifecycle('hidden-closed', event, previous);
+    } else { single.recordLifecycle('visibility-visible', event); void single.control.refresh(); }
   });
   window.addEventListener('offline', () => { if (!running && single) { endPress(); single.control.connected = false; single.audio.suspend('离线，采集与旧Peer已关闭。'); } });
   window.addEventListener('online', () => { if (!running && single && !document.hidden) void single.control.refresh(); });

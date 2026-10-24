@@ -4,7 +4,7 @@
 
 首版目标：快速建群与口令入群、按住说话、按群名语音切换、断线后可信恢复。根据需求推荐协作群为增强项。普通群音频由独立对讲服务转发，RTA 只用于主动触发的语音指令。
 
-S1 群控制面与 S2 浏览器 WebRTC 群音频已合入 main（[PR #6](https://github.com/iewiad/miku-intercom/pull/6)）。真实系统麦克风采集与传输已有数值验证，诊断扩展及证据已随 [PR #7](https://github.com/iewiad/miku-intercom/pull/7) 合并；人工听测待完成。S3 首切片已随 [PR #10](https://github.com/iewiad/miku-intercom/pull/10) 合并，验证一板一浏览器的真实麦克风双向传输、松手停发及服务重启恢复。本分支继续增加板端已加入群切换，已完成三群隔离、十次连续切换及待确认操作跨软重启恢复；人工听测、板端口令键盘、主动语音切群与需求推荐仍待完成。实际验证以[验收记录](docs/acceptance.md)及对应 PR 为准。
+S1 群控制面与 S2 浏览器 WebRTC 群音频已合入 main（[PR #6](https://github.com/iewiad/miku-intercom/pull/6)）。真实系统麦克风采集与传输已有数值验证，诊断扩展及证据已随 [PR #7](https://github.com/iewiad/miku-intercom/pull/7) 合并；人工听测待完成。S3 首切片已随 [PR #10](https://github.com/iewiad/miku-intercom/pull/10) 合并，验证一板一浏览器的真实麦克风双向传输、松手停发及服务重启恢复。PR #11 已合并板端已加入群切换，已完成三群隔离、十次连续切换及待确认操作跨软重启恢复；人工听测、板端口令键盘、主动语音切群与需求推荐仍待完成。实际验证以[验收记录](docs/acceptance.md)及对应 PR 为准。
 
 ## 系统架构
 
