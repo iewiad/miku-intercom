@@ -80,7 +80,9 @@ class OfflineCheckTest(unittest.TestCase):
 
     def test_offline_environment_uses_one_fixed_configuration_without_download_or_module_mutation(self):
         original = {"PATH": "LOCAL_PATH", "GOPROXY": "https://example.invalid", "GONOPROXY": "*", "GOPRIVATE": "*", "GOVCS": "*:all", "GOTOOLCHAIN": "auto",
-                    "GOFLAGS": "-tags=offline -trimpath -mod=mod -modfile=/ignored/module.mod"}
+                    "GOFLAGS": "-tags=offline -trimpath -mod=mod -modfile=/ignored/module.mod",
+                    "NODE_OPTIONS": "--test-name-pattern=never --test-skip-pattern=.*",
+                    "PYTHONOPTIMIZE": "2"}
         env = check.offline_environment(original)
         self.assertEqual(env["GOPROXY"], "off")
         self.assertEqual(env["GONOPROXY"], "none")
@@ -90,6 +92,8 @@ class OfflineCheckTest(unittest.TestCase):
         self.assertEqual(env["GOTOOLCHAIN"], "local")
         self.assertEqual(env["GOWORK"], "off")
         self.assertEqual(env["GOFLAGS"], "-mod=readonly")
+        self.assertEqual(env["NODE_OPTIONS"], "")
+        self.assertEqual(env["PYTHONOPTIMIZE"], "0")
         self.assertEqual(env["PATH"], "LOCAL_PATH")
         self.assertEqual(original["GOTOOLCHAIN"], "auto")
 
@@ -172,6 +176,8 @@ class OfflineCheckTest(unittest.TestCase):
             self.assertEqual(env["GOPRIVATE"], "")
             self.assertEqual(env["GOVCS"], "*:off")
             self.assertEqual(env["GOFLAGS"], "-mod=readonly")
+            self.assertEqual(env["NODE_OPTIONS"], "")
+            self.assertEqual(env["PYTHONOPTIMIZE"], "0")
             log.write_text("test output\n")
             return len(calls) == 2
 

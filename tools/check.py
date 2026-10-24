@@ -69,9 +69,12 @@ def offline_environment(original=None):
     env = dict(os.environ if original is None else original)
     # Inherited flags may silently select/skip tests or change build tags. Use
     # one fixed configuration so a full-regression result cannot mean no tests.
+    # Node options can also filter tests or inject a loader; Python host runners
+    # rely on assertions, so do not inherit an optimization setting either.
     env.update(GOPROXY="off", GONOPROXY="none", GOPRIVATE="", GOVCS="*:off",
                GOSUMDB="off", GOTOOLCHAIN="local", GOWORK="off",
-               GOFLAGS="-mod=readonly", PYTHONDONTWRITEBYTECODE="1")
+               GOFLAGS="-mod=readonly", NODE_OPTIONS="", PYTHONOPTIMIZE="0",
+               PYTHONDONTWRITEBYTECODE="1")
     return env
 
 
@@ -177,6 +180,7 @@ def main(argv=None):
         for index, step in enumerate(steps(args.cjson_dir, args.lvgl_dir, args.build_dir or Path("<temporary-lvgl-cache>"), Path("<temporary-build>")), 1):
             print(f"{index:02d}. {step.name} (cwd: {step.cwd}): {shlex.join(step.command)}")
         print("Go: GOPROXY=off GONOPROXY=none GOVCS=*:off GOSUMDB=off GOTOOLCHAIN=local GOWORK=off GOFLAGS=-mod=readonly; inherited GOFLAGS ignored, GOPRIVATE cleared, tests use -count=1")
+        print("Node: inherited NODE_OPTIONS ignored; Python: PYTHONOPTIMIZE=0 keeps host assertions enabled")
         return 0
     try:
         env = offline_environment()
