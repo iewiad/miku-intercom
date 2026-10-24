@@ -1980,7 +1980,10 @@ void group_controller_print_status(void)
     webrtc_peer_group_get_stats(&stats);
     printf("INTERCOM_STATUS {\"configured\":%s,\"desired\":%s,\"connected\":%s,\"pressed\":%s,\"held\":%s,\"busy\":%s,"
            "\"source_frames\":%" PRIu64 ",\"sent_packets\":%" PRIu64 ",\"received_packets\":%" PRIu64 ",\"decoded_samples\":%" PRIu64 ","
-           "\"source_rms_peak\":%.6f,\"remote_rms_peak\":%.6f,\"heap_internal_free\":%u,"
+           "\"source_rms_peak\":%.6f,\"remote_rms_peak\":%.6f,"
+           "\"ptt_id\":%" PRIu32 ",\"ptt_start_us\":%" PRId64 ",\"ptt_end_us\":%" PRId64 ","
+           "\"ptt_raw_n\":%" PRIu64 ",\"ptt_raw_peak\":%.6f,\"ptt_raw_mean\":%.6f,"
+           "\"ptt_enc_n\":%" PRIu64 ",\"ptt_enc_peak\":%.6f,\"ptt_enc_mean\":%.6f,\"heap_internal_free\":%u,"
            "\"http_requests\":%" PRIu64 ",\"tls_connections\":%" PRIu64 ",\"http_failures\":%" PRIu64 ","
            "\"catalog_known\":%s,\"view_generation\":%" PRIu32 ",\"current_group_id\":\"%s\",\"current_version\":%" PRIu64 ","
            "\"group_count\":%u,\"switch_pending\":%s,\"switch_phase\":%u,\"switch_operation_id\":\"%s\",\"target_group_id\":\"%s\",\"command_kind\":%u,\"command_phase\":%u,\"command_revision\":%" PRIu32 "}\n",
@@ -1988,6 +1991,11 @@ void group_controller_print_status(void)
            snapshot.pressed ? "true" : "false", holding ? "true" : "false", snapshot.busy ? "true" : "false",
            stats.source_frames, stats.sent_packets, stats.received_packets, stats.decoded_samples,
            (double)stats.source_rms_peak, (double)stats.remote_rms_peak,
+           stats.ptt_id, stats.ptt_start_us, stats.ptt_end_us,
+           stats.ptt_raw_frames, (double)stats.ptt_raw_rms_peak,
+           stats.ptt_raw_frames ? stats.ptt_raw_rms_sum / stats.ptt_raw_frames : 0.0,
+           stats.ptt_encoder_frames, (double)stats.ptt_encoder_rms_peak,
+           stats.ptt_encoder_frames ? stats.ptt_encoder_rms_sum / stats.ptt_encoder_frames : 0.0,
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), requests, connections, failures,
            known ? "true" : "false", view, current, current_version, (unsigned)group_count,
            snapshot.switch_pending ? "true" : "false", (unsigned)phase, operation, target, command_kind, command_phase, command_revision);

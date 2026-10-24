@@ -59,6 +59,22 @@ typedef struct {
     uint64_t decoded_samples;
     float source_rms_peak;
     float remote_rms_peak;
+    /* Latest admitted PTT window, retained after close; timestamps are device
+     * uptime microseconds, end=0 while open, id=0 if no grant on this Peer.
+     * RMS is normalized [0,1]. Sums are sums of per-frame RMS; divide by the
+     * corresponding frame count for an arithmetic (frame-weighted) mean.
+     * Raw frames are mic0 before software AEC; encoder frames are the exact
+     * PCM input immediately before Opus processing, not successful packets.
+     */
+    uint32_t ptt_id;
+    int64_t ptt_start_us;
+    int64_t ptt_end_us;
+    uint64_t ptt_raw_frames;
+    uint64_t ptt_encoder_frames;
+    double ptt_raw_rms_sum;
+    double ptt_encoder_rms_sum;
+    float ptt_raw_rms_peak;
+    float ptt_encoder_rms_peak;
 } webrtc_group_stats_t;
 
 /** Establish one group audio Peer without opening an RTA session or DataChannel. */

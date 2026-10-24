@@ -1,0 +1,173 @@
+{
+  "date": "2026-10-24",
+  "scope": "one ESP32-S31 and two independently configured visible browser pages, fixed synthetic speech",
+  "status": "in_progress",
+  "source": {
+    "kind": "local macOS TTS WAV",
+    "seconds": 5.399875,
+    "sample_rate": 16000,
+    "channels": 1,
+    "sha256": "c8b6d6511972aadd1cdfee7f8773307485838671f162e9977c60d98cbdc903bd",
+    "browser_decoded_sample_rate": 48000,
+    "raw_environment_audio_saved": false
+  },
+  "initial_interrupted_attempts": {
+    "status": "source focus-loss cancellation verified",
+    "source_durations_ms": [
+      4026,
+      1546
+    ],
+    "both_ends_match_trusted_window_blur": true,
+    "source_track_disabled_after_each_blur": true,
+    "source_peer_stayed_connected": true,
+    "receiver_b_source_enabled_samples": 0,
+    "receiver_b_remote_pcm_peak": 0.1699,
+    "board_remote_pcm_peak": 0.185258,
+    "board_group_tx_packets": 0,
+    "user_observation": "audible but intermittent or incomplete",
+    "report_sha256": [
+      "79f4885cf17340fce5a7427259c9f376d8895ef9b9162f9846affc9819410807",
+      "bcb5e75aff35cabe101a84aade48bbb629a2bdfb305fba7850e0eea2a260efc5"
+    ]
+  },
+  "initial_acoustic_window": {
+    "classification": "before actual source transmission; not a negative speaker result",
+    "sampling_finished_at_unix": 1792849614.744996,
+    "first_voiced_board_observed_at_unix": 1792849676.546,
+    "raw_environment_audio_saved": false
+  },
+  "full_phrase_retest": {
+    "status": "human_complete_phrase_confirmed, latest source reports pending",
+    "source_a_to_board_complete_phrase": true,
+    "source_b_to_board_complete_phrase": true,
+    "foreground_instruction_seconds": 8,
+    "production_blur_guard_unchanged": true,
+    "board_connected": true,
+    "board_held_after": false,
+    "board_group_tx_packets": 0,
+    "automated_acoustic_result": "not independently passed; reference envelope correlation insufficient",
+    "source_a_ptt_ms": 5664,
+    "source_a_enabled_pcm_samples": 56,
+    "source_a_pcm_peak": 0.18386
+  },
+  "reverse_browser_direction": {
+    "status": "B-to-board human listening passed; A receive report pending"
+  },
+  "board_to_two_browsers": {
+    "status": "in_progress; first A headphone attempt had no audible output",
+    "board_to_a": {
+      "human_headphone_result": "no sound",
+      "human_builtin_speaker_reference_audible": true,
+      "floor_granted": true,
+      "sent_packet_delta": 348,
+      "released_after_test": true,
+      "http_failures": 0,
+      "source_pcm_peak_is_cumulative": true,
+      "known_phrase_captured_by_board_confirmed": false,
+      "receiver_a_latest_report": "pending",
+      "receiver_a_baseline": {
+        "report_sha256": "fd5be6c729d04cc35e6a88a55b0584793207afde0c0de9c52656156f12490e87",
+        "finished_at": "2026-10-24T14:16:37.131Z",
+        "received_packets": 57020,
+        "received_bytes": 227730,
+        "total_audio_energy": 0.00217,
+        "total_samples_duration": 1188.45,
+        "remote_rms_window": "after first attempt; cannot attribute absence of sound to that attempt",
+        "peer_connected": true,
+        "document_hidden": false
+      },
+      "hidden_retest": {
+        "report_sha256": "354f86987a6681676df05cbfb5dcccaad19c169fd0fff1801f7ad9d43dfd9274",
+        "classification": "invalid for listening; receiver peer closed during entire source window",
+        "receiver_hidden_at": "2026-10-24T14:16:39.897Z",
+        "receiver_closed_at": "2026-10-24T14:16:39.900Z",
+        "source_started_at": "2026-10-24T14:17:58.374Z",
+        "source_ended_at": "2026-10-24T14:18:05.345Z",
+        "receiver_visible_at": "2026-10-24T14:18:31.052Z",
+        "receiver_ready_at": "2026-10-24T14:18:31.237Z",
+        "sent_packet_delta": 337,
+        "cross_peer_counter_subtraction_performed": false,
+        "board_released_after_test": true
+      },
+      "visible_retest": {
+        "report_sha256": "488dba6e9f6131078237c3c03b100ec9d591f29f3a8b7e36a0eaee0c9ff58962",
+        "receiver_ready_at": "2026-10-24T14:20:10.517Z",
+        "source_started_at": "2026-10-24T14:20:17.844Z",
+        "source_ended_at": "2026-10-24T14:20:24.844Z",
+        "report_finished_at": "2026-10-24T14:20:29.385Z",
+        "receiver_visible_throughout": true,
+        "received_packets": 905,
+        "received_bytes": 21715,
+        "decoded_audio_energy": 1e-05,
+        "decoded_seconds": 18.86,
+        "remote_rms_peak": 0.00098,
+        "remote_rms_mean": 1e-05,
+        "source_board_tx_packets": 332,
+        "board_released_after_test": true,
+        "classification": "very low decoded signal; source processing and acoustic level under investigation",
+        "human_headphone_result": "not supplied"
+      }
+    },
+    "board_to_b": {
+      "status": "pending"
+    }
+  },
+  "subjective_echo_and_latency": {
+    "status": "pending"
+  },
+  "board_capture_levels": {
+    "application": {
+      "bytes": 2824112,
+      "sha256": "07a30bb329f1c09c996a7b0574d7a024cb042d0a1ba11fb36bb206554369a9af",
+      "app_offset": "0x10000",
+      "flash_scope": "application only"
+    },
+    "independent_flash_digest_matched": true,
+    "wifi_and_group_configuration_recovered": true,
+    "group_count_after_restart": 6,
+    "raw_pcm_saved": false,
+    "normalization": "RMS / full-scale; mean is arithmetic average of per-frame RMS",
+    "windows": [
+      {
+        "source_player_volume": 0.0,
+        "duration_ms": 6756,
+        "raw_frames": 337,
+        "raw_rms_peak": 0.001478,
+        "raw_rms_mean": 0.000379,
+        "encoder_frames": 336,
+        "encoder_rms_peak": 0.001498,
+        "encoder_rms_mean": 0.000372,
+        "sent_packets": 336,
+        "released_after_test": true,
+        "http_failures": 0
+      },
+      {
+        "source_player_volume": 0.25,
+        "duration_ms": 6965,
+        "raw_frames": 347,
+        "raw_rms_peak": 0.013999,
+        "raw_rms_mean": 0.001644,
+        "encoder_frames": 347,
+        "encoder_rms_peak": 0.012808,
+        "encoder_rms_mean": 0.001625,
+        "sent_packets": 347,
+        "released_after_test": true,
+        "http_failures": 0
+      },
+      {
+        "source_player_volume": 0.5,
+        "duration_ms": 6977,
+        "raw_frames": 347,
+        "raw_rms_peak": 0.02295,
+        "raw_rms_mean": 0.001611,
+        "encoder_frames": 347,
+        "encoder_rms_peak": 0.017684,
+        "encoder_rms_mean": 0.001623,
+        "sent_packets": 347,
+        "released_after_test": true,
+        "http_failures": 0
+      }
+    ],
+    "interpretation": "No large raw-to-encoder mean reduction in these windows. Current acoustic input is low; source-level calibration pending. Counts and PCM aggregates do not prove phrase intelligibility."
+  }
+}

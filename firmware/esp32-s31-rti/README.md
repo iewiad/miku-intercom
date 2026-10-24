@@ -91,6 +91,17 @@ path. I2S driver buffers still use DMA; AEC DMA_ATTR arrays remain internal.
 This does not move every audio allocation into PSRAM, and the RTA mode's original
 `malloc` path for these workspaces is unchanged.
 
+`INTERCOM_STATUS` includes the latest granted PTT window as `ptt_id`,
+`ptt_start_us` and `ptt_end_us` (device uptime microseconds; end is zero while
+open). `ptt_raw_n/peak/mean` measure mic0 before software AEC, while
+`ptt_enc_n/peak/mean` measure the actual PCM immediately before Opus encoding.
+RMS is normalized to [0,1], and means average per-frame RMS. A new grant resets
+the window; lease renewal preserves it; release, expiry or suspension closes it.
+No PCM is stored. Compare multi-second windows: capture and encoder frame
+boundaries differ, and the encoder count does not assert a successful send.
+The older `source_rms_peak` is cumulative for the Peer, including unpressed
+capture, so it cannot establish the level of one particular transmission.
+
 The following is the historical **PR #10 first-slice** evidence, not validation
 of the current multi-group image. Its application is **2,606,960 B**, SHA256:
 

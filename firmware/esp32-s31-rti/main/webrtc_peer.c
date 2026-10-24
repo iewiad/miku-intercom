@@ -344,6 +344,68 @@ static EventBits_t wait_peer_bits(EventBits_t bits, TickType_t timeout)
 }
 
 
+/* Statistics never open/close media admission. Call the locked helpers only
+ * under group_state_lock; expensive PCM RMS calculation stays outside it. */
+static void group_ptt_close_window_locked(int64_t now)
+{
+    if (group_stats.ptt_id != 0 && group_stats.ptt_end_us == 0) {
+        group_stats.ptt_end_us = group_send_expires_at_us > 0 &&
+                                 group_send_expires_at_us < now
+                                     ? group_send_expires_at_us : now;
+    }
+}
+
+static void group_ptt_begin_window_locked(int64_t now)
+{
+    group_stats.ptt_id = group_send_epoch;
+    group_stats.ptt_start_us = now;
+    group_stats.ptt_end_us = 0;
+    group_stats.ptt_raw_frames = 0;
+    group_stats.ptt_encoder_frames = 0;
+    group_stats.ptt_raw_rms_sum = 0;
+    group_stats.ptt_encoder_rms_sum = 0;
+    group_stats.ptt_raw_rms_peak = 0;
+    group_stats.ptt_encoder_rms_peak = 0;
+}
+
+static bool group_ptt_capture_epoch(uint32_t *epoch)
+{
+    const int64_t now = esp_timer_get_time();
+    portENTER_CRITICAL(&group_state_lock);
+    const bool allowed = group_mode_active && group_transport_connected &&
+                         group_audio_ready && !group_media_suspended &&
+                         group_send_enabled && group_send_expires_at_us > now &&
+                         group_stats.ptt_id == group_send_epoch &&
+                         group_stats.ptt_end_us == 0;
+    if (epoch != NULL) *epoch = group_send_epoch;
+    portEXIT_CRITICAL(&group_state_lock);
+    return allowed;
+}
+
+static void group_ptt_record_rms(uint32_t epoch, float rms, bool encoder_input)
+{
+    const int64_t now = esp_timer_get_time();
+    portENTER_CRITICAL(&group_state_lock);
+    if (epoch == group_send_epoch && group_stats.ptt_id == epoch &&
+        group_stats.ptt_end_us == 0 && group_mode_active &&
+        group_transport_connected && group_audio_ready &&
+        !group_media_suspended && group_send_enabled &&
+        group_send_expires_at_us > now) {
+        if (encoder_input) {
+            ++group_stats.ptt_encoder_frames;
+            group_stats.ptt_encoder_rms_sum += rms;
+            if (rms > group_stats.ptt_encoder_rms_peak)
+                group_stats.ptt_encoder_rms_peak = rms;
+        } else {
+            ++group_stats.ptt_raw_frames;
+            group_stats.ptt_raw_rms_sum += rms;
+            if (rms > group_stats.ptt_raw_rms_peak)
+                group_stats.ptt_raw_rms_peak = rms;
+        }
+    }
+    portEXIT_CRITICAL(&group_state_lock);
+}
+
 void webrtc_peer_group_set_sending(bool enabled, int64_t expires_at_us)
 {
     const int64_t now = esp_timer_get_time();
@@ -352,7 +414,9 @@ void webrtc_peer_group_set_sending(bool enabled, int64_t expires_at_us)
                        group_audio_ready && !group_media_suspended && expires_at_us > now;
     if (allow != group_send_enabled) {
         ++group_send_epoch;
+        if (allow) group_ptt_begin_window_locked(now);
     }
+    if (!allow) group_ptt_close_window_locked(now);
     group_send_enabled = allow;
     group_send_expires_at_us = allow ? expires_at_us : 0;
     portEXIT_CRITICAL(&group_state_lock);
@@ -363,6 +427,7 @@ static bool group_sending_allowed(uint32_t *epoch)
     const int64_t now = esp_timer_get_time();
     portENTER_CRITICAL(&group_state_lock);
     if (group_send_enabled && group_send_expires_at_us <= now) {
+        group_ptt_close_window_locked(now);
         group_send_enabled = false;
         group_send_expires_at_us = 0;
         ++group_send_epoch;
@@ -391,6 +456,7 @@ void webrtc_peer_group_suspend_media(void)
     // The gate cannot be reopened on this Peer; only a new group start resets it.
     portENTER_CRITICAL(&group_state_lock);
     if (group_mode_active) {
+        group_ptt_close_window_locked(esp_timer_get_time());
         group_media_suspended = true;
         group_send_enabled = false;
         group_send_expires_at_us = 0;
@@ -412,14 +478,19 @@ void webrtc_peer_group_get_stats(webrtc_group_stats_t *stats)
     if (stats == NULL) {
         return;
     }
+    const int64_t now = esp_timer_get_time();
     portENTER_CRITICAL(&group_state_lock);
+    if (group_send_enabled && group_send_expires_at_us <= now)
+        group_ptt_close_window_locked(now);
     *stats = group_stats;
     portEXIT_CRITICAL(&group_state_lock);
 }
 
 static void group_mark_unavailable(void)
 {
+    const int64_t now = esp_timer_get_time();
     portENTER_CRITICAL(&group_state_lock);
+    group_ptt_close_window_locked(now);
     group_audio_ready = false;
     group_media_suspended = true;
     group_transport_connected = false;
@@ -1543,6 +1614,9 @@ static void microphone_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
+        uint32_t raw_ptt_epoch = 0;
+        const bool raw_ptt_admitted = rtc.group_mode &&
+                                      group_ptt_capture_epoch(&raw_ptt_epoch);
 #if CONFIG_MIKU_RTI_OFFICIAL_CAPTURE_AEC
         esp_capture_stream_frame_t capture_frame = {
             .stream_type = ESP_CAPTURE_STREAM_TYPE_AUDIO,
@@ -1597,6 +1671,9 @@ static void microphone_task(void *arg)
                 group_stats.source_rms_peak = rms;
             }
             portEXIT_CRITICAL(&group_state_lock);
+            // Count only reads admitted and completed in the same live window.
+            // ADC/DMA capture timestamps are not available here.
+            if (raw_ptt_admitted) group_ptt_record_rms(raw_ptt_epoch, rms, false);
             uint32_t epoch;
             (void)group_sending_allowed(&epoch);
             if (epoch != observed_send_epoch) {
@@ -1840,8 +1917,8 @@ static void microphone_task(void *arg)
             // AEC/reference consumption above is continuous even while PTT is
             // closed. Only cleaned audio from the current live grant may enter
             // the encoder, and the send path checks the grant once more.
+            uint32_t encode_epoch = 0;
             if (rtc.group_mode) {
-                uint32_t encode_epoch;
                 if (!group_sending_allowed(&encode_epoch) ||
                     encode_epoch != observed_send_epoch) {
                     clean_samples = 0;
@@ -1853,6 +1930,10 @@ static void microphone_task(void *arg)
             }
             if (gate_uplink) {
                 memset(clean_accumulator, 0, rtc.encoder_input_size);
+            }
+            if (rtc.group_mode) {
+                const float rms = pcm_rms(clean_accumulator, encoder_samples);
+                group_ptt_record_rms(encode_epoch, rms, true);
             }
             esp_audio_enc_in_frame_t input = {
                 .buffer = (uint8_t *)clean_accumulator,
