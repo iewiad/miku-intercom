@@ -47,11 +47,12 @@ def read_config(path: str) -> bytearray:
     if len(raw) > 16384:
         raise ValueError("configuration file exceeds 16 KiB")
     config = json.loads(raw, object_pairs_hook=unique_object)
-    if not isinstance(config, dict) or set(config) != set(FIELDS):
-        raise ValueError("configuration requires exactly the five documented fields")
+    if not isinstance(config, dict) or set(config) not in (set(FIELDS), set(FIELDS) - {"group_code"}):
+        raise ValueError("configuration requires server_url, ca_pem, device_id, token and optional group_code")
+    config.setdefault("group_code", "")
     for key, maximum in FIELDS.items():
         value = config[key]
-        if not isinstance(value, str) or not value or "\0" in value or len(value.encode("ascii")) > maximum:
+        if not isinstance(value, str) or (not value and key != "group_code") or "\0" in value or len(value.encode("ascii")) > maximum:
             raise ValueError("configuration contains an invalid field length or encoding")
     match = re.fullmatch(r"https://([0-9.]+):([1-9][0-9]{0,4})", config["server_url"])
     if not match:
@@ -60,7 +61,7 @@ def read_config(path: str) -> bytearray:
     if str(address) != match[1] or not any(address in network for network in NETWORKS) or port > 65535:
         raise ValueError("server_url must use a canonical RFC1918 IPv4 address and valid port")
     for key in ("device_id", "token", "group_code"):
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", config[key]):
+        if config[key] and not re.fullmatch(r"[A-Za-z0-9_-]+", config[key]):
             raise ValueError("identity, token and group code must contain only letters, digits, underscore or hyphen")
     pem = config["ca_pem"]
     certificates = re.findall(r"-----BEGIN CERTIFICATE-----\r?\n([A-Za-z0-9+/=\r\n]+)-----END CERTIFICATE-----", pem)
@@ -176,7 +177,7 @@ def generation_argument(value: str) -> int:
 def parse_arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", help="USB serial port")
-    parser.add_argument("--config-file", help="owner-only JSON file containing server_url, ca_pem, device_id, token and group_code")
+    parser.add_argument("--config-file", help="owner-only JSON file containing server_url, ca_pem, device_id, token and optional group_code")
     parser.add_argument("--status", action="store_true", help="only report whether group configuration exists (default)")
     parser.add_argument("--restart", action="store_true", help="restart after writing a configuration")
     parser.add_argument("--sync-time", action="store_true", help="send current UTC time, after any requested restart")

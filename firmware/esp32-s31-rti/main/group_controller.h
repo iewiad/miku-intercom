@@ -15,3 +15,7 @@ void group_controller_ptt(bool pressed, void *context);
 esp_err_t group_controller_switch_group(const char *target_group_id, uint32_t view_generation, void *context);
 void group_controller_print_status(void);
 void group_controller_print_groups(void);
+
+/* These intents synchronously cancel PTT; the worker performs all network I/O. */
+esp_err_t group_controller_join_group(const char *code, void *context);
+esp_err_t group_controller_voice_action(bool cancel, void *context);

@@ -42,6 +42,7 @@
 #define RTC_EVENT_PLAYBACK_DONE BIT5
 #define RTC_EVENT_DATA_DONE BIT6
 #define RTC_EVENT_CONNECTED BIT7
+#define RTC_EVENT_COMMAND_READY BIT8
 #define RTC_SIGNAL_TIMEOUT_MS 25000
 #define RTC_EVENT_JSON_MAX (12 * 1024)
 #define RTC_DATA_EVENT_QUEUE_LENGTH 32
@@ -142,6 +143,7 @@ typedef struct {
 
 typedef struct {
     size_t size;
+    uint32_t command_generation;
     uint8_t data[];
 } data_event_t;
 
@@ -157,6 +159,10 @@ typedef struct {
     bool audio_running;
     bool data_channel_requested;
     bool group_mode;
+    bool command_mode;
+    uint32_t command_generation;
+    webrtc_command_event_cb_t command_callback;
+    void *command_context;
     EventBits_t retired_workers;
     char *local_sdp;
     uint16_t data_stream_id;
@@ -202,6 +208,141 @@ static bool group_send_enabled;
 static int64_t group_send_expires_at_us;
 static uint32_t group_send_epoch;
 static webrtc_group_stats_t group_stats;
+static rta_command_state_t command_state;
+static webrtc_command_stats_t command_stats;
+
+void webrtc_peer_command_get_stats(webrtc_command_stats_t *stats)
+{
+    if (stats == NULL) return;
+    portENTER_CRITICAL(&group_state_lock);
+    *stats = command_stats;
+    portEXIT_CRITICAL(&group_state_lock);
+}
+
+static void command_log_stats(const char *phase)
+{
+    webrtc_command_stats_t stats;
+    webrtc_peer_command_get_stats(&stats);
+    ESP_LOGI(TAG, "RTA_COMMAND stats phase=%s bootstrap_admitted=%" PRIu64
+                 " bootstrap_sent=%" PRIu64 " mic_reads=%" PRIu64
+                 " audio_sent=%" PRIu64 " dc_frames=%" PRIu32 " dc_events=%" PRIu32,
+                 phase, stats.bootstrap_admitted, stats.bootstrap_sent,
+                 stats.microphone_reads, stats.audio_sent, stats.data_frames, stats.data_events);
+}
+
+static bool command_admit_microphone_read(void)
+{
+    portENTER_CRITICAL(&group_state_lock);
+    const bool allowed = rta_command_media_allowed(&command_state);
+    if (allowed) ++command_stats.microphone_reads;
+    portEXIT_CRITICAL(&group_state_lock);
+    return allowed;
+}
+
+static bool command_admit_bootstrap(void)
+{
+    portENTER_CRITICAL(&group_state_lock);
+    const bool allowed = command_state.active && !command_state.terminal && !command_state.ready &&
+                         command_state.audio_available;
+    if (allowed) ++command_stats.bootstrap_admitted;
+    portEXIT_CRITICAL(&group_state_lock);
+    return allowed;
+}
+
+static void command_send_bootstrap(uint32_t *next_pts)
+{
+    // Some RTC routes only surface remote track/data initialization after the
+    // first RTP packet. Prime that path without ever reading the microphone.
+    // As with normal media, a packet admitted before cancel may be in-flight.
+    static const uint8_t silence[] = {0xf8, 0xff, 0xfe};
+    if (!rtc.command_mode || !rtc.running || !rtc.audio_running || rtc.peer == NULL ||
+        !command_admit_bootstrap()) return;
+    esp_peer_audio_frame_t frame = {
+        .pts = *next_pts, .data = (uint8_t *)silence, .size = sizeof(silence),
+    };
+    *next_pts += 20;
+    if (esp_peer_send_audio(rtc.peer, &frame) == ESP_PEER_ERR_NONE) {
+        portENTER_CRITICAL(&group_state_lock);
+        ++command_stats.bootstrap_sent;
+        portEXIT_CRITICAL(&group_state_lock);
+    }
+}
+
+static esp_err_t fail_peer_start(const char *stage, esp_err_t error)
+{
+    if (rtc.command_mode) {
+        ESP_LOGW(TAG, "RTA_COMMAND start_failure stage=%s err=%s", stage, esp_err_to_name(error));
+        command_log_stats("start_failure");
+    }
+    webrtc_peer_stop();
+    return error;
+}
+
+
+void webrtc_peer_command_cancel(void)
+{
+    // This flag admission gate is deliberately independent of resource teardown.
+    // The single lifecycle worker joins the codec/Peer workers in stop().
+    portENTER_CRITICAL(&group_state_lock);
+    rta_command_cancel(&command_state);
+    portEXIT_CRITICAL(&group_state_lock);
+}
+
+static bool command_media_allowed(void)
+{
+    portENTER_CRITICAL(&group_state_lock);
+    const bool allowed = rta_command_media_allowed(&command_state);
+    portEXIT_CRITICAL(&group_state_lock);
+    return allowed;
+}
+
+static bool command_active(void)
+{
+    portENTER_CRITICAL(&group_state_lock);
+    const bool active = command_state.active && !command_state.terminal;
+    portEXIT_CRITICAL(&group_state_lock);
+    return active;
+}
+
+static void command_deliver(const webrtc_command_event_t *event)
+{
+    if (event->type == WEBRTC_COMMAND_READY) {
+        xEventGroupSetBits(rtc.events, RTC_EVENT_COMMAND_READY);
+    } else if (event->type == WEBRTC_COMMAND_ERROR) {
+        xEventGroupSetBits(rtc.events, RTC_EVENT_FAILED);
+    }
+    if (rtc.command_callback != NULL) rtc.command_callback(event, rtc.command_context);
+}
+
+static void command_accept_input(uint32_t generation, const rta_command_input_t *input)
+{
+    webrtc_command_event_t event;
+    portENTER_CRITICAL(&group_state_lock);
+    const bool deliver = rta_command_accept(&command_state, generation, input, &event);
+    portEXIT_CRITICAL(&group_state_lock);
+    if (deliver) command_deliver(&event);
+}
+
+static void command_fail(esp_err_t error)
+{
+    if (!rtc.command_mode) return;
+    const rta_command_input_t input = {.type = RTA_COMMAND_INPUT_ERROR, .error = error};
+    command_accept_input(rtc.command_generation, &input);
+}
+
+static EventBits_t wait_peer_bits(EventBits_t bits, TickType_t timeout)
+{
+    if (!rtc.command_mode) return xEventGroupWaitBits(rtc.events, bits, pdFALSE, pdFALSE, timeout);
+    const TickType_t started = xTaskGetTickCount();
+    for (;;) {
+        EventBits_t observed = xEventGroupWaitBits(rtc.events, bits, pdFALSE, pdFALSE, 0);
+        if ((observed & bits) != 0) return observed;
+        if (!command_active()) return RTC_EVENT_FAILED;
+        observed = xEventGroupWaitBits(rtc.events, bits, pdFALSE, pdFALSE, pdMS_TO_TICKS(100));
+        if ((observed & bits) != 0 || xTaskGetTickCount() - started >= timeout) return observed;
+    }
+}
+
 
 void webrtc_peer_group_set_sending(bool enabled, int64_t expires_at_us)
 {
@@ -613,9 +754,23 @@ static void flush_pending_assistant_transcript(void)
     }
 }
 
-static void handle_realtime_event(const uint8_t *data, size_t size)
+static void handle_realtime_event(const uint8_t *data, size_t size, uint32_t command_generation)
 {
     if (data == NULL || size == 0 || size > RTC_EVENT_JSON_MAX) {
+        return;
+    }
+    if (rtc.command_mode) {
+        rta_command_input_t input;
+        rta_command_parse_event(data, size, &input);
+        portENTER_CRITICAL(&group_state_lock);
+        const uint32_t count = ++command_stats.data_events;
+        portEXIT_CRITICAL(&group_state_lock);
+        if (count <= 8 || count % 50 == 0 || input.type != RTA_COMMAND_INPUT_IGNORE) {
+            ESP_LOGI(TAG, "RTA_COMMAND dc_event type=%s bytes=%u parse=%s",
+                     input.event_type, (unsigned)size, input.parse_reason);
+        }
+        command_accept_input(command_generation, &input);
+        memset(&input, 0, sizeof(input));
         return;
     }
     char *json = malloc(size + 1);
@@ -722,6 +877,10 @@ static int peer_state_handler(esp_peer_state_t state, void *ctx)
             }
         }
         return 0;
+    }
+    if (rtc.command_mode && (state == ESP_PEER_STATE_CONNECT_FAILED ||
+                             state == ESP_PEER_STATE_DISCONNECTED || state == ESP_PEER_STATE_CLOSED)) {
+        command_fail(ESP_FAIL);
     }
     if (state == ESP_PEER_STATE_CONNECT_FAILED) {
         xEventGroupSetBits(rtc.events, RTC_EVENT_FAILED);
@@ -962,63 +1121,62 @@ static esp_err_t send_data_payload(const char *payload)
     return esp_peer_send_data(rtc.peer, &frame) == ESP_PEER_ERR_NONE ? ESP_OK : ESP_FAIL;
 }
 
-static esp_err_t send_session_update(void)
+static char *build_session_update_payload(bool command_mode)
 {
     cJSON *root = cJSON_CreateObject();
-    cJSON *session = cJSON_CreateObject();
-    cJSON *modalities = cJSON_CreateArray();
-    cJSON *transcription = cJSON_CreateObject();
-    cJSON *turn = cJSON_CreateObject();
-    if (root == NULL || session == NULL || modalities == NULL || transcription == NULL || turn == NULL) {
+    if (root == NULL) return NULL;
+    cJSON *session = cJSON_AddObjectToObject(root, "session");
+    cJSON *modalities = session == NULL ? NULL : cJSON_AddArrayToObject(session, "modalities");
+    cJSON *transcription = session == NULL ? NULL : cJSON_AddObjectToObject(session, "input_audio_transcription");
+    cJSON *turn = session == NULL ? NULL : cJSON_AddObjectToObject(session, "turn_detection");
+    if (session == NULL || modalities == NULL || transcription == NULL || turn == NULL ||
+        !cJSON_AddStringToObject(root, "type", "session.update") ||
+        !cJSON_AddItemToArray(modalities, cJSON_CreateString("text")) ||
+        !cJSON_AddItemToArray(modalities, cJSON_CreateString("audio")) ||
+        !cJSON_AddStringToObject(session, "voice", rti_session_get_voice_profile()) ||
+        !cJSON_AddStringToObject(session, "input_audio_format", "pcm") ||
+        !cJSON_AddStringToObject(session, "output_audio_format", "pcm") ||
+        !cJSON_AddStringToObject(transcription, "model", "qwen3-asr-flash-realtime") ||
+        !cJSON_AddStringToObject(turn, "type", "semantic_vad") ||
+        !cJSON_AddNumberToObject(turn, "threshold", 0.5) ||
+        !cJSON_AddNumberToObject(turn, "silence_duration_ms", 1100) ||
+        !cJSON_AddBoolToObject(turn, "create_response", !command_mode) ||
+        !cJSON_AddBoolToObject(turn, "interrupt_response", !command_mode)) {
         cJSON_Delete(root);
-        cJSON_Delete(session);
-        cJSON_Delete(modalities);
-        cJSON_Delete(transcription);
-        cJSON_Delete(turn);
-        return ESP_ERR_NO_MEM;
+        return NULL;
     }
-    cJSON_AddItemToArray(modalities, cJSON_CreateString("text"));
-    cJSON_AddItemToArray(modalities, cJSON_CreateString("audio"));
-    cJSON_AddStringToObject(root, "type", "session.update");
-    cJSON_AddItemToObject(root, "session", session);
-    cJSON_AddItemToObject(session, "modalities", modalities);
-    cJSON_AddStringToObject(session, "voice", rti_session_get_voice_profile());
-    cJSON_AddStringToObject(session, "input_audio_format", "pcm");
-    cJSON_AddStringToObject(session, "output_audio_format", "pcm");
-    char instructions[384];
-    strlcpy(instructions,
-            board_display_is_chinese()
-                ? "你是" APP_DISPLAY_NAME "的实时语音助手。请用中文自然对话，回答简洁，适合语音播报。"
-                  "当用户询问天气、新闻、价格、赛果等实时信息时，请使用网络搜索后再回答。"
-                : "You are the voice assistant in " APP_DISPLAY_NAME ". Reply naturally and concisely in English. "
-                  "Use web search before answering questions about current weather, news, prices, or scores.",
-            sizeof(instructions));
-    cJSON_AddStringToObject(session, "instructions", instructions);
+    const char *instructions = command_mode
+        ? "Only transcribe the user's group switch command. Do not respond or greet."
+        : board_display_is_chinese()
+            ? "你是" APP_DISPLAY_NAME "的实时语音助手。请用中文自然对话，回答简洁，适合语音播报。"
+              "当用户询问天气、新闻、价格、赛果等实时信息时，请使用网络搜索后再回答。"
+            : "You are the voice assistant in " APP_DISPLAY_NAME ". Reply naturally and concisely in English. "
+              "Use web search before answering questions about current weather, news, prices, or scores.";
+    // Search is disabled by the command create-session request. The legacy
+    // RTC session.update rejects an explicit enable_search:false field.
+    if (!cJSON_AddStringToObject(session, "instructions", instructions)) {
+        cJSON_Delete(root);
+        return NULL;
+    }
 #if CONFIG_MIKU_RTI_ENABLE_WEB_SEARCH
-    cJSON *search_options = cJSON_CreateObject();
-    if (search_options == NULL ||
-        !cJSON_AddBoolToObject(session, "enable_search", true) ||
-        !cJSON_AddBoolToObject(search_options, "enable_source", true)) {
-        cJSON_Delete(search_options);
-        cJSON_Delete(root);
-        return ESP_ERR_NO_MEM;
+    if (!command_mode) {
+        cJSON *search_options = cJSON_AddObjectToObject(session, "search_options");
+        if (search_options == NULL || !cJSON_AddBoolToObject(session, "enable_search", true) ||
+            !cJSON_AddBoolToObject(search_options, "enable_source", true)) {
+            cJSON_Delete(root);
+            return NULL;
+        }
     }
-    cJSON_AddItemToObject(session, "search_options", search_options);
 #endif
-    cJSON_AddStringToObject(transcription, "model", "qwen3-asr-flash-realtime");
-    cJSON_AddItemToObject(session, "input_audio_transcription", transcription);
-    cJSON_AddStringToObject(turn, "type", "semantic_vad");
-    cJSON_AddNumberToObject(turn, "threshold", 0.5);
-    cJSON_AddNumberToObject(turn, "silence_duration_ms", 1100);
-    cJSON_AddBoolToObject(turn, "create_response", true);
-    cJSON_AddBoolToObject(turn, "interrupt_response", true);
-    cJSON_AddItemToObject(session, "turn_detection", turn);
-
     char *payload = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
-    if (payload == NULL) {
-        return ESP_ERR_NO_MEM;
-    }
+    return payload;
+}
+
+static esp_err_t send_session_update(void)
+{
+    char *payload = build_session_update_payload(rtc.command_mode);
+    if (payload == NULL) return ESP_ERR_NO_MEM;
     const esp_err_t err = send_data_payload(payload);
     free(payload);
     return err;
@@ -1088,11 +1246,20 @@ static int peer_channel_open_handler(esp_peer_data_channel_info_t *channel, void
 static int peer_data_handler(esp_peer_data_frame_t *frame, void *ctx)
 {
     (void)ctx;
-    if (!rtc.running || frame == NULL || frame->data == NULL || frame->size <= 0 ||
+    if (!rtc.running || (rtc.command_mode && !command_active()) ||
+        frame == NULL || frame->data == NULL || frame->size <= 0 ||
         frame->size > RTC_EVENT_JSON_MAX || rtc.data_queue == NULL) {
         return 0;
     }
     const size_t size = (size_t)frame->size;
+    if (rtc.command_mode) {
+        portENTER_CRITICAL(&group_state_lock);
+        const uint32_t count = ++command_stats.data_frames;
+        portEXIT_CRITICAL(&group_state_lock);
+        if (count <= 8 || count % 50 == 0) {
+            ESP_LOGI(TAG, "RTA_COMMAND dc_frame format=%d bytes=%d", (int)frame->type, frame->size);
+        }
+    }
     data_event_t *event = heap_caps_malloc(
         sizeof(*event) + size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (event == NULL) {
@@ -1104,6 +1271,7 @@ static int peer_data_handler(esp_peer_data_frame_t *frame, void *ctx)
         return 0;
     }
     event->size = size;
+    event->command_generation = rtc.command_generation;
     memcpy(event->data, frame->data, size);
     if (xQueueSend(rtc.data_queue, &event, 0) != pdTRUE) {
         free(event);
@@ -1120,6 +1288,7 @@ static int peer_channel_close_handler(esp_peer_data_channel_info_t *channel, voi
     (void)channel;
     (void)ctx;
     ESP_LOGI(TAG, "oai-events DataChannel closed");
+    command_fail(ESP_FAIL);
     return 0;
 }
 
@@ -1136,7 +1305,7 @@ static int peer_audio_info_handler(esp_peer_audio_stream_info_t *info, void *ctx
 static int peer_audio_data_handler(esp_peer_audio_frame_t *frame, void *ctx)
 {
     (void)ctx;
-    if (!rtc.audio_running || frame == NULL || frame->data == NULL || frame->size <= 0 ||
+    if (rtc.command_mode || !rtc.audio_running || frame == NULL || frame->data == NULL || frame->size <= 0 ||
         frame->size > RTC_OPUS_PACKET_MAX || rtc.playback_queue == NULL ||
         (rtc.group_mode && !group_receiving_allowed())) {
         return 0;
@@ -1362,6 +1531,18 @@ static void microphone_task(void *arg)
 #endif
     size_t clean_samples = 0;
     while (rtc.audio_running) {
+        if (rtc.command_mode && !command_admit_microphone_read()) {
+            // No microphone read or stale partial frame is admitted before
+            // provider acknowledgement. Only fixed generated silence may prime
+            // the RTC path while this active command is still initializing.
+            clean_samples = 0;
+#if !CONFIG_MIKU_RTI_OFFICIAL_CAPTURE_AEC
+            mic_samples = 0;
+#endif
+            command_send_bootstrap(&next_pts);
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
 #if CONFIG_MIKU_RTI_OFFICIAL_CAPTURE_AEC
         esp_capture_stream_frame_t capture_frame = {
             .stream_type = ESP_CAPTURE_STREAM_TYPE_AUDIO,
@@ -1383,7 +1564,14 @@ static void microphone_task(void *arg)
             continue;
         }
 #endif
-        const bool agent_speaking = !rtc.group_mode &&
+        if (rtc.command_mode && !command_media_allowed()) {
+            clean_samples = 0;
+#if !CONFIG_MIKU_RTI_OFFICIAL_CAPTURE_AEC
+            mic_samples = 0;
+#endif
+            continue;
+        }
+        const bool agent_speaking = !rtc.group_mode && !rtc.command_mode &&
                                     rti_app_get_state() == RTI_APP_STATE_AGENT_SPEAKING;
         for (size_t index = 0; index < RTC_CAPTURE_FRAME_SAMPLES; ++index) {
 #if CONFIG_MIKU_RTI_OFFICIAL_CAPTURE_AEC
@@ -1645,6 +1833,10 @@ static void microphone_task(void *arg)
 #endif
 
         while (clean_samples >= encoder_samples) {
+            if (rtc.command_mode && !command_media_allowed()) {
+                clean_samples = 0;
+                break;
+            }
             // AEC/reference consumption above is continuous even while PTT is
             // closed. Only cleaned audio from the current live grant may enter
             // the encoder, and the send path checks the grant once more.
@@ -1678,13 +1870,18 @@ static void microphone_task(void *arg)
                     .size = (int)output.encoded_bytes,
                 };
                 uint32_t send_epoch = 0;
-                if (!rtc.group_mode || (group_sending_allowed(&send_epoch) &&
-                                        send_epoch == observed_send_epoch)) {
+                if ((!rtc.command_mode || command_media_allowed()) &&
+                    (!rtc.group_mode || (group_sending_allowed(&send_epoch) &&
+                                        send_epoch == observed_send_epoch))) {
                     if (esp_peer_send_audio(rtc.peer, &frame) != ESP_PEER_ERR_NONE) {
                         ESP_LOGW(TAG, "audio send failed");
                     } else if (rtc.group_mode) {
                         portENTER_CRITICAL(&group_state_lock);
                         ++group_stats.sent_packets;
+                        portEXIT_CRITICAL(&group_state_lock);
+                    } else if (rtc.command_mode) {
+                        portENTER_CRITICAL(&group_state_lock);
+                        ++command_stats.audio_sent;
                         portEXIT_CRITICAL(&group_state_lock);
                     }
                 }
@@ -2041,6 +2238,15 @@ static void playback_task(void *arg)
 
 static esp_err_t start_audio(const board_audio_t *audio)
 {
+#if CONFIG_MIKU_RTI_OFFICIAL_CAPTURE_AEC
+    // The official capture source starts background acquisition independently
+    // of this task's read gate. Commands require the verified direct-read
+    // configuration so no microphone acquisition can precede session.updated.
+    if (rtc.command_mode) {
+        ESP_LOGW(TAG, "RTA_COMMAND config_unsupported official_capture_aec");
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+#endif
     rtc.audio = *audio;
     esp_opus_enc_config_t encoder_cfg = ESP_OPUS_ENC_CONFIG_DEFAULT();
     encoder_cfg.sample_rate = 16000;
@@ -2057,11 +2263,13 @@ static esp_err_t start_audio(const board_audio_t *audio)
         return ESP_FAIL;
     }
 
-    int decoder_error = 0;
-    rtc.opus_decoder = opus_decoder_create(16000, RTC_CAPTURE_CHANNELS, &decoder_error);
-    if (rtc.opus_decoder == NULL || decoder_error != 0) {
-        ESP_LOGE(TAG, "could not initialize Opus decoder: %d", decoder_error);
-        return ESP_FAIL;
+    if (!rtc.command_mode) {
+        int decoder_error = 0;
+        rtc.opus_decoder = opus_decoder_create(16000, RTC_CAPTURE_CHANNELS, &decoder_error);
+        if (rtc.opus_decoder == NULL || decoder_error != 0) {
+            ESP_LOGE(TAG, "could not initialize Opus decoder: %d", decoder_error);
+            return ESP_FAIL;
+        }
     }
 
 #if CONFIG_MIKU_RTI_CAPTURE_DIAGNOSTIC
@@ -2132,20 +2340,20 @@ static esp_err_t start_audio(const board_audio_t *audio)
     ESP_LOGW(TAG, "AEC disabled for receive/playback A/B test; using half-duplex microphone gating");
 #endif
 
-    rtc.playback_queue = xQueueCreateWithCaps(rtc.group_mode ? RTC_GROUP_PLAYBACK_QUEUE_FRAMES
-                                                            : RTC_PLAYBACK_QUEUE_FRAMES,
-                                              sizeof(opus_packet_t),
-                                              MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (rtc.playback_queue == NULL) {
-        return ESP_ERR_NO_MEM;
+    if (!rtc.command_mode) {
+        rtc.playback_queue = xQueueCreateWithCaps(rtc.group_mode ? RTC_GROUP_PLAYBACK_QUEUE_FRAMES
+                                                               : RTC_PLAYBACK_QUEUE_FRAMES,
+                                                sizeof(opus_packet_t),
+                                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (rtc.playback_queue == NULL) return ESP_ERR_NO_MEM;
     }
     rtc.audio_running = true;
     ESP_LOGI(TAG, "Opus frame buffers: mono input=%d output=%d", rtc.encoder_input_size,
              rtc.encoder_output_size);
     const UBaseType_t audio_stack_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
-    if (xTaskCreateWithCaps(playback_task, "rti_playback", RTC_PLAYBACK_STACK_SIZE, NULL,
+    if ((!rtc.command_mode && xTaskCreateWithCaps(playback_task, "rti_playback", RTC_PLAYBACK_STACK_SIZE, NULL,
                             RTC_PLAYBACK_TASK_PRIORITY,
-                            &rtc.playback_task, audio_stack_caps) != pdPASS ||
+                            &rtc.playback_task, audio_stack_caps) != pdPASS) ||
 #if CONFIG_MIKU_RTI_OFFICIAL_CAPTURE_AEC
         xTaskCreatePinnedToCoreWithCaps(microphone_task, "rti_microphone",
                                         RTC_MIC_STACK_SIZE, NULL, 10,
@@ -2158,8 +2366,12 @@ static esp_err_t start_audio(const board_audio_t *audio)
         rtc.audio_running = false;
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(TAG, "Opus audio active: 16 kHz mono uplink/stereo playback, 20 ms frames, "
-                  "PSRAM stacks");
+    if (rtc.command_mode) {
+        ESP_LOGI(TAG, "Opus command capture prepared: 16 kHz mono uplink, playback disabled");
+    } else {
+        ESP_LOGI(TAG, "Opus audio active: 16 kHz mono uplink/stereo playback, 20 ms frames, "
+                      "PSRAM stacks");
+    }
     return ESP_OK;
 }
 
@@ -2225,7 +2437,7 @@ static void data_event_task(void *arg)
         if (xQueueReceive(rtc.data_queue, &event, pdMS_TO_TICKS(20)) == pdTRUE &&
             event != NULL) {
             const int64_t start_us = esp_timer_get_time();
-            handle_realtime_event(event->data, event->size);
+            handle_realtime_event(event->data, event->size, event->command_generation);
             const int64_t elapsed_us = esp_timer_get_time() - start_us;
             free(event);
             ++processed;
@@ -2239,6 +2451,7 @@ static void data_event_task(void *arg)
         }
         flush_pending_assistant_transcript();
         if (esp_timer_get_time() >= report_at_us) {
+            if (rtc.command_mode) command_log_stats("worker");
             ESP_LOGI(TAG,
                      "DataChannel worker stats: events=%" PRIu32
                      " avg=%" PRId64 "us max=%" PRId64
@@ -2263,6 +2476,8 @@ static void data_event_task(void *arg)
 
 void webrtc_peer_stop(void)
 {
+    webrtc_peer_command_cancel();
+    if (rtc.command_mode) command_log_stats("stop");
     webrtc_peer_group_set_sending(false, 0);
     group_mark_unavailable();
     if (rtc.peer == NULL && rtc.events == NULL && rtc.lock == NULL && rtc.data_queue == NULL) {
@@ -2384,7 +2599,9 @@ void webrtc_peer_stop(void)
 }
 
 static esp_err_t start_peer(const rti_session_t *session, const board_audio_t *audio,
-                            webrtc_group_exchange_cb_t exchange, void *exchange_context)
+                            webrtc_group_exchange_cb_t exchange, void *exchange_context,
+                            uint32_t command_generation, webrtc_command_event_cb_t callback,
+                            void *command_context)
 {
     if ((session == NULL && exchange == NULL) || audio == NULL ||
         audio->microphone == NULL || audio->speaker == NULL ||
@@ -2394,6 +2611,16 @@ static esp_err_t start_peer(const rti_session_t *session, const board_audio_t *a
     const uint32_t cycle = ++peer_cycle;
     log_heap_state("start_entry", cycle);
     rtc.group_mode = exchange != NULL;
+    rtc.command_mode = callback != NULL;
+    rtc.command_generation = command_generation;
+    rtc.command_callback = callback;
+    rtc.command_context = command_context;
+    if (rtc.command_mode) {
+        portENTER_CRITICAL(&group_state_lock);
+        rta_command_begin(&command_state, command_generation);
+        memset(&command_stats, 0, sizeof(command_stats));
+        portEXIT_CRITICAL(&group_state_lock);
+    }
     if (rtc.group_mode) {
         portENTER_CRITICAL(&group_state_lock);
         group_mode_active = true;
@@ -2414,8 +2641,7 @@ static esp_err_t start_peer(const rti_session_t *session, const board_audio_t *a
             MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     }
     if (rtc.events == NULL || rtc.lock == NULL || (!rtc.group_mode && rtc.data_queue == NULL)) {
-        webrtc_peer_stop();
-        return ESP_ERR_NO_MEM;
+        return fail_peer_start("context_alloc", ESP_ERR_NO_MEM);
     }
 
     esp_peer_default_cfg_t default_cfg = {
@@ -2465,8 +2691,7 @@ static esp_err_t start_peer(const rti_session_t *session, const board_audio_t *a
     int ret = esp_peer_open(&peer_cfg, esp_peer_get_default_impl(), &rtc.peer);
     if (ret != ESP_PEER_ERR_NONE) {
         ESP_LOGE(TAG, "PeerConnection open failed: %d", ret);
-        webrtc_peer_stop();
-        return ESP_FAIL;
+        return fail_peer_start("peer_open", ESP_FAIL);
     }
     log_heap_state("after_peer_open", cycle);
 
@@ -2479,30 +2704,26 @@ static esp_err_t start_peer(const rti_session_t *session, const board_audio_t *a
                             RTC_PEER_TASK_PRIORITY,
                             &rtc.loop_task,
                             MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) != pdPASS) {
-        webrtc_peer_stop();
-        return ESP_ERR_NO_MEM;
+        return fail_peer_start("worker_create", ESP_ERR_NO_MEM);
     }
     ret = esp_peer_new_connection(rtc.peer);
     if (ret != ESP_PEER_ERR_NONE) {
         ESP_LOGE(TAG, "new PeerConnection failed: %d", ret);
-        webrtc_peer_stop();
-        return ESP_FAIL;
+        return fail_peer_start("new_connection", ESP_FAIL);
     }
 
-    EventBits_t bits = xEventGroupWaitBits(rtc.events, RTC_EVENT_LOCAL_SDP | RTC_EVENT_FAILED,
-                                           pdFALSE, pdFALSE, pdMS_TO_TICKS(RTC_SIGNAL_TIMEOUT_MS));
+    EventBits_t bits = wait_peer_bits(RTC_EVENT_LOCAL_SDP | RTC_EVENT_FAILED,
+                                      pdMS_TO_TICKS(RTC_SIGNAL_TIMEOUT_MS));
     if ((bits & RTC_EVENT_LOCAL_SDP) == 0 || (bits & RTC_EVENT_FAILED) != 0) {
         ESP_LOGE(TAG, "timed out gathering local SDP");
-        webrtc_peer_stop();
-        return ESP_ERR_TIMEOUT;
+        return fail_peer_start("local_sdp_wait", ESP_ERR_TIMEOUT);
     }
 
     xSemaphoreTake(rtc.lock, portMAX_DELAY);
     char *offer = rtc.local_sdp == NULL ? NULL : strdup(rtc.local_sdp);
     xSemaphoreGive(rtc.lock);
     if (offer == NULL) {
-        webrtc_peer_stop();
-        return ESP_ERR_NO_MEM;
+        return fail_peer_start("offer_copy", ESP_ERR_NO_MEM);
     }
     if (rtc.group_mode && (strstr(offer, "a=candidate:") == NULL ||
                            strstr(offer, "a=ice-ufrag:") == NULL ||
@@ -2510,15 +2731,13 @@ static esp_err_t start_peer(const rti_session_t *session, const board_audio_t *a
         // LAN signaling is non-trickle: never submit an empty/partial offer.
         ESP_LOGE(TAG, "group SDP is missing gathered ICE candidates or credentials");
         free(offer);
-        webrtc_peer_stop();
-        return ESP_ERR_INVALID_RESPONSE;
+        return fail_peer_start("group_sdp", ESP_ERR_INVALID_RESPONSE);
     }
     const int setup_replacements = prefer_dtls_client_role(offer);
     if (setup_replacements == 0) {
         ESP_LOGE(TAG, "local SDP has no actpass DTLS setup attribute");
         free(offer);
-        webrtc_peer_stop();
-        return ESP_ERR_INVALID_RESPONSE;
+        return fail_peer_start("offer_setup", ESP_ERR_INVALID_RESPONSE);
     }
     ESP_LOGI(TAG, "requesting DTLS client role in %d SDP media section(s)", setup_replacements);
     esp_err_t recovery_err = advertise_audio_recovery(&offer);
@@ -2526,8 +2745,7 @@ static esp_err_t start_peer(const rti_session_t *session, const board_audio_t *a
         ESP_LOGE(TAG, "could not advertise audio recovery: %s",
                  esp_err_to_name(recovery_err));
         free(offer);
-        webrtc_peer_stop();
-        return recovery_err;
+        return fail_peer_start("offer_recovery", recovery_err);
     }
     log_audio_sdp_features("offer", offer);
     char *answer = NULL;
@@ -2536,8 +2754,7 @@ static esp_err_t start_peer(const rti_session_t *session, const board_audio_t *a
     free(offer);
     if (err != ESP_OK || answer == NULL || answer[0] == '\0') {
         free(answer);
-        webrtc_peer_stop();
-        return err == ESP_OK ? ESP_ERR_INVALID_RESPONSE : err;
+        return fail_peer_start("sdp_exchange", err == ESP_OK ? ESP_ERR_INVALID_RESPONSE : err);
     }
     log_audio_sdp_features("answer", answer);
     esp_peer_msg_t answer_msg = {
@@ -2549,22 +2766,21 @@ static esp_err_t start_peer(const rti_session_t *session, const board_audio_t *a
     free(answer);
     if (ret != ESP_PEER_ERR_NONE) {
         ESP_LOGE(TAG, "apply remote SDP failed: %d", ret);
-        webrtc_peer_stop();
-        return ESP_FAIL;
+        return fail_peer_start("remote_sdp", ESP_FAIL);
     }
 
     const EventBits_t ready_event = rtc.group_mode ? RTC_EVENT_CONNECTED : RTC_EVENT_DATA_OPEN;
-    bits = xEventGroupWaitBits(rtc.events, ready_event | RTC_EVENT_FAILED,
-                               pdFALSE, pdFALSE, pdMS_TO_TICKS(RTC_SIGNAL_TIMEOUT_MS));
+    bits = wait_peer_bits(ready_event | RTC_EVENT_FAILED, pdMS_TO_TICKS(RTC_SIGNAL_TIMEOUT_MS));
     if ((bits & ready_event) == 0 || (bits & RTC_EVENT_FAILED) != 0) {
         ESP_LOGE(TAG, "timed out waiting for %s", rtc.group_mode ? "group peer" : "oai-events DataChannel");
-        webrtc_peer_stop();
-        return ESP_ERR_TIMEOUT;
+        return fail_peer_start("channel_wait", ESP_ERR_TIMEOUT);
+    }
+    if (rtc.command_mode && !command_active()) {
+        return fail_peer_start("cancelled_after_channel", ESP_ERR_INVALID_STATE);
     }
     err = start_audio(audio);
     if (err != ESP_OK) {
-        webrtc_peer_stop();
-        return err;
+        return fail_peer_start("audio_start", err);
     }
     log_heap_state("audio_active", cycle);
     if (rtc.group_mode) {
@@ -2573,17 +2789,30 @@ static esp_err_t start_peer(const rti_session_t *session, const board_audio_t *a
         group_audio_ready = connected;
         portEXIT_CRITICAL(&group_state_lock);
         if (!connected) {
-            webrtc_peer_stop();
-            return ESP_FAIL;
+            return fail_peer_start("group_disconnected", ESP_FAIL);
         }
         ESP_LOGI(TAG, "group PeerConnection audio active; uplink admission closed");
+        return ESP_OK;
+    }
+    if (rtc.command_mode) {
+        webrtc_command_event_t event;
+        portENTER_CRITICAL(&group_state_lock);
+        const bool deliver = rta_command_audio_available(&command_state, &event);
+        portEXIT_CRITICAL(&group_state_lock);
+        if (deliver) command_deliver(&event);
+        bits = wait_peer_bits(RTC_EVENT_COMMAND_READY | RTC_EVENT_FAILED,
+                               pdMS_TO_TICKS(RTC_SIGNAL_TIMEOUT_MS));
+        if ((bits & RTC_EVENT_COMMAND_READY) == 0 || (bits & RTC_EVENT_FAILED) != 0) {
+            return fail_peer_start("session_updated_wait", ESP_ERR_TIMEOUT);
+        }
+        command_log_stats("ready");
+        ESP_LOGI(TAG, "RTA command transcription active; remote playback disabled");
         return ESP_OK;
     }
     err = send_welcome_prompt();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "could not request welcome response");
-        webrtc_peer_stop();
-        return err;
+        return fail_peer_start("welcome_request", err);
     }
     ESP_LOGI(TAG, "RTI PeerConnection and DataChannel are active");
     return ESP_OK;
@@ -2592,7 +2821,7 @@ static esp_err_t start_peer(const rti_session_t *session, const board_audio_t *a
 
 esp_err_t webrtc_peer_start(const rti_session_t *session, const board_audio_t *audio)
 {
-    return start_peer(session, audio, NULL, NULL);
+    return start_peer(session, audio, NULL, NULL, 0, NULL, NULL);
 }
 
 esp_err_t webrtc_peer_start_group(const board_audio_t *audio,
@@ -2601,5 +2830,13 @@ esp_err_t webrtc_peer_start_group(const board_audio_t *audio,
     if (exchange == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    return start_peer(NULL, audio, exchange, context);
+    return start_peer(NULL, audio, exchange, context, 0, NULL, NULL);
+}
+
+esp_err_t webrtc_peer_start_command(const rti_session_t *session, const board_audio_t *audio,
+                                     uint32_t generation, webrtc_command_event_cb_t callback,
+                                     void *context)
+{
+    if (session == NULL || callback == NULL || generation == 0) return ESP_ERR_INVALID_ARG;
+    return start_peer(session, audio, NULL, NULL, generation, callback, context);
 }

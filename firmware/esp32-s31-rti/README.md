@@ -10,8 +10,9 @@ acceptance. PR #10 is merged and its first-slice evidence remains independent.
 validated numerically for this run, including ten consecutive switches and
 soft-reboot recovery. The user confirmed display contents; switching was mainly
 driven through the same controller via serial, not a complete touch-flow test.
-Human listening, actual power-loss recovery, a join-code keyboard and voice
-switching remain pending. See
+This branch adds the join-code keyboard and explicit RTA voice switching.
+Human listening, full touch interaction, repeated spoken switching and actual
+power-loss recovery retain independent acceptance. See
 [the S3 LAN contract](../../docs/specs/004-device-lan.md) and
 [the evidence log](../../docs/acceptance.md) for scope and actual results.
 
@@ -57,9 +58,10 @@ and the constraints that shaped the AEC/WebRTC implementation.
 `Miku RTI device` → `Boot into Shenglu group intercom mode`
 (`CONFIG_MIKU_INTERCOM_DEFAULT_MODE`) defaults to `y`. It waits for private USB
 group configuration and an explicit start; missing or invalid group configuration
-does not start an RTA Session. Group mode reuses saved Wi-Fi or the USB Wi-Fi
-tool, uses the group `/api/v1` control/media API, and does not create
-`oai-events`, welcome speech or model requests. PTT is disabled until the group
+does not start an RTA Session. Group mode reuses saved Wi-Fi and the existing touch setup (USB remains
+available), then uses the group `/api/v1` control/media API. Only an explicit
+voice command retires the group Peer and opens the RTA `oai-events` path;
+command mode disables automatic replies and assistant playback. PTT is disabled until the group
 Peer is ready; releasing/cancelling first closes the local send gate, then
 releases the lease. Recovery returns to unpressed.
 
@@ -211,7 +213,8 @@ browser on localhost. Enable the extra HTTPS listener only with all five
 `-device-*` flags described in [the development guide](../../docs/development.md#s3-板端-lan-开发入口).
 
 Use a private JSON file owned by the current user, mode 0600, with exactly these
-five nonempty ASCII string fields; extra/duplicate fields and NUL are rejected:
+four required nonempty ASCII string fields and optional `group_code`;
+extra/duplicate fields and NUL are rejected:
 
 | Field | Meaning and maximum encoded field length |
 | --- | --- |
@@ -219,7 +222,7 @@ five nonempty ASCII string fields; extra/duplicate fields and NUL are rejected:
 | `ca_pem` | 2047 B; PEM CA certificate(s) only, never a private key |
 | `device_id` | 80 B; independent preprovisioned board identity |
 | `token` | 128 B; that identity's Bearer Token |
-| `group_code` | 16 B; initial group join code |
+| `group_code` | Optional/empty; 16 B legacy initial code. The touchscreen accepts the current eight-character group code. |
 
 The three identity/token/code fields accept only letters, digits, `_` and `-`.
 The input file is bounded to 16 KiB; after compact ASCII JSON encoding the
@@ -253,9 +256,8 @@ python tools/intercom_config.py --port /dev/cu.usbserial-XXXX --status
 ```
 
 `--restart` requires a configuration file. `--sync-time` sends the computer's
-current UTC after any requested restart. **There is no automatic SNTP in this
-slice: after every reboot, reset or application flash, synchronize time again**
-before explicitly starting the group client:
+current UTC after any requested restart. Network SNTP starts after Wi-Fi connects. If no valid time is available,
+synchronize over USB before explicitly starting the group client:
 
 ```bash
 python tools/intercom_config.py --port /dev/cu.usbserial-XXXX --sync-time
@@ -315,8 +317,11 @@ A successful write/digest comparison is not a control, transport or listening
 acceptance result. After the resulting reboot, send USB `--sync-time` again.
 If download mode is needed, hold `BOOT`, tap `RESET`, then release `BOOT`.
 
-Group mode reuses saved 2.4 GHz Wi-Fi and supports the USB configuration tool;
-it does not enter the original touch Wi-Fi setup flow. In the RTA fallback,
+Group mode reuses saved 2.4 GHz Wi-Fi and supports the USB configuration tool.
+If no saved connection succeeds, the shared touch Wi-Fi setup opens before the
+group page. After a successful connection, prolonged Wi-Fi loss retries in the
+background with a five-second timer after the initial bounded quick attempts.
+In the RTA fallback,
 the touch screen can scan/select an SSID or use `ENTER NETWORK MANUALLY`, then
 persist the station configuration in NVS. Pure 5 GHz and 802.1X need different
 hardware or an additional authentication flow.
@@ -469,3 +474,24 @@ remain pending.
 7. Exchange SDP through `/v1/realtime/sessions/{session_id}/rtc`. (done)
 8. Add full-duplex ESP-SR AEC and validate repeated Start/Stop cleanup. (done)
 9. Add production device authentication, OTA, and production provisioning.
+
+## First-version commands
+
+See [006](../../docs/specs/006-first-version.md) and the [first-run guide](../../docs/first-run.md).
+The UI adds an eight-character join keyboard, explicit voice switching and
+pre-submission cancellation. Worker state publication is one-way rendering;
+it cannot invalidate the connection ticket by calling PTT callbacks.
+
+`INTERCOM_JOIN <code>`, `INTERCOM_VOICE_START` and `INTERCOM_VOICE_CANCEL`
+exercise the same controller intents over the development console. A REQUESTED
+reply means accepted intent; inspect `INTERCOM_STATUS` for completion.
+`command_kind` is none/join/voice (0/1/2); `command_phase` is
+idle/queued/starting/listening/resolving/cleanup/recovering (0..6).
+No transcript or join code is included in status.
+
+The command Peer accepts one current final user transcript, stops capture and
+never plays assistant audio. `rti_session_stop_command()` POSTs stop then GETs
+the same RTIC session; only a matching terminal `ended/failed/expired` response
+allows group recovery. HTTP 202 alone is not terminal proof. Failed confirmation
+keeps the local microphone closed and retries cleanup. The original standalone
+RTA application's stop API retains its existing acknowledgement semantics.

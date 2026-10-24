@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Exercise production controller command lifecycle with real cJSON and SDK doubles.
+
+No real RTA, networking, tasks, audio, UI rendering, or NVS writes occur. The
+journal save is an asserted boundary; its durability is covered separately.
+Use --cjson-dir for an already installed cJSON source; nothing is downloaded.
+"""
+from pathlib import Path
+import argparse
+import re
+import shutil
+import subprocess
+import tempfile
+from run_http_client_reuse import extract_function
+
+
+def main():
+    project = Path(__file__).resolve().parents[1]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--cjson-dir', type=Path, default=project / 'managed_components/espressif__cjson/cJSON')
+    args = parser.parse_args()
+    if not all((args.cjson_dir / p).is_file() for p in ('cJSON.c', 'cJSON.h')):
+        parser.error('pass --cjson-dir pointing to existing cJSON.c/.h')
+    compiler = shutil.which('cc')
+    if not compiler:
+        parser.error('cc is required')
+    production = (project / 'main/group_controller.c').read_text()
+    intent = re.search(r'typedef struct \{[^}]+\} group_intent_t;', production)
+    if not intent:
+        raise RuntimeError('production intent type missing')
+    names = ('intent_cancel', 'intent_queue_switch', 'string_field', 'command_event', 'finish_command',
+             'join_command', 'process_command', 'group_controller_join_group', 'group_controller_voice_action',
+             'prepare_selected_switch')
+    fixture = Path(__file__).with_name('group_command_flow_fixture.c.in').read_text()
+    fixture = fixture.replace('/* @production-intent */', intent.group())
+    fixture = fixture.replace('/* @production-functions */', '\n\n'.join(extract_function(production,n) for n in names))
+    with tempfile.TemporaryDirectory(prefix='intercom-command-flow-') as tmp:
+        tmp = Path(tmp)
+        (tmp/'esp_err.h').write_text('#pragma once\ntypedef int esp_err_t;\n#define ESP_OK 0\n#define ESP_FAIL 1\n#define ESP_ERR_INVALID_ARG 2\n#define ESP_ERR_INVALID_STATE 3\n#define ESP_ERR_NO_MEM 4\n#define ESP_ERR_INVALID_RESPONSE 5\n')
+        src,exe = tmp/'command_flow.c',tmp/'command_flow'
+        src.write_text(fixture)
+        subprocess.run([compiler,'-std=gnu11','-DGROUP_CONTROLLER_HOST_TEST','-Wall','-Wextra','-Werror','-Wno-deprecated-declarations',
+                        '-fsanitize=address,undefined','-I',str(tmp),'-I',str(project/'main'),'-I',str(args.cjson_dir),
+                        str(src),str(project/'main/group_command_state.c'),str(project/'main/group_switch_journal.c'),
+                        str(args.cjson_dir/'cJSON.c'),'-lm','-o',str(exe)],check=True)
+        subprocess.run([str(exe)],check=True)
+
+if __name__ == '__main__':
+    main()

@@ -28,6 +28,13 @@ const char *rti_session_get_voice_title(void);
 esp_err_t rti_session_set_voice_profile(const char *voice_profile, const char *voice_title);
 esp_err_t rti_session_list_voice_profiles(rti_voice_profile_list_t *profiles);
 esp_err_t rti_session_create(rti_session_t *session);
+/** Same proven RTC session contract, command scenario; no search or response request. */
+esp_err_t rti_session_create_command(rti_session_t *session);
 esp_err_t rti_session_exchange_sdp(const rti_session_t *session, const char *offer_sdp,
                                    char **answer_sdp);
 esp_err_t rti_session_stop(const rti_session_t *session, const char *reason);
+/** Command cleanup: stop acknowledgement alone is insufficient. GET the same
+ * original RTIC session and return OK only for ended/failed/expired. The owner
+ * retries other results before opening group audio or committing a switch.
+ */
+esp_err_t rti_session_stop_command(const rti_session_t *session, const char *reason);

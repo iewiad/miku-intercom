@@ -11,19 +11,23 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/iewiad/miku-intercom/server/internal/control"
 	"github.com/iewiad/miku-intercom/server/internal/lan"
 	"github.com/iewiad/miku-intercom/server/internal/media"
+	"github.com/iewiad/miku-intercom/server/internal/rta"
 )
 
 //go:embed web/*
 var web embed.FS
 
 type Server struct {
-	service    *control.Service
-	media      *media.Hub
-	deviceHost string
+	service         *control.Service
+	media           *media.Hub
+	deviceHost      string
+	voice           *rta.Proxy
+	voiceAdmissions sync.Map
 }
 
 func New(service *control.Service, hubs ...*media.Hub) http.Handler {
@@ -32,6 +36,11 @@ func New(service *control.Service, hubs ...*media.Hub) http.Handler {
 		s.media = hubs[0]
 	}
 	return s
+}
+
+// NewWithVoice opts the localhost product into a private RTA signalling proxy.
+func NewWithVoice(service *control.Service, hub *media.Hub, proxy *rta.Proxy) http.Handler {
+	return &Server{service: service, media: hub, voice: proxy}
 }
 
 // NewDevice exposes only authenticated APIs to an explicitly configured native TLS client.
@@ -161,7 +170,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	static := map[string]string{"/": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/audio.js": "audio.js"}
+	static := map[string]string{"/": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/audio.js": "audio.js", "/voice.js": "voice.js"}
 	if s.media != nil && s.media.DiagnosticsEnabled() {
 		static["/diagnostics"] = "diagnostics.html"
 		static["/diagnostics.js"] = "diagnostics.js"
@@ -178,7 +187,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, err)
 			return
 		}
-		typ := map[string]string{"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8", "audio.js": "text/javascript; charset=utf-8", "diagnostics.html": "text/html; charset=utf-8", "diagnostics.js": "text/javascript; charset=utf-8", "lifecycle.js": "text/javascript; charset=utf-8"}[file]
+		typ := map[string]string{"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8", "audio.js": "text/javascript; charset=utf-8", "voice.js": "text/javascript; charset=utf-8", "diagnostics.html": "text/html; charset=utf-8", "diagnostics.js": "text/javascript; charset=utf-8", "lifecycle.js": "text/javascript; charset=utf-8"}[file]
 		w.Header().Set("Content-Type", typ)
 		_, _ = w.Write(b)
 		return
@@ -188,8 +197,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1")
-	methods := map[string]string{"/devices": "POST", "/state": "GET", "/groups": "POST", "/memberships": "POST", "/current-group": "PUT", "/floor/acquire": "POST", "/floor/renew": "POST", "/floor/release": "POST"}
+	methods := map[string]string{"/devices": "POST", "/state": "GET", "/groups": "POST", "/memberships": "POST", "/current-group": "PUT", "/floor/acquire": "POST", "/floor/renew": "POST", "/floor/release": "POST", "/voice/resolve": "POST", "/voice": "GET", "/voice/sessions": "POST"}
 	method, ok := methods[path]
+	if strings.HasPrefix(path, "/voice/sessions/") {
+		parts := strings.Split(strings.TrimPrefix(path, "/voice/sessions/"), "/")
+		if len(parts) == 2 && (parts[1] == "offer" || parts[1] == "stop") {
+			method = "POST"
+			ok = true
+		}
+	}
 	if s.media != nil {
 		if path == "/media" {
 			method = "GET"
@@ -237,6 +253,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (s *Server) handle(w http.ResponseWriter, r *http.Request, path, id string) error {
+	if s.voice != nil && (path == "/voice/sessions" || path == "/media/peers") {
+		value, _ := s.voiceAdmissions.LoadOrStore(id, &sync.Mutex{})
+		gate := value.(*sync.Mutex)
+		gate.Lock()
+		defer gate.Unlock()
+		if path == "/media/peers" && s.voice.Status(id).CommandID != "" {
+			return invalid("voice_session_pending", "voice cleanup must be confirmed before group audio", 409)
+		}
+		if path == "/voice/sessions" && s.media != nil {
+			status, e := s.media.Status(id)
+			if e != nil {
+				return e
+			}
+			if status.PeerID != "" {
+				return invalid("group_peer_pending", "close group audio before voice command", 409)
+			}
+		}
+	}
+	if path == "/voice" || strings.HasPrefix(path, "/voice/") {
+		return s.handleVoice(w, r, path, id)
+	}
 	if s.media != nil && (path == "/media" || path == "/media/peers" || strings.HasPrefix(path, "/media/peers/")) {
 		return s.handleMedia(w, r, path, id)
 	}

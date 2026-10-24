@@ -1,6 +1,6 @@
 # 开发指南
 
-PR #10 已合并，S3 首切片的镜像已通过板↔浏览器双向数值、PTT 取消与短时故障恢复验证。[005 板端已加入群切换](specs/005-device-multigroup.md) 已完成本轮多群数值、十次连续切换及软重启恢复验证。用户确认显示正常；主要串口驱动不代表完整触控验收，两次软重启不代表实际断电。真人听测、长期稳定性、板端口令键盘与语音切换仍待验收。实际证据见 [acceptance.md](acceptance.md)，控制接口见 [002](specs/002-control-api.md)，媒体接口见 [003](specs/003-browser-media.md)，板端 LAN 增量见 [004](specs/004-device-lan.md)。S1 控制面评审记录见 [PR #5](https://github.com/iewiad/miku-intercom/pull/5)。
+PR #10 已合并，S3 首切片的镜像已通过板↔浏览器双向数值、PTT 取消与短时故障恢复验证。[005 板端已加入群切换](specs/005-device-multigroup.md) 已完成本轮多群数值、十次连续切换及软重启恢复验证。用户确认显示正常；主要串口驱动不代表完整触控验收，两次软重启不代表实际断电。本分支补齐板端口令键盘、主动语音切群、浏览器信令代理与启动工具；实际 RTA、取消恢复与最终人工验收分别记录。实际证据见 [acceptance.md](acceptance.md)，控制接口见 [002](specs/002-control-api.md)，媒体接口见 [003](specs/003-browser-media.md)，板端 LAN 增量见 [004](specs/004-device-lan.md)。S1 控制面评审记录见 [PR #5](https://github.com/iewiad/miku-intercom/pull/5)。
 
 ## 启动浏览器群音频
 
@@ -60,7 +60,7 @@ ICE 仅增加所选 LAN IPv4，保留 loopback 供同机浏览器使用，UDP �
 
 固件默认 `CONFIG_MIKU_INTERCOM_DEFAULT_MODE=y`：等待私有 USB 配置与显式启动，使用已有 Wi-Fi 配置或 USB 配网，不因缺少群配置自动启动 RTA。需要原 RTA 时在 `Miku RTI device` 菜单关闭该项，重新构建并只刷应用区；原 `rti_auth` 与群配置独立，两个模式互斥。
 
-USB 配置文件必须归当前用户所有且仅本人可读写（0600），恰含 `server_url`、`ca_pem`、`device_id`、`token`、`group_code` 五个非空 ASCII 字符串。原文件最多 16 KiB，工具压缩编码后的 JSON 总计最多 2000 B，CA 的 JSON 换行转义也计入；单字段限制见[固件 README](../firmware/esp32-s31-rti/README.md#group-mode-usb-configuration)。只写 CA 证书，不写私钥；板端验证 CA 链、IP/主机名与证书有效期。
+USB 配置文件必须归当前用户所有且仅本人可读写（0600），包含 `server_url`、`ca_pem`、`device_id`、`token` 四个非空 ASCII 字符串，`group_code` 可省略或为空以使用板端键盘入群；旧预配口令保持兼容。原文件最多 16 KiB，工具压缩编码后的 JSON 总计最多 2000 B，CA 的 JSON 换行转义也计入；单字段限制见[固件 README](../firmware/esp32-s31-rti/README.md#group-mode-usb-configuration)。只写 CA 证书，不写私钥；板端验证 CA 链、IP/主机名与证书有效期。
 
 激活 ESP-IDF Python 环境并停止其他串口读取者，从仓库根目录执行：
 
@@ -72,7 +72,7 @@ python firmware/esp32-s31-rti/tools/intercom_config.py \
   --port /dev/cu.usbserial-XXXX --status
 ```
 
-工具不回显配置内容；不要把 Token 放入命令行、环境变量、日志或手工串口粘贴。`--restart` 只允许与配置文件一起使用，`--sync-time` 在重启后发送电脑当前 UTC。**本切片没有自动 SNTP，每次重启、复位或刷写后都要重新执行单独的 `--sync-time`**，再在板上显式启动；配置状态不代表时钟、TLS 或媒体已就绪。
+工具不回显配置内容；不要把 Token 放入命令行、环境变量、日志或手工串口粘贴。`--restart` 只允许与配置文件一起使用，`--sync-time` 在重启后发送电脑当前 UTC。联网后会自动 SNTP 校时；无外网时重启后仍可执行单独的 `--sync-time`，再在板上显式启动；配置状态不代表时钟、TLS 或媒体已就绪。
 
 ```sh
 python firmware/esp32-s31-rti/tools/intercom_config.py \
@@ -87,7 +87,7 @@ python firmware/esp32-s31-rti/tools/intercom_config.py \
 
 ## 板端已加入群切换（005，本轮数值与软重启恢复已验证）
 
-先完成临时 CA/TLS、USB 配置与每次重启后的 `--sync-time`，显式连接群音频。板端下拉列表只包含后台确认的已加入群；选择不会自动提交，点击切换才执行，当前群名称以权威 state 为准。展开列表取消 PTT。目录按 `view_generation` 标识，旧视图提交拒绝；目录、ID 和 UI 副本在 PSRAM，最多 128 条，非法或超限整体失败。
+先完成临时 CA/TLS、USB 身份配置和有效校时（自动 SNTP 或 `--sync-time`），显式连接群音频。板端下拉列表只包含后台确认的已加入群；选择不会自动提交，点击切换才执行，当前群名称以权威 state 为准。展开列表取消 PTT。目录按 `view_generation` 标识，旧视图提交拒绝；目录、ID 和 UI 副本在 PSRAM，最多 128 条，非法或超限整体失败。
 
 工具前提是板端已校时、已显式连接、目录已知，且打开串口没有造成复位。软件虽先设置 DTR/RTS=false，**当前 Mac 实测独立打开串口仍会复位板子**；本轮真机使用一条持续打开的串口会话完成校时、START、GROUPS 与 SWITCH。下列是满足前提时的独立工具入口，不会自动连接或校时；不能在会复位的环境中照抄连续调用并沿用旧代次。停止其他串口读取者，从仓库根目录执行：
 
@@ -158,10 +158,32 @@ resolver 还需要已存在的 `firmware/esp32-s31-rti/managed_components/espres
 | S1 已通过 | Go 控制面、浏览器、身份/群/版本/麦权 API | 契约与状态测试通过，两身份控制流程可运行 |
 | S2 浏览器 | WebRTC 媒体契约、浏览器实音频、服务端门控 | 控制、Opus/PCM 数值、生命周期与人工听测分别记录 |
 | S3 首切片及 005 本轮数值已验证 | 固件群客户端、显式 LAN/TLS、已加入群选择与生命周期管理 | PR #10 历史证据独立；005 软重启/串口驱动不替代完整触控、断电、听测及长期稳定性 |
-| S4 | 明确群名的主动语音切换与恢复 | 操作终态、目标 RTC 可用、异常与十次切换验收 |
+| S4 首版实现 | 板端键盘、明确群名主动切换、RTA 终态确认与恢复 | 自动与真机证据见 006 / acceptance；真人转写、十次语音切换与听测待最终验收 |
 | S5 增强 | 按需求推荐协作群与确认 | 独立模型证据、候选权限、过期/重复确认验证 |
 
 S3 复用已定义的 S1/S2 群控制与媒体接口，不能把 RTA AI 音频桥当群转发。真机指标用实际测试确定，不预报延迟、资源、局域网以外可达性或听测结论。
+
+
+## 首版启动与命令回归
+
+首次运行使用[一条启动命令](first-run.md)，口令与语音流程见 [006](specs/006-first-version.md)。浏览器 RTA 通过显式 `-voice-config` 开启，默认关闭；私有配置及固定/受限数字节点模式以 [server README](../server/README.md) 为准。长期 Key 不进入浏览器。
+
+板端新增主机回归（本地已存在的 cJSON 可用 `--cjson-dir` 显式指定）：
+
+```sh
+python3 firmware/esp32-s31-rti/tests/run_group_commands.py
+python3 firmware/esp32-s31-rti/tests/run_group_command_ui.py
+python3 firmware/esp32-s31-rti/tests/run_group_command_flow.py
+python3 firmware/esp32-s31-rti/tests/run_legacy_join.py
+python3 firmware/esp32-s31-rti/tests/run_rta_command.py --sanitize
+python3 firmware/esp32-s31-rti/tests/run_rta_stop.py --sanitize
+python3 firmware/esp32-s31-rti/tests/run_rta_create_cleanup.py --sanitize
+python3 firmware/esp32-s31-rti/tests/run_command_bootstrap.py --sanitize
+python3 firmware/esp32-s31-rti/tests/run_wifi_recovery.py
+python3 -m unittest discover -s tools -p 'test_dev.py'
+```
+
+这些测试执行实际生产解析、意图和 worker 函数；SDK/HTTP/NVS 边界为 doubles，不能代替真实语音或物理触控。RTA stop 的 2xx 仅表示受理：命令路径还查询同一 session 的 `ended / failed / expired` 终态，失败则保持停麦并重试。界面 worker 发布只渲染，不反向回调 PTT，避免打断正在建立的连接代次。
 
 ## 变更与文档约定
 

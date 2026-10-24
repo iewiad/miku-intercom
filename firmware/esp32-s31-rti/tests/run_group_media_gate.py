@@ -36,7 +36,7 @@ static struct { uint64_t received_packets; } group_stats;
 typedef struct { uint8_t *data; int size; uint32_t pts; } esp_peer_audio_frame_t;
 typedef struct { size_t size; int64_t received_us; uint32_t pts; uint8_t data[1500]; } opus_packet_t;
 static struct {
- bool audio_running, group_mode, has_last_audio_pts;
+ bool audio_running, group_mode, command_mode, has_last_audio_pts;
  void *playback_queue;
  uint32_t last_audio_pts, playback_input_gaps, playback_overflows;
  int64_t last_audio_packet_us;
@@ -98,6 +98,10 @@ int main(void) {
  assert(group_sending_allowed(NULL));
  now_us+=1001;
  assert(!group_sending_allowed(NULL));
+ // Command sessions drop AI audio before any queue admission.
+ rtc.command_mode=true; queued=0;
+ assert(peer_audio_data_handler(&frame,NULL)==0 && queued==0);
+ rtc.command_mode=false;
  // Legacy RTA receive bypasses group admission and remains functional.
  group_mode_active=false; rtc.group_mode=false; queued=0;
  group_media_suspended=true;

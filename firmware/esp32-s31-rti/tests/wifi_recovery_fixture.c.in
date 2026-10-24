@@ -1,0 +1,133 @@
+#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdarg.h>
+#define ESP_OK 0
+#define ESP_FAIL 1
+#define ESP_ERR_INVALID_ARG 2
+#define pdTRUE 1
+#define pdFALSE 0
+#define portMAX_DELAY 9999
+#define pdMS_TO_TICKS(v) (v)
+#define WIFI_EVENT 1
+#define IP_EVENT 2
+#define WIFI_EVENT_STA_DISCONNECTED 3
+#define IP_EVENT_STA_GOT_IP 4
+#define WIFI_CONNECTED_BIT 1
+#define WIFI_FAILED_BIT 2
+#define WIFI_MAX_RETRIES 5
+#define WIFI_CONNECT_TIMEOUT_MS 20000
+#define WIFI_RECOVERY_DELAY_US (5 * 1000 * 1000LL)
+#define WIFI_IF_STA 0
+#define RTI_APP_STATE_WIFI_CONNECTING 1
+#define RTI_APP_STATE_READY 2
+#define RTI_APP_STATE_ERROR 3
+#define IPSTR "%d.%d.%d.%d"
+#define IP2STR(ip) (int)((ip)->addr),0,0,0
+#define portENTER_CRITICAL(p) ((void)(p))
+#define portEXIT_CRITICAL(p) ((void)(p))
+#define ESP_RETURN_ON_ERROR(call,tag,message) do { (void)(tag);(void)(message);int err=(call);if(err!=ESP_OK)return err;}while(0)
+typedef int esp_err_t;
+static const char *esp_err_to_name(int err) {(void)err;return "fixture_error";}
+typedef int esp_event_base_t;
+typedef unsigned EventBits_t;
+typedef struct {int value;} wifi_ap_record_t;
+typedef struct {int value;} wifi_config_t;
+typedef struct {struct {struct {unsigned addr;} ip;} ip_info;} ip_event_got_ip_t;
+static const char *TAG="fixture";
+static int wifi_events,wifi_operation_mutex,recovery_guard,timer_object;
+static void *recovery_timer=&timer_object;
+static bool initialized=true,connection_requested,time_sync_started,recovery_eligible,recovering;
+static int retry_count;
+static uint32_t connection_generation,recovery_generation;
+static int64_t recovery_due_us,now_us;
+static unsigned event_bits,connect_calls,disconnect_calls,starts,stops,sntp_calls;
+static bool timer_active,mutex_held,fire_during_scan,cancel_on_timer_take;
+static int64_t timer_due;
+static int connect_result,wait_mode;
+static void wifi_event_handler(void *,esp_event_base_t,int32_t,void *);
+static void recovery_timer_callback(void *);
+static void clear_connection_intent(void);
+static void quiet_log(const char *tag,const char *format,...) {(void)tag;(void)format;}
+#define ESP_LOGW(...) quiet_log(__VA_ARGS__)
+#define ESP_LOGI(...) quiet_log(__VA_ARGS__)
+#define ESP_LOGE(...) quiet_log(__VA_ARGS__)
+static int64_t esp_timer_get_time(void) {return now_us;}
+static int esp_timer_stop(void *t) {(void)t;++stops;timer_active=false;return ESP_OK;}
+static int esp_timer_start_once(void *t,int64_t delay) {(void)t;assert(delay==WIFI_RECOVERY_DELAY_US);++starts;timer_active=true;timer_due=now_us+delay;return ESP_OK;}
+static unsigned xEventGroupClearBits(int g,unsigned bits) {(void)g;unsigned old=event_bits;event_bits&=~bits;return old;}
+static unsigned xEventGroupSetBits(int g,unsigned bits) {(void)g;event_bits|=bits;return event_bits;}
+static int xSemaphoreTake(int mutex,int ticks) {
+ (void)mutex;if(mutex_held){assert(ticks==0);return pdFALSE;}mutex_held=true;
+ if(ticks==0&&cancel_on_timer_take){cancel_on_timer_take=false;clear_connection_intent();}
+ return pdTRUE;
+}
+static int xSemaphoreGive(int mutex) {(void)mutex;assert(mutex_held);mutex_held=false;return pdTRUE;}
+static int esp_wifi_connect(void) {++connect_calls;return connect_result;}
+static int esp_wifi_disconnect(void) {++disconnect_calls;return ESP_OK;}
+static int esp_wifi_set_config(int iface,wifi_config_t *config) {(void)iface;(void)config;return ESP_OK;}
+static int esp_wifi_scan_start(void *config,bool block) {(void)config;(void)block;if(fire_during_scan)recovery_timer_callback(NULL);return ESP_OK;}
+static int esp_wifi_scan_get_ap_records(uint16_t *count,wifi_ap_record_t *records) {(void)count;(void)records;return ESP_OK;}
+static int esp_netif_sntp_start(void) {++sntp_calls;return ESP_OK;}
+static void rti_app_set_state(int state) {(void)state;}
+static unsigned xEventGroupWaitBits(int events,unsigned bits,int clear,int all,int ticks) {
+ (void)events;(void)bits;(void)all;assert(ticks==WIFI_CONNECT_TIMEOUT_MS);
+ if(wait_mode==0){ip_event_got_ip_t ip={0};wifi_event_handler(NULL,IP_EVENT,IP_EVENT_STA_GOT_IP,&ip);}
+ else if(wait_mode==1)for(int i=0;i<=WIFI_MAX_RETRIES;++i)wifi_event_handler(NULL,WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,NULL);
+ unsigned out=event_bits;if(clear)event_bits&=~bits;return out;
+}
+/* @production-functions */
+static void reset(void) {
+ connection_requested=time_sync_started=recovery_eligible=recovering=false;
+ retry_count=0;connection_generation=recovery_generation=0;recovery_due_us=0;now_us=1000;
+ event_bits=connect_calls=disconnect_calls=starts=stops=sntp_calls=0;
+ timer_active=mutex_held=fire_during_scan=cancel_on_timer_take=false;timer_due=0;
+ connect_result=ESP_OK;wait_mode=0;
+}
+static void establish(void) {wifi_config_t config={0};assert(connect_with_config(&config)==ESP_OK);assert(connection_requested&&recovery_eligible&&!recovering&&!timer_active);}
+static void disconnect_event(void) {wifi_event_handler(NULL,WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,NULL);}
+static void exhaust_fast_retries(void) {for(int i=0;i<=WIFI_MAX_RETRIES;++i)disconnect_event();}
+static void fire_timer(void) {assert(timer_active);now_us=timer_due;timer_active=false;recovery_timer_callback(NULL);}
+int main(void) {
+ reset();wifi_config_t config={0};wait_mode=1;
+ assert(connect_with_config(&config)==ESP_FAIL);
+ assert(connect_calls==1+WIFI_MAX_RETRIES&&!connection_requested&&!recovery_eligible&&!timer_active);
+ // A connection which has actually obtained IP keeps a bounded retry intent.
+ reset();establish();assert(sntp_calls==1);event_bits|=WIFI_CONNECTED_BIT;
+ unsigned baseline=connect_calls;exhaust_fast_retries();
+ assert(!(event_bits&WIFI_CONNECTED_BIT)&&connect_calls==baseline+WIFI_MAX_RETRIES);
+ assert(connection_requested&&recovery_eligible&&recovering&&timer_active);
+ fire_timer();assert(connect_calls==baseline+WIFI_MAX_RETRIES+1&&timer_active);
+ connect_result=ESP_FAIL;fire_timer();assert(timer_active&&connection_requested);connect_result=ESP_OK;
+ ip_event_got_ip_t ip={0};wifi_event_handler(NULL,IP_EVENT,IP_EVENT_STA_GOT_IP,&ip);
+ assert(!timer_active&&!recovering&&recovery_due_us==0&&retry_count==0&&sntp_calls==1);
+ baseline=connect_calls;recovery_timer_callback(NULL);assert(connect_calls==baseline);
+ // Scanning revokes the old intent even if its timer callback was queued.
+ exhaust_fast_retries();assert(timer_active);baseline=connect_calls;
+ wifi_ap_record_t records[1];uint16_t count=1;fire_during_scan=true;
+ assert(wifi_manager_scan(records,&count)==ESP_OK);
+ assert(!connection_requested&&!recovery_eligible&&!timer_active&&connect_calls==baseline);
+ recovery_timer_callback(NULL);assert(connect_calls==baseline);
+ // A fresh bad password remains bounded after a previous successful network.
+ fire_during_scan=false;wait_mode=1;assert(connect_with_config(&config)==ESP_FAIL);
+ assert(!connection_requested&&!recovery_eligible&&!timer_active);
+ // A manual operation holding the mutex prevents the timer's driver call.
+ reset();establish();exhaust_fast_retries();baseline=connect_calls;
+ mutex_held=true;fire_timer();assert(connect_calls==baseline&&timer_active);mutex_held=false;
+ cancel_on_timer_take=true;fire_timer();assert(connect_calls==baseline&&!connection_requested&&!timer_active);
+ // A callback admitted from an older timer cannot issue an early request for
+ // the new intent: the latest generation/deadline and mutex remain authoritative.
+ reset();establish();exhaust_fast_retries();uint32_t old_generation=connection_generation;
+ establish();assert(connection_generation!=old_generation);baseline=connect_calls;
+ recovery_timer_callback(NULL);assert(connect_calls==baseline);
+ exhaust_fast_retries();baseline=connect_calls;
+ recovery_timer_callback(NULL);assert(connect_calls==baseline&&timer_active);
+ fire_timer();assert(connect_calls==baseline+1);
+ // A setup timeout also revokes recovery, and late GOT_IP cannot reactivate it.
+ wait_mode=2;assert(connect_with_config(&config)==ESP_FAIL);
+ wifi_event_handler(NULL,IP_EVENT,IP_EVENT_STA_GOT_IP,&ip);
+ assert(!connection_requested&&!recovery_eligible&&!timer_active);
+ puts("Wi-Fi recovery: passed (bounded first setup, fast/backoff retries, restored IP, scan/new-intent/timer exclusion, timeout)");
+ return 0;
+}

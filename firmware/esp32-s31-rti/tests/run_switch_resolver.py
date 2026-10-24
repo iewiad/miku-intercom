@@ -45,7 +45,7 @@ def main() -> None:
         source.write_text(fixture)
         executable = temporary / "switch_resolver"
         subprocess.run([compiler, *flags, "-I", str(project / "main"), "-I", str(args.cjson_dir),
-                        str(source), str(project / "main/group_switch_journal.c"),
+                        str(source), str(project / "main/group_switch_journal.c"), str(project / "main/group_command_state.c"),
                         str(args.cjson_dir / "cJSON.c"), "-lm", "-o", str(executable)], check=True)
         subprocess.run([str(executable)], check=True)
 

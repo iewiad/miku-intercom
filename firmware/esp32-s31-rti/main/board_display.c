@@ -1694,6 +1694,29 @@ static lv_obj_t *group_volume_label;
 static lv_obj_t *group_dropdown;
 static lv_obj_t *group_switch_button;
 static lv_obj_t *group_switch_label;
+static lv_obj_t *group_join_button;
+static lv_obj_t *group_voice_button;
+static lv_obj_t *group_command_overlay;
+static lv_obj_t *group_command_title;
+static lv_obj_t *group_command_detail;
+static lv_obj_t *group_command_submit;
+static lv_obj_t *group_command_submit_label;
+static lv_obj_t *group_command_cancel;
+static lv_obj_t *group_command_cancel_label;
+static lv_obj_t *group_join_textarea;
+static board_group_join_action_cb_t group_join_callback;
+static board_group_voice_action_cb_t group_voice_callback;
+static void *group_command_context;
+typedef enum { GROUP_MODAL_NONE, GROUP_MODAL_JOIN, GROUP_MODAL_VOICE } group_modal_t;
+static group_modal_t group_modal;
+static bool group_joining;
+static bool group_voice_active;
+static bool group_voice_can_cancel;
+static bool group_command_pending;
+static bool group_voice_submitted;
+static uint32_t group_command_revision;
+static uint32_t group_command_pending_revision;
+static char group_command_detail_text[192];
 static board_conversation_action_cb_t group_action_callback;
 static board_ptt_action_cb_t group_ptt_callback;
 static board_group_switch_action_cb_t group_switch_callback;
@@ -1710,6 +1733,16 @@ static bool group_transport_ready;
 static bool group_speaking;
 static bool group_pressed;
 static bool group_stop_action;
+
+static void group_render_controls(void);
+static void group_render_command(void);
+static void group_close_command(void);
+static lv_obj_t *group_label(lv_obj_t *parent, const char *text, int x, int y, int width, uint32_t color);
+
+static bool group_command_busy(void)
+{
+    return group_joining || group_voice_active || group_command_pending;
+}
 
 static void group_cancel_ptt(void)
 {
@@ -1754,7 +1787,8 @@ static bool group_can_choose(void)
 {
     return group_choices_valid && group_choices && group_choices->known &&
            group_choices->can_select && group_choices->count &&
-           group_stop_action && !group_is_switching();
+           group_stop_action && !group_is_switching() && !group_command_busy() &&
+           group_modal == GROUP_MODAL_NONE;
 }
 
 static void group_render_controls(void)
@@ -1763,6 +1797,23 @@ static void group_render_controls(void)
         return;
     }
     const bool selecting = lv_dropdown_is_open(group_dropdown);
+    const bool command_ready = group_choices_valid && group_choices && group_choices->known &&
+                               group_stop_action && !group_is_switching() && !group_command_busy();
+    if (group_join_button) {
+        if (command_ready && group_join_callback && group_modal == GROUP_MODAL_NONE) {
+            lv_obj_remove_state(group_join_button, LV_STATE_DISABLED);
+        } else {
+            lv_obj_add_state(group_join_button, LV_STATE_DISABLED);
+        }
+    }
+    if (group_voice_button) {
+        if (command_ready && group_transport_ready && group_current_index() >= 0 &&
+            group_voice_callback && group_modal == GROUP_MODAL_NONE) {
+            lv_obj_remove_state(group_voice_button, LV_STATE_DISABLED);
+        } else {
+            lv_obj_add_state(group_voice_button, LV_STATE_DISABLED);
+        }
+    }
     const bool choosing = group_can_choose();
     const uint32_t selected = lv_dropdown_get_selected(group_dropdown);
     const bool different = group_candidate_valid && group_choices &&
@@ -1780,7 +1831,8 @@ static void group_render_controls(void)
     }
     lv_label_set_text(group_switch_label, group_is_switching() ? "切换中" : "切换群组");
     group_connected = group_transport_ready && group_stop_action &&
-                      group_current_index() >= 0 && !group_is_switching() && !selecting;
+                      group_current_index() >= 0 && !group_is_switching() && !selecting &&
+                      !group_command_busy() && group_modal == GROUP_MODAL_NONE;
     if (!group_connected) {
         group_cancel_ptt();
         lv_obj_add_state(group_ptt_button, LV_STATE_DISABLED);
@@ -1788,11 +1840,16 @@ static void group_render_controls(void)
         lv_obj_remove_state(group_ptt_button, LV_STATE_DISABLED);
     }
     lv_label_set_text(group_status_label,
+                      group_joining ? "正在加入群组" :
+                      group_voice_active ? "语音切群进行中" :
+                      group_command_pending ? "正在提交操作" :
                       group_is_switching() ? "正在切换群组" :
                       !group_stop_action ? "已停止" :
                       !group_connected ? "群音频尚未就绪" :
                       group_speaking ? "持有麦权，正在发言" : "群语音已就绪");
     lv_label_set_text(group_ptt_label,
+                      group_command_busy() ? "操作完成后可发言" :
+                      group_modal != GROUP_MODAL_NONE ? "关闭窗口后可发言" :
                       group_is_switching() ? "切换完成后可发言" :
                       !group_connected ? "连接后可发言" :
                       group_speaking ? "松手停止发言" :
@@ -1836,6 +1893,8 @@ static void group_ptt_event_cb(lv_event_t *event)
             group_status_label = NULL;
             group_action_label = NULL;
             group_volume_label = NULL;
+            group_join_button = NULL;
+            group_voice_button = NULL;
             group_connected = false;
             group_transport_ready = false;
         } else {
@@ -1883,6 +1942,7 @@ static void group_screen_event_cb(lv_event_t *event)
 {
     if (lv_event_get_code(event) == LV_EVENT_SCREEN_UNLOAD_START) {
         group_force_release();
+        group_close_command();
         group_transport_ready = false;
         if (group_dropdown) {
             lv_dropdown_close(group_dropdown);
@@ -1964,6 +2024,290 @@ static lv_obj_t *group_label(lv_obj_t *parent, const char *text, int x, int y, i
     return label;
 }
 
+/* The service issues eight symbols from this exact 32-character alphabet.
+ * Keep ambiguous I/O/0/1 off the keypad rather than accepting a bad code. */
+static const char *const group_join_keymap[] = {
+    "A", "B", "C", "D", "E", "F", "G", "H", "\n",
+    "J", "K", "L", "M", "N", "P", "Q", "R", "\n",
+    "S", "T", "U", "V", "W", "X", "Y", "Z", "\n",
+    "2", "3", "4", "5", "6", "7", "8", "9", "\n",
+    LV_SYMBOL_BACKSPACE, LV_SYMBOL_CLOSE, LV_SYMBOL_OK, ""
+};
+static const lv_buttonmatrix_ctrl_t group_join_keyctrl[] = {
+    1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1,
+    LV_KEYBOARD_CTRL_BUTTON_FLAGS | LV_BUTTONMATRIX_CTRL_WIDTH_2,
+    LV_KEYBOARD_CTRL_BUTTON_FLAGS | LV_BUTTONMATRIX_CTRL_WIDTH_2,
+    LV_KEYBOARD_CTRL_BUTTON_FLAGS | LV_BUTTONMATRIX_CTRL_WIDTH_2,
+};
+
+static bool group_command_ready(void)
+{
+    return group_choices_valid && group_choices && group_choices->known && group_stop_action &&
+           !group_is_switching() && !group_command_busy();
+}
+
+static void group_modal_delete_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_DELETE) {
+        return;
+    }
+    /* No code copy survives the overlay. This also covers screen teardown. */
+    if (group_join_textarea) {
+        lv_textarea_set_text(group_join_textarea, "");
+    }
+    group_join_textarea = NULL;
+    group_command_overlay = NULL;
+    group_command_title = NULL;
+    group_command_detail = NULL;
+    group_command_submit = NULL;
+    group_command_submit_label = NULL;
+    group_command_cancel = NULL;
+    group_command_cancel_label = NULL;
+    group_modal = GROUP_MODAL_NONE;
+    group_voice_submitted = false;
+}
+
+static void group_close_command(void)
+{
+    if (group_command_overlay) {
+        /* Clear visible input before deleting the keyboard/textarea objects. */
+        if (group_join_textarea) {
+            lv_textarea_set_text(group_join_textarea, "");
+        }
+        lv_obj_delete(group_command_overlay);
+    }
+    group_modal = GROUP_MODAL_NONE;
+    group_render_controls();
+}
+
+static void group_render_command(void)
+{
+    if (!group_command_overlay || group_modal != GROUP_MODAL_VOICE) {
+        return;
+    }
+    const bool waiting = group_voice_active || group_command_pending;
+    lv_label_set_text(group_command_title,
+                      !group_voice_submitted ? "准备语音切群" :
+                      group_command_pending ? "正在准备" :
+                      group_voice_active ? "语音切群" : "语音切群已结束");
+    lv_label_set_text(group_command_detail,
+                      group_voice_submitted && group_command_detail_text[0] ? group_command_detail_text :
+                      "点击开始后，说出目标群的完整名称。\n只会切换到你已加入的群组。");
+    if (!group_voice_submitted) {
+        lv_obj_remove_flag(group_command_submit, LV_OBJ_FLAG_HIDDEN);
+        if (group_command_ready() && group_transport_ready && group_current_index() >= 0 && group_voice_callback) {
+            lv_obj_remove_state(group_command_submit, LV_STATE_DISABLED);
+        } else {
+            lv_obj_add_state(group_command_submit, LV_STATE_DISABLED);
+        }
+    } else {
+        lv_obj_add_flag(group_command_submit, LV_OBJ_FLAG_HIDDEN);
+    }
+    const bool can_close = !waiting || (!group_command_pending && group_voice_active && group_voice_can_cancel);
+    if (can_close) {
+        lv_obj_remove_state(group_command_cancel, LV_STATE_DISABLED);
+    } else {
+        lv_obj_add_state(group_command_cancel, LV_STATE_DISABLED);
+    }
+    lv_label_set_text(group_command_cancel_label,
+                      !group_voice_submitted ? "取消" :
+                      waiting ? (can_close ? "取消语音" : "请等待恢复") : "关闭");
+}
+
+static void group_command_cancel_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
+        return;
+    }
+    if (group_modal != GROUP_MODAL_VOICE || !group_voice_submitted ||
+        (!group_voice_active && !group_command_pending)) {
+        group_close_command();
+        return;
+    }
+    if (!group_voice_active || !group_voice_can_cancel || group_command_pending || !group_voice_callback) {
+        return;
+    }
+    const esp_err_t err = group_voice_callback(true, group_command_context);
+    if (err == ESP_OK) {
+        group_command_pending = true;
+        group_command_pending_revision = group_command_revision;
+        strlcpy(group_command_detail_text, "正在取消并恢复群音频", sizeof(group_command_detail_text));
+    } else {
+        strlcpy(group_command_detail_text, "无法取消，请等待当前操作恢复", sizeof(group_command_detail_text));
+    }
+    group_render_command();
+    group_render_controls();
+}
+
+static void group_voice_submit_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || group_modal != GROUP_MODAL_VOICE ||
+        group_voice_submitted || !group_command_ready() || !group_transport_ready ||
+        group_current_index() < 0 || !group_voice_callback) {
+        return;
+    }
+    group_force_release();
+    const esp_err_t err = group_voice_callback(false, group_command_context);
+    if (err == ESP_OK) {
+        group_voice_submitted = true;
+        group_command_pending = true;
+        group_command_pending_revision = group_command_revision;
+        strlcpy(group_command_detail_text, "正在准备语音，请稍候", sizeof(group_command_detail_text));
+    } else {
+        lv_label_set_text(group_command_detail,
+                          err == ESP_ERR_INVALID_STATE ? "当前状态不可发起语音，请关闭后重试" : "无法开始语音，请稍后重试");
+    }
+    if (err == ESP_OK) {
+        group_render_command();
+    }
+    group_render_controls();
+}
+
+static void group_join_submit(void)
+{
+    if (group_modal != GROUP_MODAL_JOIN || !group_join_textarea ||
+        !group_command_ready() || !group_join_callback) {
+        if (group_command_detail) {
+            lv_label_set_text(group_command_detail, "状态已变化，请关闭后重新打开");
+        }
+        return;
+    }
+    const char *text = lv_textarea_get_text(group_join_textarea);
+    if (strlen(text) != 8 || strspn(text, "ABCDEFGHJKLMNPQRSTUVWXYZ23456789") != 8) {
+        lv_label_set_text(group_command_detail, "请输入完整的 8 位字母数字口令");
+        return;
+    }
+    char code[9];
+    memcpy(code, text, sizeof(code));
+    const esp_err_t err = group_join_callback(code, group_command_context);
+    /* The callback must copy before returning. Never log or retain the code. */
+    volatile char *erase = code;
+    for (size_t i = 0; i < sizeof(code); ++i) {
+        erase[i] = 0;
+    }
+    if (err == ESP_OK) {
+        group_command_pending = true;
+        group_command_pending_revision = group_command_revision;
+        strlcpy(group_command_detail_text, "正在加入群组", sizeof(group_command_detail_text));
+        group_close_command();
+        lv_label_set_text(group_detail_label, group_command_detail_text);
+    } else {
+        lv_label_set_text(group_command_detail,
+                          err == ESP_ERR_INVALID_STATE ? "状态已变化，请关闭后重试" : "未能提交入群，请稍后重试");
+    }
+    group_render_controls();
+}
+
+static void group_join_submit_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) == LV_EVENT_CLICKED) {
+        group_join_submit();
+    }
+}
+
+static void group_join_keyboard_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) == LV_EVENT_CANCEL) {
+        group_close_command();
+    } else if (lv_event_get_code(event) == LV_EVENT_READY) {
+        group_join_submit();
+    }
+}
+
+static lv_obj_t *group_command_button(lv_obj_t *parent, const char *text,
+                                       int x, int y, int width, lv_event_cb_t callback,
+                                       lv_obj_t **label_out)
+{
+    lv_obj_t *button = lv_button_create(parent);
+    lv_obj_set_pos(button, x, y);
+    lv_obj_set_size(button, width, 52);
+    lv_obj_set_style_bg_color(button, lv_color_hex(0x245675), 0);
+    lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *label = group_label(button, text, 0, 0, width - 20, 0xFFFFFF);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(label);
+    if (label_out) {
+        *label_out = label;
+    }
+    return button;
+}
+
+static lv_obj_t *group_create_command_overlay(group_modal_t modal)
+{
+    group_force_release();
+    lv_dropdown_close(group_dropdown);
+    group_modal = modal;
+    group_voice_submitted = false;
+    group_command_overlay = lv_obj_create(lv_screen_active());
+    lv_obj_set_pos(group_command_overlay, 0, 0);
+    lv_obj_set_size(group_command_overlay, 800, 480);
+    lv_obj_remove_flag(group_command_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_all(group_command_overlay, 0, 0);
+    lv_obj_set_style_radius(group_command_overlay, 0, 0);
+    lv_obj_set_style_border_width(group_command_overlay, 0, 0);
+    lv_obj_set_style_bg_color(group_command_overlay, lv_color_hex(0x071018), 0);
+    lv_obj_add_event_cb(group_command_overlay, group_modal_delete_event_cb, LV_EVENT_DELETE, NULL);
+    group_render_controls();
+    return group_command_overlay;
+}
+
+static void group_join_open_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || group_modal != GROUP_MODAL_NONE ||
+        !group_command_ready() || !group_join_callback) {
+        return;
+    }
+    lv_obj_t *overlay = group_create_command_overlay(GROUP_MODAL_JOIN);
+    group_command_title = group_label(overlay, "口令加入群组", 28, 16, 550, 0xF4FAFC);
+    group_command_detail = group_label(overlay, "输入群主分享的 8 位字母数字口令", 28, 54, 540, 0xAABCC7);
+    group_command_cancel = group_command_button(overlay, "取消", 624, 12, 148,
+                                                group_command_cancel_event_cb, NULL);
+    group_join_textarea = lv_textarea_create(overlay);
+    lv_textarea_set_one_line(group_join_textarea, true);
+    lv_textarea_set_max_length(group_join_textarea, 8);
+    lv_textarea_set_accepted_chars(group_join_textarea, "ABCDEFGHJKLMNPQRSTUVWXYZ23456789");
+    lv_textarea_set_placeholder_text(group_join_textarea, "8 位入群口令");
+    lv_obj_set_style_text_font(group_join_textarea, TRANSCRIPT_FONT, 0);
+    lv_obj_set_pos(group_join_textarea, 28, 98);
+    lv_obj_set_size(group_join_textarea, 550, 56);
+    group_command_submit = group_command_button(overlay, "确认加入", 600, 100, 172,
+                                                group_join_submit_event_cb, NULL);
+    lv_obj_t *keyboard = lv_keyboard_create(overlay);
+    lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_USER_1, group_join_keymap, group_join_keyctrl);
+    lv_keyboard_set_mode(keyboard, LV_KEYBOARD_MODE_USER_1);
+    lv_keyboard_set_textarea(keyboard, group_join_textarea);
+    lv_keyboard_set_popovers(keyboard, false);
+    lv_obj_set_pos(keyboard, 12, 178);
+    lv_obj_set_size(keyboard, 776, 290);
+    lv_obj_set_style_text_font(keyboard, &lv_font_montserrat_20, LV_PART_ITEMS);
+    lv_obj_set_style_pad_row(keyboard, 4, 0);
+    lv_obj_set_style_pad_column(keyboard, 4, 0);
+    lv_obj_add_event_cb(keyboard, group_join_keyboard_event_cb, LV_EVENT_READY, NULL);
+    lv_obj_add_event_cb(keyboard, group_join_keyboard_event_cb, LV_EVENT_CANCEL, NULL);
+}
+
+static void group_voice_open_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || group_modal != GROUP_MODAL_NONE ||
+        !group_command_ready() || !group_transport_ready || group_current_index() < 0 || !group_voice_callback) {
+        return;
+    }
+    lv_obj_t *overlay = group_create_command_overlay(GROUP_MODAL_VOICE);
+    group_command_title = group_label(overlay, "准备语音切群", 48, 54, 704, 0xF4FAFC);
+    group_command_detail = group_label(overlay, "", 48, 122, 704, 0xAABCC7);
+    lv_obj_set_height(group_command_detail, 174);
+    lv_label_set_long_mode(group_command_detail, LV_LABEL_LONG_MODE_WRAP);
+    group_command_submit = group_command_button(overlay, "开始语音", 80, 336, 280,
+                                                group_voice_submit_event_cb, &group_command_submit_label);
+    group_command_cancel = group_command_button(overlay, "取消", 440, 336, 280,
+                                                group_command_cancel_event_cb, &group_command_cancel_label);
+    group_label(overlay, "语音指令期间暂时听不到群音频；完成后自动恢复", 48, 430, 704, 0x6F8998);
+    group_render_command();
+}
+
 esp_err_t board_display_show_group(board_conversation_action_cb_t startstop,
                                    board_ptt_action_cb_t ptt,
                                    board_group_switch_action_cb_t switch_group,
@@ -1975,6 +2319,7 @@ esp_err_t board_display_show_group(board_conversation_action_cb_t startstop,
         return ESP_ERR_TIMEOUT;
     }
     group_cancel_ptt();
+    group_close_command();
     lv_obj_t *screen = lv_screen_active();
     lv_obj_clean(screen);
     lv_obj_remove_event_cb(screen, group_screen_event_cb);
@@ -1989,10 +2334,33 @@ esp_err_t board_display_show_group(board_conversation_action_cb_t startstop,
     group_speaking = false;
     group_pressed = false;
     group_stop_action = false;
+    group_joining = false;
+    group_voice_active = false;
+    group_voice_can_cancel = false;
+    group_command_pending = false;
+    group_voice_submitted = false;
+    group_command_revision = 0;
+    group_command_detail_text[0] = 0;
     lv_obj_set_style_bg_color(screen, lv_color_hex(0x071018), 0);
     lv_obj_set_style_bg_grad_dir(screen, LV_GRAD_DIR_NONE, 0);
     lv_obj_t *brand = group_label(screen, APP_DISPLAY_NAME, 28, 22, 420, 0xF4FAFC);
     lv_obj_set_style_text_font(brand, &shenglu_brand_24, 0);
+    group_join_button = lv_button_create(screen);
+    lv_obj_set_pos(group_join_button, 450, 16);
+    lv_obj_set_size(group_join_button, 150, 44);
+    lv_obj_set_style_bg_color(group_join_button, lv_color_hex(0x245675), 0);
+    lv_obj_add_event_cb(group_join_button, group_join_open_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *join_label = group_label(group_join_button, "加入群组", 0, 0, 130, 0xFFFFFF);
+    lv_obj_set_style_text_align(join_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(join_label);
+    group_voice_button = lv_button_create(screen);
+    lv_obj_set_pos(group_voice_button, 618, 16);
+    lv_obj_set_size(group_voice_button, 154, 44);
+    lv_obj_set_style_bg_color(group_voice_button, lv_color_hex(0x245675), 0);
+    lv_obj_add_event_cb(group_voice_button, group_voice_open_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *voice_label = group_label(group_voice_button, "语音切群", 0, 0, 134, 0xFFFFFF);
+    lv_obj_set_style_text_align(voice_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(voice_label);
     group_name_label = group_label(screen, "当前群：尚未同步", 28, 70, 744, 0xF4FAFC);
     lv_label_set_long_mode(group_name_label, LV_LABEL_LONG_MODE_DOTS);
     group_dropdown = lv_dropdown_create(screen);
@@ -2057,6 +2425,7 @@ esp_err_t board_display_show_group(board_conversation_action_cb_t startstop,
     lv_slider_set_value(slider, level, LV_ANIM_OFF);
     lv_obj_add_event_cb(slider, group_volume_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
     group_label(screen, "先选择群组，再点击切换；松手停止发言", 28, 435, 744, 0x6F8998);
+    group_render_controls();
     bsp_display_unlock();
     if (volume) {
         volume(level, false, context);
@@ -2078,7 +2447,9 @@ esp_err_t board_display_set_group_state(const char *group, const char *detail,
     group_transport_ready = connected;
     group_speaking = speaking;
     group_render_current();
-    lv_label_set_text(group_detail_label, group_switch_pending ? "正在请求切换群组" : detail ? detail : "");
+    lv_label_set_text(group_detail_label,
+                      group_command_busy() && group_command_detail_text[0] ? group_command_detail_text :
+                      group_switch_pending ? "正在请求切换群组" : detail ? detail : "");
     group_render_controls();
     lv_label_set_text(group_action_label, group_stop_action ? "停止连接" : "连接群语音");
     bsp_display_unlock();
@@ -2099,6 +2470,7 @@ esp_err_t board_display_set_group_active(bool active)
         group_force_release();
         group_transport_ready = false;
         group_switch_pending = false;
+        group_close_command();
         lv_dropdown_close(group_dropdown);
     }
     group_render_controls();
@@ -2256,4 +2628,70 @@ esp_err_t board_display_set_group_choices(const board_group_item_t *items,
 done:
     bsp_display_unlock();
     return err;
+}
+
+
+esp_err_t board_display_set_group_commands(board_group_join_action_cb_t join,
+                                            board_group_voice_action_cb_t voice,
+                                            void *context)
+{
+    if (!bsp_display_lock(1000)) {
+        return ESP_ERR_TIMEOUT;
+    }
+    group_join_callback = join;
+    group_voice_callback = voice;
+    group_command_context = context;
+    group_render_controls();
+    bsp_display_unlock();
+    return ESP_OK;
+}
+
+esp_err_t board_display_set_group_command_state(uint32_t revision,
+                                                bool joining,
+                                                bool voice_active,
+                                                bool can_cancel,
+                                                const char *detail)
+{
+    if (!bsp_display_lock(1000)) {
+        return ESP_ERR_TIMEOUT;
+    }
+    if (!group_ptt_button || !group_detail_label) {
+        bsp_display_unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
+    /* Modular comparison tolerates wraparound. A worker frame constructed
+     * before the callback reservation must not acknowledge that request. */
+    const bool fresh = (int32_t)(revision - group_command_revision) > 0;
+    const bool same = revision == group_command_revision;
+    if (!fresh && !same) {
+        bsp_display_unlock();
+        return ESP_OK;
+    }
+    if (group_command_pending &&
+        (int32_t)(revision - group_command_pending_revision) <= 0) {
+        bsp_display_unlock();
+        return ESP_OK;
+    }
+    group_command_revision = revision;
+    group_command_pending = false;
+    group_joining = joining;
+    group_voice_active = voice_active;
+    group_voice_can_cancel = voice_active && can_cancel;
+    strlcpy(group_command_detail_text, detail ? detail : "", sizeof(group_command_detail_text));
+    if (joining || voice_active) {
+        /* Worker publications are one-way rendering. The accepted command
+         * already cancelled PTT under the controller lock. Calling it again
+         * here would advance the connection generation during refresh_state
+         * and invalidate the new group's in-flight connection ticket. */
+        group_pressed = false;
+        group_speaking = false;
+        lv_dropdown_close(group_dropdown);
+    }
+    if (detail && detail[0]) {
+        lv_label_set_text(group_detail_label, group_command_detail_text);
+    }
+    group_render_command();
+    group_render_controls();
+    bsp_display_unlock();
+    return ESP_OK;
 }

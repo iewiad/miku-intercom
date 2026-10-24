@@ -114,46 +114,39 @@ esp_err_t rti_session_set_voice_profile(const char *voice_profile, const char *v
     return err;
 }
 
-static cJSON *build_create_request(const rti_credentials_t *credentials)
+static cJSON *build_create_request(const rti_credentials_t *credentials, bool command_mode)
 {
     cJSON *root = cJSON_CreateObject();
-    cJSON *metadata = cJSON_CreateObject();
-    if (root == NULL || metadata == NULL ||
+    if (root == NULL) return NULL;
+    cJSON *metadata = cJSON_AddObjectToObject(root, "metadata");
+    if (metadata == NULL ||
         !cJSON_AddStringToObject(root, "app_id", credentials->app_id) ||
         !cJSON_AddStringToObject(root, "user_id", CONFIG_MIKU_RTI_DEVICE_ID) ||
         !cJSON_AddStringToObject(root, "client_id", CONFIG_MIKU_RTI_DEVICE_ID) ||
         !cJSON_AddStringToObject(root, "model_profile", CONFIG_MIKU_RTI_MODEL_PROFILE) ||
         !cJSON_AddStringToObject(root, "role_profile", CONFIG_MIKU_RTI_ROLE_PROFILE) ||
         !cJSON_AddStringToObject(root, "voice_profile", rti_session_get_voice_profile()) ||
-        !cJSON_AddStringToObject(root, "scenario", "esp32_s31_voice_device") ||
+        !cJSON_AddStringToObject(root, "scenario", command_mode ? "esp32_s31_group_command" : "esp32_s31_voice_device") ||
         !cJSON_AddStringToObject(root, "client_transport", "platform_rtc") ||
         !cJSON_AddStringToObject(root, "region", CONFIG_MIKU_RTI_REGION) ||
-        !cJSON_AddStringToObject(metadata, "source", "esp32-s31-korvo-1")) {
+        !cJSON_AddStringToObject(metadata, "source", "esp32-s31-korvo-1") ||
+        (command_mode && !cJSON_AddBoolToObject(root, "enable_search", false))) {
         cJSON_Delete(root);
-        cJSON_Delete(metadata);
         return NULL;
     }
-    cJSON_AddItemToObject(root, "metadata", metadata);
-
 #if CONFIG_MIKU_RTI_ENABLE_WEB_SEARCH
-    cJSON *realtime_tools = cJSON_CreateObject();
-    cJSON *web_search = cJSON_CreateObject();
-    cJSON *provider_options = cJSON_CreateObject();
-    if (realtime_tools == NULL || web_search == NULL || provider_options == NULL ||
-        !cJSON_AddBoolToObject(root, "enable_search", true) ||
-        !cJSON_AddBoolToObject(web_search, "enabled", true) ||
-        !cJSON_AddStringToObject(provider_options, "provider", CONFIG_MIKU_RTI_WEB_SEARCH_PROVIDER)) {
-        cJSON_Delete(realtime_tools);
-        cJSON_Delete(web_search);
-        cJSON_Delete(provider_options);
-        cJSON_Delete(root);
-        return NULL;
+    if (!command_mode) {
+        cJSON *realtime_tools = cJSON_AddObjectToObject(root, "realtime_tools");
+        cJSON *web_search = realtime_tools == NULL ? NULL : cJSON_AddObjectToObject(realtime_tools, "web_search");
+        cJSON *provider_options = web_search == NULL ? NULL : cJSON_AddObjectToObject(web_search, "provider_options");
+        if (provider_options == NULL || !cJSON_AddBoolToObject(root, "enable_search", true) ||
+            !cJSON_AddBoolToObject(web_search, "enabled", true) ||
+            !cJSON_AddStringToObject(provider_options, "provider", CONFIG_MIKU_RTI_WEB_SEARCH_PROVIDER)) {
+            cJSON_Delete(root);
+            return NULL;
+        }
     }
-    cJSON_AddItemToObject(web_search, "provider_options", provider_options);
-    cJSON_AddItemToObject(realtime_tools, "web_search", web_search);
-    cJSON_AddItemToObject(root, "realtime_tools", realtime_tools);
 #endif
-
     return root;
 }
 
@@ -363,7 +356,7 @@ cleanup:
     return err;
 }
 
-esp_err_t rti_session_create(rti_session_t *session)
+static esp_err_t create_session(rti_session_t *session, bool command_mode)
 {
     if (session == NULL) {
         return ESP_ERR_INVALID_ARG;
@@ -379,7 +372,7 @@ esp_err_t rti_session_create(rti_session_t *session)
     }
 
     rti_app_set_state(RTI_APP_STATE_SESSION_CREATING);
-    cJSON *request_json = build_create_request(&credentials);
+    cJSON *request_json = build_create_request(&credentials, command_mode);
     char *request_body = request_json == NULL ? NULL : cJSON_PrintUnformatted(request_json);
     cJSON_Delete(request_json);
     if (request_body == NULL) {
@@ -463,7 +456,7 @@ cleanup:
     mbedtls_platform_zeroize(&credentials, sizeof(credentials));
     free(response.data);
     free(request_body);
-    if (stop_invalid_session) {
+    if (stop_invalid_session && !command_mode) {
         const esp_err_t stop_err = rti_session_stop(session, "invalid_client_endpoint");
         if (stop_err != ESP_OK) {
             ESP_LOGW(TAG, "could not stop session with invalid endpoint: %s",
@@ -471,13 +464,34 @@ cleanup:
         }
     }
     if (err != ESP_OK) {
-        memset(session, 0, sizeof(*session));
+        // A malformed endpoint can still name a real allocated remote session.
+        // Command owners must retain that ID for strict terminal confirmation;
+        // an acknowledgement-only stop must never discard the cleanup handle.
+        char cleanup_id[sizeof(session->session_id)] = {0};
+        if (command_mode && stop_invalid_session) {
+            memcpy(cleanup_id, session->session_id, sizeof(cleanup_id));
+        }
+        mbedtls_platform_zeroize(session, sizeof(*session));
+        memcpy(session->session_id, cleanup_id, sizeof(cleanup_id));
+        mbedtls_platform_zeroize(cleanup_id, sizeof(cleanup_id));
         rti_app_set_state(RTI_APP_STATE_ERROR);
     }
     return err;
 }
 
-esp_err_t rti_session_stop(const rti_session_t *session, const char *reason)
+esp_err_t rti_session_create(rti_session_t *session)
+{
+    return create_session(session, false);
+}
+
+esp_err_t rti_session_create_command(rti_session_t *session)
+{
+    // The create-session API defines no welcome/turn-detection fields. No
+    // synthetic user item or response.create is sent in the command path.
+    return create_session(session, true);
+}
+
+static esp_err_t stop_session(const rti_session_t *session, const char *reason, bool command_mode)
 {
     if (session == NULL || session->session_id[0] == '\0') {
         return ESP_ERR_INVALID_ARG;
@@ -528,6 +542,7 @@ esp_err_t rti_session_stop(const rti_session_t *session, const char *reason)
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms = RTI_HTTP_TIMEOUT_MS,
         .buffer_size = 2048,
+        .disable_auto_redirect = command_mode,
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (client == NULL) {
@@ -542,7 +557,7 @@ esp_err_t rti_session_stop(const rti_session_t *session, const char *reason)
     err = esp_http_client_perform(client);
     const int status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
-    if (err != ESP_OK && status <= 0) {
+    if (err != ESP_OK && (command_mode || status <= 0)) {
         ESP_LOGE(TAG, "session stop failed: %s", esp_err_to_name(err));
         goto cleanup;
     }
@@ -551,12 +566,14 @@ esp_err_t rti_session_stop(const rti_session_t *session, const char *reason)
         goto cleanup;
     }
     if (status < 200 || status >= 300) {
-        log_api_error("session stop", status, response.data);
+        if (command_mode) ESP_LOGW(TAG, "RTA command stop rejected: HTTP %d", status);
+        else log_api_error("session stop", status, response.data);
         err = ESP_FAIL;
         goto cleanup;
     }
 
-    ESP_LOGI(TAG, "RTI session stopped: session_id=%s", session->session_id);
+    if (command_mode) ESP_LOGI(TAG, "RTA command stop acknowledged: HTTP %d", status);
+    else ESP_LOGI(TAG, "RTI session stopped: session_id=%s", session->session_id);
     err = ESP_OK;
 
 cleanup:
@@ -568,6 +585,124 @@ cleanup:
     free(response.data);
     free(request_body);
     return err;
+}
+
+
+esp_err_t rti_session_stop(const rti_session_t *session, const char *reason)
+{
+    // Retain the ordinary assistant's existing acknowledgement-only semantics.
+    return stop_session(session, reason, false);
+}
+
+static bool command_session_id_valid(const rti_session_t *session)
+{
+    if (session == NULL) return false;
+    const char *end = memchr(session->session_id, '\0', sizeof(session->session_id));
+    if (end == NULL || end == session->session_id) return false;
+    return strspn(session->session_id,
+                  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-") ==
+           (size_t)(end - session->session_id);
+}
+
+static const cJSON *unique_json_field(const cJSON *object, const char *name)
+{
+    const cJSON *found = NULL;
+    for (const cJSON *item = object == NULL ? NULL : object->child; item != NULL; item = item->next) {
+        if (item->string != NULL && strcmp(item->string, name) == 0) {
+            if (found != NULL) return NULL;
+            found = item;
+        }
+    }
+    return found;
+}
+
+static esp_err_t parse_command_terminal(const char *json, size_t length, const char *expected_id)
+{
+    if (json == NULL || expected_id == NULL || length == 0 ||
+        length >= RTI_HTTP_RESPONSE_MAX || memchr(json, 0, length) != NULL) return ESP_ERR_INVALID_RESPONSE;
+    // cJSON strings are NUL-terminated: do not allow a shortened ID/state to
+    // accidentally match a terminal state while extra bytes remain hidden.
+    if (strstr(json, "\\u0000") != NULL) return ESP_ERR_INVALID_RESPONSE;
+    cJSON *root = cJSON_ParseWithLengthOpts(json, length + 1, NULL, true);
+    if (root == NULL) return ESP_ERR_INVALID_RESPONSE;
+    const cJSON *wrapped = cJSON_IsObject(root) ? unique_json_field(root, "session") : NULL;
+    const cJSON *identifier = cJSON_IsObject(wrapped) ? unique_json_field(wrapped, "session_id") : NULL;
+    const cJSON *state = cJSON_IsObject(wrapped) ? unique_json_field(wrapped, "state") : NULL;
+    esp_err_t err = ESP_ERR_INVALID_RESPONSE;
+    if (cJSON_IsString(identifier) && identifier->valuestring != NULL &&
+        strcmp(identifier->valuestring, expected_id) == 0 &&
+        cJSON_IsString(state) && state->valuestring != NULL) {
+        err = strcmp(state->valuestring, "ended") == 0 || strcmp(state->valuestring, "failed") == 0 ||
+              strcmp(state->valuestring, "expired") == 0 ? ESP_OK : ESP_ERR_INVALID_STATE;
+    }
+    cJSON_Delete(root);
+    return err;
+}
+
+static esp_err_t query_command_terminal(const rti_session_t *session)
+{
+    rti_credentials_t credentials;
+    esp_err_t err = rti_credentials_load(&credentials);
+    if (err != ESP_OK) return err;
+    char *authorization = malloc(strlen(credentials.api_token) + strlen("Bearer ") + 1);
+    if (authorization != NULL) authorization[0] = '\0';
+    http_response_buffer_t response = {
+        .data = calloc(1, RTI_HTTP_RESPONSE_MAX),
+        .capacity = RTI_HTTP_RESPONSE_MAX,
+    };
+    char url[512];
+    const size_t base_length = strlen(CONFIG_MIKU_RTI_DEVICE_API_BASE_URL);
+    const int length = snprintf(url, sizeof(url), "%s%srtic/v1/realtime/sessions/%s",
+        CONFIG_MIKU_RTI_DEVICE_API_BASE_URL,
+        base_length > 0 && CONFIG_MIKU_RTI_DEVICE_API_BASE_URL[base_length - 1] == '/' ? "" : "/",
+        session->session_id);
+    if (authorization == NULL || response.data == NULL || length < 0 || (size_t)length >= sizeof(url)) {
+        err = ESP_ERR_NO_MEM;
+        goto cleanup;
+    }
+    snprintf(authorization, strlen(credentials.api_token) + strlen("Bearer ") + 1,
+             "Bearer %s", credentials.api_token);
+    const esp_http_client_config_t config = {
+        .url = url,
+        .event_handler = http_event_handler,
+        .user_data = &response,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .timeout_ms = RTI_HTTP_TIMEOUT_MS,
+        .buffer_size = 2048,
+        .disable_auto_redirect = true,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (client == NULL) { err = ESP_ERR_NO_MEM; goto cleanup; }
+    err = esp_http_client_set_method(client, HTTP_METHOD_GET);
+    if (err == ESP_OK) err = esp_http_client_set_header(client, "Accept", "application/json");
+    if (err == ESP_OK) err = esp_http_client_set_header(client, "Authorization", authorization);
+    if (err == ESP_OK) err = esp_http_client_perform(client);
+    const int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+    // A partial body or any transport failure cannot prove provider shutdown.
+    if (err != ESP_OK) goto cleanup;
+    if (response.overflowed) { err = ESP_ERR_NO_MEM; goto cleanup; }
+    if (status < 200 || status >= 300) {
+        ESP_LOGW(TAG, "RTA command terminal query rejected: HTTP %d", status);
+        err = ESP_FAIL;
+        goto cleanup;
+    }
+    err = parse_command_terminal(response.data, response.length, session->session_id);
+cleanup:
+    if (authorization != NULL) {
+        mbedtls_platform_zeroize(authorization, strlen(authorization));
+        free(authorization);
+    }
+    mbedtls_platform_zeroize(&credentials, sizeof(credentials));
+    free(response.data);
+    return err;
+}
+
+esp_err_t rti_session_stop_command(const rti_session_t *session, const char *reason)
+{
+    if (!command_session_id_valid(session)) return ESP_ERR_INVALID_ARG;
+    const esp_err_t err = stop_session(session, reason, true);
+    return err == ESP_OK ? query_command_terminal(session) : err;
 }
 
 esp_err_t rti_session_exchange_sdp(const rti_session_t *session, const char *offer_sdp,

@@ -10,6 +10,7 @@
 #include <math.h>
 #include "cJSON.h"
 #include "group_switch_journal.h"
+#include "group_command_state.h"
 
 typedef int esp_err_t;
 typedef int esp_http_client_method_t;
@@ -28,6 +29,8 @@ typedef int esp_http_client_method_t;
 typedef enum { SWITCH_IDLE, SWITCH_QUEUED, SWITCH_CONFIRMING, SWITCH_MISMATCH, SWITCH_JOURNAL_ERROR } switch_phase_t;
 static int guard;
 static group_intent_t intent;
+static group_command_state_t command;
+static void webrtc_peer_command_cancel(void) {}
 static struct { char server_url[192], device_id[81]; } config;
 static group_switch_journal_t pending_operation;
 static bool pending_saved, journal_blocked, catalog_known;

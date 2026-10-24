@@ -15,6 +15,7 @@ typedef struct {
     bool busy;
     bool link_lost;
     bool switch_pending;
+    bool command_busy;
     uint32_t generation;
     uint32_t session;
 } group_intent_t;
@@ -49,7 +50,7 @@ static void intent_link_lost(group_intent_t *s)
 
 static bool intent_begin_connect(group_intent_t *s, uint32_t *ticket)
 {
-    if (!s->desired || s->switch_pending) {
+    if (!s->desired || s->switch_pending || s->command_busy) {
         return false;
     }
     intent_cancel(s);
@@ -61,7 +62,7 @@ static bool intent_begin_connect(group_intent_t *s, uint32_t *ticket)
 
 static bool intent_connection_current(const group_intent_t *s, uint32_t ticket)
 {
-    return s->desired && !s->link_lost && !s->switch_pending && s->generation == ticket;
+    return s->desired && !s->link_lost && !s->switch_pending && !s->command_busy && s->generation == ticket;
 }
 
 static bool intent_publish_connected(group_intent_t *s, uint32_t ticket)
@@ -75,7 +76,7 @@ static bool intent_publish_connected(group_intent_t *s, uint32_t ticket)
 
 static bool intent_press(group_intent_t *s)
 {
-    if (!s->ready || !s->desired || s->pressed || s->busy || s->link_lost || s->switch_pending) {
+    if (!s->ready || !s->desired || s->pressed || s->busy || s->link_lost || s->switch_pending || s->command_busy) {
         return false;
     }
     s->pressed = true;
@@ -88,7 +89,7 @@ static bool intent_accept_grant(group_intent_t *s, uint32_t ticket,
                                 int64_t deadline, int64_t now,
                                 bool renewing, int64_t old_deadline)
 {
-    if (!s->desired || !s->ready || !s->pressed || s->link_lost || s->switch_pending ||
+    if (!s->desired || !s->ready || !s->pressed || s->link_lost || s->switch_pending || s->command_busy ||
         s->generation != ticket || deadline <= now ||
         (renewing && (!s->held || old_deadline <= now))) {
         return false;
@@ -100,7 +101,7 @@ static bool intent_accept_grant(group_intent_t *s, uint32_t ticket,
 static bool intent_queue_switch(group_intent_t *s, bool known,
                                  uint32_t current_view, uint32_t selected_view)
 {
-    if (!s->desired || !known || s->link_lost || s->switch_pending ||
+    if (!s->desired || !known || s->link_lost || s->switch_pending || s->command_busy ||
         current_view != selected_view) {
         return false;
     }
@@ -301,6 +302,14 @@ int main(void)
     assert(group_switch_terminal_matches(&journal, &terminal));
     journal.operation_id[0] = '/';
     assert(!group_switch_journal_valid(&journal));
+    group_intent_t cmd = {.desired=true, .ready=true, .command_busy=true};
+    assert(!intent_press(&cmd));
+    assert(!intent_begin_connect(&cmd, &connection));
+    assert(!intent_queue_switch(&cmd, true, 1, 1));
+    assert(!intent_accept_grant(&cmd, cmd.generation, 200, 100, false, 0));
+    cmd.command_busy = false;
+    assert(intent_begin_connect(&cmd, &connection));
+    assert(intent_publish_connected(&cmd, connection));
     puts("group controller host regression: passed (late grant, expiry, switch fencing, journal binding, terminal replay/state, RFC3339 bounds)");
     return 0;
 }
@@ -324,6 +333,7 @@ int main(void)
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "group_config.h"
+#include "group_command_state.h"
 #include "mbedtls/platform_util.h"
 #include "webrtc_peer.h"
 
@@ -342,6 +352,8 @@ static int64_t next_renew_us, next_poll_us;
 static uint32_t request_generation;
 static cJSON *floor_request;
 static int last_http_status;
+/* Compatibility auto-join is worker-owned and tried once per loaded session. */
+static bool legacy_join_attempted;
 static char ui_detail[160];
 static bool ui_active_known, ui_active;
 /* One HTTP/TLS handle belongs to the lifecycle worker and one configured
@@ -367,6 +379,14 @@ static switch_phase_t switch_phase;
 static char switch_operation_id[81], switch_target_id[81];
 static uint32_t choices_view;
 static bool choices_published, choices_known, choices_selectable, choices_switching;
+static group_command_state_t command;
+/* RTA objects belong only to this lifecycle worker, never an event callback. */
+static rti_session_t command_session;
+static bool command_session_live, command_peer_live;
+static int64_t command_deadline_us, command_cleanup_retry_us;
+static char command_target[81], command_result[160];
+static uint64_t command_expected_version;
+
 
 static void advance_view_locked(void)
 {
@@ -613,7 +633,11 @@ static bool update_ui(const char *detail)
     const bool active = intent.desired;
     const bool known = catalog_known;
     const bool switching = intent.switch_pending;
-    const bool selectable = active && known && !switching && !intent.link_lost;
+    const bool selectable = active && known && !switching && !intent.link_lost && command.kind == GROUP_COMMAND_NONE;
+    const uint32_t command_revision = command.revision;
+    const bool joining = command.kind == GROUP_COMMAND_JOIN;
+    const bool voice = command.kind == GROUP_COMMAND_VOICE;
+    const bool can_cancel = voice && !command.cancelled && !command.submitted && command.phase != GROUP_COMMAND_RECOVERING;
     const uint32_t view = view_generation;
     portEXIT_CRITICAL(&guard);
     if (detail) {
@@ -638,6 +662,7 @@ static bool update_ui(const char *detail)
         choices_switching = switching;
         choices_published = true;
     }
+    if (board_display_set_group_command_state(command_revision, joining, voice, can_cancel, ui_detail) != ESP_OK) return false;
     return board_display_set_group_state(group_name, ui_detail, connected, speaking) == ESP_OK;
 }
 
@@ -838,9 +863,12 @@ static esp_err_t refresh_state(bool join)
     if (err != ESP_OK) {
         return reject_state(err);
     }
-    if (group_id[0] || !join) {
+    if (group_id[0] || !join || !config.group_code[0] || legacy_join_attempted) {
         return ESP_OK;
     }
+    /* A stale saved code must not repeatedly consume the identity's bad-code
+     * allowance and prevent a correct code entered through the keypad. */
+    legacy_join_attempted = true;
     cJSON *body = cJSON_CreateObject();
     if (!body || !cJSON_AddStringToObject(body, "code", config.group_code)) {
         cJSON_Delete(body);
@@ -955,6 +983,10 @@ static esp_err_t connect_peer(uint32_t configured_session)
         return ESP_ERR_INVALID_STATE;
     }
     esp_err_t err = refresh_state(true);
+    if (err == ESP_OK && !group_id[0] && connection_current(ticket)) {
+        (void)update_ui("尚未加入群组，点击加入群组输入口令");
+        return ESP_ERR_NOT_FOUND;
+    }
     if (err != ESP_OK || !group_id[0] || !connection_current(ticket)) {
         return err == ESP_OK ? ESP_ERR_INVALID_STATE : err;
     }
@@ -1116,6 +1148,10 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t event, void *da
     portENTER_CRITICAL(&guard);
     webrtc_peer_group_suspend_media();
     intent_link_lost(&intent);
+    if (command.kind == GROUP_COMMAND_VOICE) {
+        (void)group_command_cancel(&command);
+        webrtc_peer_command_cancel();
+    }
     catalog_known = false;
     advance_view_locked();
     portEXIT_CRITICAL(&guard);
@@ -1321,6 +1357,256 @@ static esp_err_t resolve_pending_switch(uint32_t session)
     return ESP_OK;
 }
 
+/* Called on the peer worker: copy only the first current final, never do I/O. */
+static void command_event(const webrtc_command_event_t *event, void *context)
+{
+    (void)context;
+    if (!event) return;
+    portENTER_CRITICAL(&guard);
+    if (event->type == WEBRTC_COMMAND_READY) {
+        (void)group_command_ready(&command, event->generation);
+    } else if (event->type == WEBRTC_COMMAND_FINAL) {
+        (void)group_command_final(&command, event->generation, event->text);
+    } else if (event->type == WEBRTC_COMMAND_ERROR) {
+        (void)group_command_error(&command, event->generation);
+    }
+    portEXIT_CRITICAL(&guard);
+    notify_worker();
+}
+
+static void finish_command(const char *detail)
+{
+    portENTER_CRITICAL(&guard);
+    group_command_finish(&command);
+    intent.command_busy = false;
+    intent_cancel(&intent);
+    portEXIT_CRITICAL(&guard);
+    command_target[0] = 0;
+    command_deadline_us = command_cleanup_retry_us = 0;
+    (void)update_ui(detail);
+}
+
+static void join_command(void)
+{
+    char code[9];
+    portENTER_CRITICAL(&guard);
+    const bool active = intent.desired && command.kind == GROUP_COMMAND_JOIN;
+    memcpy(code, command.code, sizeof(code));
+    memset(command.code, 0, sizeof(command.code));
+    group_command_phase(&command, GROUP_COMMAND_STARTING);
+    portEXIT_CRITICAL(&guard);
+    if (!active) { mbedtls_platform_zeroize(code, sizeof(code)); finish_command("已停止，入群尚未提交"); return; }
+    release_floor();
+    (void)update_ui("正在确认入群口令");
+    cJSON *body = cJSON_CreateObject(), *out = NULL;
+    esp_err_t err = ESP_ERR_NO_MEM;
+    int membership_status = 0;
+    const int64_t started = esp_timer_get_time();
+    if (body && cJSON_AddStringToObject(body, "code", code)) {
+        portENTER_CRITICAL(&guard);
+        const bool submit = intent.desired && command.kind == GROUP_COMMAND_JOIN;
+        if (submit) { command.submitted = true; ++command.revision; }
+        portEXIT_CRITICAL(&guard);
+        err = submit ? request("/memberships", HTTP_METHOD_POST, body, &out) : ESP_ERR_INVALID_STATE;
+        membership_status = last_http_status;
+        cJSON *value = cJSON_GetObjectItemCaseSensitive(body, "code");
+        mbedtls_platform_zeroize(value->valuestring, strlen(value->valuestring));
+    }
+    mbedtls_platform_zeroize(code, sizeof(code));
+    cJSON_Delete(body);
+    if (err == ESP_OK) err = apply_state(cJSON_GetObjectItemCaseSensitive(out, "state"), started, esp_timer_get_time());
+    cJSON_Delete(out);
+    if (err != ESP_OK) {
+        /* A lost POST response can still have added membership/current group.
+         * Retire old media and require a fresh state before any new capture. */
+        disconnect_peer();
+        (void)reject_state(err);
+        finish_command(membership_status == 429 ? "口令尝试较频繁，请稍后重试" : "入群尚未确认，请检查口令或连接后重试");
+        return;
+    }
+    finish_command("入群已确认，新加入群已保存，可从群列表选择进入");
+}
+
+/* True means this iteration belongs exclusively to the RTA lifecycle. A
+ * recovering command allows the existing journal/state/RTC worker to proceed. */
+static bool process_command(void)
+{
+    portENTER_CRITICAL(&guard);
+    group_command_state_t current = command;
+    const bool active = intent.desired;
+    const bool lost = intent.link_lost;
+    const bool ready = intent.ready;
+    portEXIT_CRITICAL(&guard);
+    if (current.kind == GROUP_COMMAND_NONE) return false;
+    if (current.kind == GROUP_COMMAND_JOIN) { join_command(); return true; }
+    if (current.phase == GROUP_COMMAND_RECOVERING) {
+        if (!active || ready) finish_command(active ? (command_result[0] ? command_result : "语音操作结束，当前群音频已就绪") : "已停止，未确认的切群将在下次连接时继续");
+        return false;
+    }
+    if (current.phase == GROUP_COMMAND_QUEUED) {
+        command_result[0] = command_target[0] = 0;
+        command_deadline_us = esp_timer_get_time() + 45000000;
+        command_cleanup_retry_us = 0;
+    }
+    if ((!active || lost || (command_deadline_us && esp_timer_get_time() >= command_deadline_us)) && !current.cancelled) {
+        portENTER_CRITICAL(&guard);
+        (void)group_command_cancel(&command);
+        portEXIT_CRITICAL(&guard);
+        webrtc_peer_command_cancel();
+        strlcpy(command_result, active ? "语音指令已取消或超时，已恢复当前群" : "已停止语音指令", sizeof(command_result));
+        current.cancelled = true;
+    }
+    if (current.cancelled && current.phase != GROUP_COMMAND_CLEANUP) {
+        portENTER_CRITICAL(&guard);
+        group_command_phase(&command, GROUP_COMMAND_CLEANUP);
+        portEXIT_CRITICAL(&guard);
+        current.phase = GROUP_COMMAND_CLEANUP;
+    }
+    if (current.phase == GROUP_COMMAND_QUEUED) {
+        disconnect_peer();
+        portENTER_CRITICAL(&guard);
+        if (command.cancelled || !intent.desired) {
+            group_command_phase(&command, GROUP_COMMAND_CLEANUP);
+            portEXIT_CRITICAL(&guard);
+            return true;
+        }
+        group_command_phase(&command, GROUP_COMMAND_STARTING);
+        portEXIT_CRITICAL(&guard);
+        (void)update_ui("正在准备语音指令，暂时无法收听群聊");
+        memset(&command_session, 0, sizeof(command_session));
+        esp_err_t err = rti_session_create_command(&command_session);
+        /* Even a malformed create response may identify a live remote session.
+         * Keep that handle for strict terminal cleanup before group recovery. */
+        command_session_live = command_session.session_id[0] != 0;
+        portENTER_CRITICAL(&guard);
+        bool start = err == ESP_OK && intent.desired && !intent.link_lost && !command.cancelled && command.ticket == current.ticket;
+        portEXIT_CRITICAL(&guard);
+        if (start) {
+            command_peer_live = true; /* stop also cleans a partial failed start */
+            err = webrtc_peer_start_command(&command_session, &audio, current.ticket, command_event, NULL);
+        }
+        if (err != ESP_OK || !start) {
+            portENTER_CRITICAL(&guard);
+            (void)group_command_error(&command, current.ticket);
+            portEXIT_CRITICAL(&guard);
+            strlcpy(command_result, "语音指令未执行，已恢复当前群，请重试", sizeof(command_result));
+        }
+        return true;
+    }
+    if (current.phase == GROUP_COMMAND_STARTING || current.phase == GROUP_COMMAND_LISTENING) {
+        (void)update_ui(current.phase == GROUP_COMMAND_LISTENING ? "请说：切到某某群；完成后会自动恢复对讲" : "正在等待语音通道就绪，暂时无法收听群聊");
+        return true;
+    }
+    if (current.phase == GROUP_COMMAND_RESOLVING) {
+        (void)update_ui("已收到语音，正在核对已加入群");
+        cJSON *body = cJSON_CreateObject(), *out = NULL;
+        esp_err_t err = ESP_ERR_NO_MEM;
+        if (body && cJSON_AddStringToObject(body, "transcript", current.transcript)) {
+            err = request("/voice/resolve", HTTP_METHOD_POST, body, &out);
+            cJSON *text = cJSON_GetObjectItemCaseSensitive(body, "transcript");
+            mbedtls_platform_zeroize(text->valuestring, strlen(text->valuestring));
+        }
+        mbedtls_platform_zeroize(current.transcript, sizeof(current.transcript));
+        cJSON_Delete(body);
+        char target[81] = {0};
+        bool member = false;
+        if (err == ESP_OK && string_field(out, "group_id", target, sizeof(target)) && group_switch_identifier(target)) {
+            for (size_t i = 0; i < catalog_count; ++i) if (!strcmp(catalog_items[i].id, target)) member = true;
+        }
+        cJSON_Delete(out);
+        portENTER_CRITICAL(&guard);
+        if (!command.cancelled && !command.failed && intent.desired && member) strlcpy(command_target, target, sizeof(command_target));
+        else {
+            command_target[0] = 0;
+            if (!command.cancelled) command.failed = true;
+        }
+        memset(command.transcript, 0, sizeof(command.transcript));
+        group_command_phase(&command, GROUP_COMMAND_CLEANUP);
+        portEXIT_CRITICAL(&guard);
+        if (!member) strlcpy(command_result, "没有识别到明确的已加入群，已恢复当前群", sizeof(command_result));
+        return true;
+    }
+    if (current.phase == GROUP_COMMAND_CLEANUP) {
+        /* Cancel may precede QUEUED processing, when the old group Peer still
+         * exists. Retire it before a future start can overwrite its peer_id. */
+        if (peer_id[0] || floor_request) disconnect_peer();
+        webrtc_peer_command_cancel();
+        if (command_peer_live) { webrtc_peer_stop(); command_peer_live = false; }
+        if (command_session_live) {
+            if (esp_timer_get_time() < command_cleanup_retry_us) return true;
+            (void)update_ui("正在结束语音会话，确认后恢复群音频");
+            const esp_err_t err = rti_session_stop_command(&command_session, "group_command_finished");
+            if (err != ESP_OK) {
+                command_cleanup_retry_us = esp_timer_get_time() + 2000000;
+                (void)update_ui("语音会话结束尚未确认，麦克风已停，正在重试");
+                return true;
+            }
+            command_session_live = false;
+        }
+        mbedtls_platform_zeroize(&command_session, sizeof(command_session));
+        portENTER_CRITICAL(&guard);
+        intent.command_busy = false;
+        const bool submit = command_target[0] && !command.cancelled && !command.failed && intent.desired && !intent.link_lost;
+        if (submit && strcmp(command_target, published_group_id) &&
+            intent_queue_switch(&intent, catalog_known, view_generation, view_generation)) {
+            strlcpy(selected_group_id, command_target, sizeof(selected_group_id));
+            selected_expected_version = command_expected_version;
+            selection_queued = true;
+            switch_phase = SWITCH_QUEUED;
+            switch_operation_id[0] = 0;
+            strlcpy(switch_target_id, command_target, sizeof(switch_target_id));
+            command.submitted = true;
+        }
+        group_command_phase(&command, GROUP_COMMAND_RECOVERING);
+        intent_cancel(&intent);
+        intent.ready = false;
+        portEXIT_CRITICAL(&guard);
+        if (current.cancelled && !command_result[0]) strlcpy(command_result, "语音操作已取消，已恢复当前群", sizeof(command_result));
+        (void)update_ui("语音采集已结束，正在确认当前群并恢复音频");
+        return false;
+    }
+    return true;
+}
+
+esp_err_t group_controller_join_group(const char *code, void *context)
+{
+    (void)context;
+    char normalized[9];
+    if (!group_command_code(code, normalized)) return ESP_ERR_INVALID_ARG;
+    portENTER_CRITICAL(&guard);
+    const bool accepted = intent.desired && catalog_known && !intent.link_lost && !intent.switch_pending &&
+        group_command_begin(&command, GROUP_COMMAND_JOIN, normalized);
+    if (accepted) { cancel_locked(); intent.command_busy = true; }
+    portEXIT_CRITICAL(&guard);
+    mbedtls_platform_zeroize(normalized, sizeof(normalized));
+    if (accepted) notify_worker();
+    return accepted ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
+
+esp_err_t group_controller_voice_action(bool cancel, void *context)
+{
+    (void)context;
+    portENTER_CRITICAL(&guard);
+    bool accepted;
+    if (cancel) {
+        accepted = group_command_cancel(&command);
+        if (accepted) webrtc_peer_command_cancel();
+    } else {
+        accepted = intent.desired && intent.ready && catalog_known && published_group_id[0] && !intent.link_lost &&
+            !intent.switch_pending && group_command_begin(&command, GROUP_COMMAND_VOICE, NULL);
+        if (accepted) {
+            cancel_locked();
+            webrtc_peer_group_suspend_media();
+            intent.ready = false;
+            intent.command_busy = true;
+            command_expected_version = published_version;
+        }
+    }
+    portEXIT_CRITICAL(&guard);
+    if (accepted) notify_worker();
+    return accepted ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
+
 static void run(void *arg)
 {
     (void)arg;
@@ -1332,9 +1618,17 @@ static void run(void *arg)
     for (;;) {
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
         portENTER_CRITICAL(&guard);
-        const group_intent_t snapshot = intent;
-        const int64_t deadline = lease_deadline_us;
-        const bool queued = selection_queued;
+        group_intent_t snapshot = intent;
+        int64_t deadline = lease_deadline_us;
+        bool queued = selection_queued;
+        portEXIT_CRITICAL(&guard);
+        if (process_command()) { continue; }
+        /* Command cleanup may enqueue the durable switch or finish recovery.
+         * Never use a pre-command snapshot to enter journal resolution. */
+        portENTER_CRITICAL(&guard);
+        snapshot = intent;
+        deadline = lease_deadline_us;
+        queued = selection_queued;
         portEXIT_CRITICAL(&guard);
         if (queued && configured) {
             /* Persist an accepted selection under its original identity before
@@ -1375,6 +1669,7 @@ static void run(void *arg)
             }
             configured = true;
             configured_session = snapshot.session;
+            legacy_join_attempted = false;
             reload_switch_journal();
         }
         if (!trusted_clock()) {
@@ -1382,7 +1677,7 @@ static void run(void *arg)
                 disconnect_peer();
             }
             drop_http_client();
-            (void)update_ui("请通过 USB 同步当前时间");
+            (void)update_ui("正在同步网络时间；无外网时可用 USB 同步");
             continue;
         }
         wifi_ap_record_t ap;
@@ -1418,7 +1713,7 @@ static void run(void *arg)
             const esp_err_t err = connect_peer(configured_session);
             if (err != ESP_OK) {
                 ESP_LOGW(TAG, "group connect failed: %s HTTP=%d", esp_err_to_name(err), last_http_status);
-                (void)update_ui("群连接失败，请检查服务或重试");
+                (void)update_ui(err == ESP_ERR_NOT_FOUND ? "尚未加入群组，点击加入群组输入口令" : "群连接失败，请检查服务或重试");
                 retry_at = esp_timer_get_time() + 3000000;
             }
             continue;
@@ -1461,7 +1756,7 @@ void group_controller_ptt(bool down, void *context)
     portENTER_CRITICAL(&guard);
     if (!down) {
         cancel_locked();
-    } else {
+    } else if (command.kind == GROUP_COMMAND_NONE) {
         (void)intent_press(&intent);
     }
     portEXIT_CRITICAL(&guard);
@@ -1473,6 +1768,8 @@ void group_controller_action(bool stop, void *context)
     (void)context;
     portENTER_CRITICAL(&guard);
     if (stop) {
+        (void)group_command_cancel(&command);
+        webrtc_peer_command_cancel();
         webrtc_peer_group_suspend_media();
         catalog_known = false;
         advance_view_locked();
@@ -1489,7 +1786,7 @@ esp_err_t group_controller_switch_group(const char *target_group_id, uint32_t se
         return ESP_ERR_INVALID_ARG;
     }
     portENTER_CRITICAL(&guard);
-    if (!intent.desired || !catalog_known || intent.link_lost || intent.switch_pending ||
+    if (!intent.desired || !catalog_known || intent.link_lost || intent.switch_pending || command.kind != GROUP_COMMAND_NONE ||
         selected_view != view_generation) {
         portEXIT_CRITICAL(&guard);
         return ESP_ERR_INVALID_STATE;
@@ -1535,6 +1832,9 @@ esp_err_t group_controller_init(const board_audio_t *board)
         return err;
     }
     err = board_display_show_group(group_controller_action, group_controller_ptt, group_controller_switch_group, volume, 0, NULL);
+    if (err == ESP_OK) {
+        err = board_display_set_group_commands(group_controller_join_group, group_controller_voice_action, NULL);
+    }
     if (err == ESP_OK) {
         update_ui(group_config_ready() ? "已配置，点击连接群音频" : "请通过 USB 配置群服务");
         TaskHandle_t task = NULL;
@@ -1671,6 +1971,8 @@ void group_controller_print_status(void)
     strlcpy(operation, switch_operation_id, sizeof(operation));
     strlcpy(target, switch_target_id, sizeof(target));
     const switch_phase_t phase = switch_phase;
+    const unsigned command_kind = (unsigned)command.kind, command_phase = (unsigned)command.phase;
+    const uint32_t command_revision = command.revision;
     portEXIT_CRITICAL(&guard);
     const bool connected = snapshot.ready && webrtc_peer_group_connected();
     const bool holding = connected && snapshot.held && snapshot.pressed && esp_timer_get_time() < deadline;
@@ -1681,14 +1983,14 @@ void group_controller_print_status(void)
            "\"source_rms_peak\":%.6f,\"remote_rms_peak\":%.6f,\"heap_internal_free\":%u,"
            "\"http_requests\":%" PRIu64 ",\"tls_connections\":%" PRIu64 ",\"http_failures\":%" PRIu64 ","
            "\"catalog_known\":%s,\"view_generation\":%" PRIu32 ",\"current_group_id\":\"%s\",\"current_version\":%" PRIu64 ","
-           "\"group_count\":%u,\"switch_pending\":%s,\"switch_phase\":%u,\"switch_operation_id\":\"%s\",\"target_group_id\":\"%s\"}\n",
+           "\"group_count\":%u,\"switch_pending\":%s,\"switch_phase\":%u,\"switch_operation_id\":\"%s\",\"target_group_id\":\"%s\",\"command_kind\":%u,\"command_phase\":%u,\"command_revision\":%" PRIu32 "}\n",
            group_config_ready() ? "true" : "false", snapshot.desired ? "true" : "false", connected ? "true" : "false",
            snapshot.pressed ? "true" : "false", holding ? "true" : "false", snapshot.busy ? "true" : "false",
            stats.source_frames, stats.sent_packets, stats.received_packets, stats.decoded_samples,
            (double)stats.source_rms_peak, (double)stats.remote_rms_peak,
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), requests, connections, failures,
            known ? "true" : "false", view, current, current_version, (unsigned)group_count,
-           snapshot.switch_pending ? "true" : "false", (unsigned)phase, operation, target);
+           snapshot.switch_pending ? "true" : "false", (unsigned)phase, operation, target, command_kind, command_phase, command_revision);
     fflush(stdout);
 }
 #endif
