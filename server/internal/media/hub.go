@@ -6,12 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"net"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/iewiad/miku-intercom/server/internal/control"
+	"github.com/iewiad/miku-intercom/server/internal/lan"
 	"github.com/pion/interceptor"
 	"github.com/pion/sdp/v3"
 	"github.com/pion/webrtc/v4"
@@ -25,8 +27,11 @@ const connectionLimit = 10 * time.Second
 const writeBudget = 100 * time.Millisecond
 
 type Options struct {
-	Diagnostics bool
-	Now         func() time.Time
+	Diagnostics  bool
+	Now          func() time.Time
+	DeviceIP     netip.Addr
+	DeviceUDPMin int
+	DeviceUDPMax int
 }
 type CreateRequest struct {
 	PeerID         string                    `json:"peer_id"`
@@ -111,6 +116,9 @@ func validID(id string) bool {
 func key(device, id string) string { return device + "/" + id }
 
 func New(service *control.Service, opts Options) (*Hub, error) {
+	if err := lan.ValidateMedia(opts.DeviceIP, opts.DeviceUDPMin, opts.DeviceUDPMax); err != nil {
+		return nil, err
+	}
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -125,7 +133,12 @@ func New(service *control.Service, opts Options) (*Hub, error) {
 	}
 	settings := webrtc.SettingEngine{}
 	settings.SetIncludeLoopbackCandidate(true)
-	settings.SetIPFilter(func(ip net.IP) bool { return ip.IsLoopback() })
+	settings.SetIPFilter(func(ip net.IP) bool { return lan.CandidateAllowed(opts.DeviceIP, ip) })
+	if opts.DeviceIP.IsValid() {
+		if err := settings.SetEphemeralUDPPortRange(uint16(opts.DeviceUDPMin), uint16(opts.DeviceUDPMax)); err != nil {
+			return nil, err
+		}
+	}
 	settings.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4, webrtc.NetworkTypeUDP6})
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(engine), webrtc.WithInterceptorRegistry(registry), webrtc.WithSettingEngine(settings))
 	ctx, cancel := context.WithCancel(context.Background())

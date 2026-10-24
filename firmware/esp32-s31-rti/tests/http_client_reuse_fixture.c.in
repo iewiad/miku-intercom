@@ -1,0 +1,257 @@
+/* Test-only SDK double; every credential/certificate below is fake fixture data.
+ * The runner inserts production functions at the marker, so this exercises the
+ * actual request ordering and cleanup rather than a reimplemented request loop. */
+#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <limits.h>
+
+typedef int esp_err_t;
+typedef int esp_http_client_method_t;
+#define ESP_OK 0
+#define ESP_FAIL -1
+#define ESP_ERR_NO_MEM 257
+#define ESP_ERR_INVALID_ARG 258
+#define ESP_ERR_INVALID_STATE 259
+#define ESP_ERR_INVALID_SIZE 260
+#define ESP_ERR_NOT_FOUND 261
+#define ESP_ERR_INVALID_RESPONSE 264
+#define ESP_ERR_HTTP_INCOMPLETE_DATA 28673
+#define HTTP_METHOD_GET 0
+#define HTTP_METHOD_POST 1
+#define HTTP_METHOD_DELETE 2
+#define MALLOC_CAP_SPIRAM 1
+#define MALLOC_CAP_8BIT 2
+#define RESPONSE_MAX (48 * 1024)
+#define portENTER_CRITICAL(value) ((void)(value))
+#define portEXIT_CRITICAL(value) ((void)(value))
+
+static int guard;
+typedef struct { int fixture; } cJSON;
+typedef struct { char *data; size_t used; bool overflow; } response_t;
+typedef struct {
+    bool content_type;
+    bool authorization;
+    bool connected;
+    const char *body;
+    void *user_data;
+    int method;
+} client_t;
+typedef client_t *esp_http_client_handle_t;
+typedef struct {
+    const char *url;
+    const char *cert_pem;
+    int timeout_ms;
+    int (*event_handler)(void *);
+    bool disable_auto_redirect;
+    bool skip_cert_common_name_check;
+    int buffer_size;
+} esp_http_client_config_t;
+
+static esp_http_client_handle_t control_client;
+static struct {
+    char server_url[192], ca_pem[2048], token[129];
+} config = {"https://192.168.1.2:1234", "fixture-ca", "fixture-token"};
+static int last_http_status;
+static uint64_t http_requests, http_failures;
+static unsigned creations, connections, cleanups, transfers;
+static int forced_body_error, forced_clear_error;
+enum response_mode { SUCCESS, INCOMPLETE, HTTP_500, OVERFLOW, INVALID_JSON, SERVER_CLOSE };
+static enum response_mode mode;
+
+static bool trusted_clock(void) { return true; }
+static void *heap_caps_calloc(size_t count, size_t size, int caps)
+{
+    (void)caps;
+    return calloc(count, size);
+}
+static char *cJSON_PrintUnformatted(const cJSON *json)
+{
+    (void)json;
+    return strdup("{}");
+}
+static cJSON *cJSON_ParseWithLengthOpts(const char *data, size_t size, void *end, bool strict)
+{
+    (void)end;
+    assert(strict && size == 3 && strcmp(data, "{}") == 0);
+    return mode == INVALID_JSON ? NULL : calloc(1, sizeof(cJSON));
+}
+static void cJSON_Delete(cJSON *json) { free(json); }
+static int http_event(void *event) { (void)event; return ESP_OK; }
+static esp_http_client_handle_t esp_http_client_init(const esp_http_client_config_t *options)
+{
+    assert(options->disable_auto_redirect && !options->skip_cert_common_name_check);
+    assert(strcmp(options->cert_pem, "fixture-ca") == 0);
+    ++creations;
+    return calloc(1, sizeof(client_t));
+}
+static int esp_http_client_set_user_data(client_t *client, void *data)
+{
+    client->user_data = data;
+    return ESP_OK;
+}
+static int esp_http_client_set_url(client_t *client, const char *url)
+{
+    (void)client;
+    const char prefix[] = "https://192.168.1.2:1234/api/v1/";
+    assert(strncmp(url, prefix, strlen(prefix)) == 0);
+    return ESP_OK;
+}
+static int esp_http_client_set_method(client_t *client, int method)
+{
+    client->method = method;
+    return ESP_OK;
+}
+static int esp_http_client_set_timeout_ms(client_t *client, int timeout)
+{
+    (void)client;
+    assert(timeout == 2500 || timeout == 8000);
+    return ESP_OK;
+}
+static int esp_http_client_set_post_field(client_t *client, const char *data, int size)
+{
+    /* Match this SDK: post_data changes before Content-Type lookup/deletion.
+     * Missing Content-Type returns NOT_FOUND for both get and delete. */
+    client->body = data;
+    if (data) {
+        assert(size > 0);
+        return forced_body_error ? forced_body_error :
+               client->content_type ? ESP_OK : ESP_ERR_NOT_FOUND;
+    }
+    assert(size == 0);
+    const bool existed = client->content_type;
+    client->content_type = false;
+    return forced_clear_error ? forced_clear_error : existed ? ESP_OK : ESP_ERR_NOT_FOUND;
+}
+static int esp_http_client_set_header(client_t *client, const char *key, const char *value)
+{
+    assert(value);
+    if (strcmp(key, "Content-Type") == 0) {
+        assert(strcmp(value, "application/json") == 0);
+        client->content_type = true;
+    } else if (strcmp(key, "Authorization") == 0) {
+        assert(strcmp(value, "Bearer fixture-token") == 0);
+        client->authorization = true;
+    }
+    return ESP_OK;
+}
+static int esp_http_client_perform(client_t *client)
+{
+    assert(client->user_data && client->authorization);
+    if (client->method == HTTP_METHOD_POST) {
+        assert(client->body && client->content_type);
+    } else {
+        assert(client->body == NULL);
+    }
+    ++transfers;
+    if (!client->connected) {
+        ++connections;
+        client->connected = true;
+    }
+    response_t *response = client->user_data;
+    memcpy(response->data, "{}", 3);
+    response->used = 2;
+    response->overflow = mode == OVERFLOW;
+    return ESP_OK;
+}
+static int esp_http_client_get_status_code(client_t *client)
+{
+    (void)client;
+    return mode == HTTP_500 ? 500 : 200;
+}
+static bool esp_http_client_is_complete_data_received(client_t *client)
+{
+    (void)client;
+    return mode != INCOMPLETE;
+}
+static bool esp_http_client_is_persistent_connection(client_t *client)
+{
+    (void)client;
+    return mode != SERVER_CLOSE;
+}
+static int esp_http_client_cleanup(client_t *client)
+{
+    /* Failure cleanup must detach just as success reuse does. */
+    assert(client->body == NULL && client->user_data == NULL);
+    ++cleanups;
+    free(client);
+    return ESP_OK;
+}
+static void mbedtls_platform_zeroize(void *data, size_t size) { memset(data, 0, size); }
+static void record_http_failure(int error, bool performed)
+{
+    (void)performed;
+    assert(error != ESP_OK);
+    ++http_failures;
+}
+
+/* @production-functions */
+
+static void assert_detached(void)
+{
+    assert(control_client && control_client->body == NULL && control_client->user_data == NULL);
+    assert(!control_client->content_type);
+}
+static void success(const char *path, int method, const cJSON *body)
+{
+    cJSON *out = NULL;
+    assert(request(path, method, body, &out) == ESP_OK);
+    assert(out);
+    cJSON_Delete(out);
+    assert_detached();
+}
+
+int main(void)
+{
+    cJSON body = {0};
+    cJSON *out = NULL;
+    /* The first GET exercises missing Content-Type during NULL/0 detach.
+     * Every following POST must install Content-Type again before setting body. */
+    success("/state", HTTP_METHOD_GET, NULL);
+    success("/floor/acquire", HTTP_METHOD_POST, &body);
+    success("/floor/renew", HTTP_METHOD_POST, &body);
+    success("/state", HTTP_METHOD_GET, NULL);
+    assert(request("/media/peers/fixture", HTTP_METHOD_DELETE, NULL, NULL) == ESP_OK);
+    assert_detached();
+    assert(creations == 1 && connections == 1 && transfers == 5 && http_requests == 5);
+    assert(http_failures == 0 && cleanups == 0);
+
+    /* Nonempty-body NOT_FOUND must propagate, even with a persistent handle. */
+    forced_body_error = ESP_ERR_NOT_FOUND;
+    assert(request("/floor/acquire", HTTP_METHOD_POST, &body, &out) == ESP_ERR_NOT_FOUND);
+    assert(out == NULL && control_client == NULL && transfers == 5 && http_failures == 1);
+    forced_body_error = 0;
+    success("/floor/acquire", HTTP_METHOD_POST, &body);
+
+    /* NULL/0 normalization must not swallow another SDK error. */
+    forced_clear_error = ESP_ERR_INVALID_STATE;
+    assert(request("/state", HTTP_METHOD_GET, NULL, &out) == ESP_ERR_INVALID_STATE);
+    assert(out == NULL && control_client == NULL);
+    forced_clear_error = 0;
+    success("/state", HTTP_METHOD_GET, NULL);
+
+    for (mode = INCOMPLETE; mode <= INVALID_JSON; ++mode) {
+        assert(request("/state", HTTP_METHOD_GET, NULL, &out) != ESP_OK);
+        assert(out == NULL && control_client == NULL);
+        const enum response_mode failed_mode = mode;
+        mode = SUCCESS;
+        success("/floor/acquire", HTTP_METHOD_POST, &body);
+        mode = failed_mode;
+    }
+    assert(http_failures == 6);
+
+    /* A complete Connection: close response succeeds but cannot retain TLS. */
+    mode = SERVER_CLOSE;
+    assert(request("/state", HTTP_METHOD_GET, NULL, &out) == ESP_OK);
+    cJSON_Delete(out);
+    assert(control_client == NULL && http_failures == 6);
+    mode = SUCCESS;
+    success("/floor/renew", HTTP_METHOD_POST, &body);
+    drop_http_client();
+    assert(control_client == NULL && cleanups == creations);
+    puts("HTTP reuse regression: passed (production GET/POST/renew/GET/DELETE reuse, SDK Content-Type errors, complete-response cleanup, pointer detach)");
+    return 0;
+}
