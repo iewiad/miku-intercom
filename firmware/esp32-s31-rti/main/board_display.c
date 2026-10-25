@@ -2517,12 +2517,12 @@ static void group_render_recommendation(void)
     if (choosing && !expired) {
         const uint32_t remaining = group_recommendation_deadline - lv_tick_get();
         if (!group_recommendation_pending) lv_label_set_text_fmt(group_recommendation_title,
-            "选择适合的群，再确认进入（剩余 %u 秒）", (remaining + 999) / 1000);
+            "选择适合的群，再确认进入（剩余 %u 秒）", (unsigned)((remaining + 999) / 1000));
         if (group_recommendation_selected >= 0 && group_recommendation_items) {
             lv_label_set_text_fmt(group_recommendation_footer, "将进入：%s",
                 group_recommendation_items[group_recommendation_selected].name);
         } else lv_label_set_text_fmt(group_recommendation_footer,
-            "先点击一张卡片选择，还有 %u 秒可确认", (remaining + 999) / 1000);
+            "先点击一张卡片选择，还有 %u 秒可确认", (unsigned)((remaining + 999) / 1000));
     } else {
         lv_label_set_text(group_recommendation_footer,
             phase == GROUP_RECOMMENDATION_LISTENING ? "只采集这次主动需求，不分析普通群对讲" :
