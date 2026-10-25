@@ -10,7 +10,7 @@
 
 2 分 27.3 秒完整合辑，已包含按需求找组；下方为 720p 轻量预览。
 
-<!-- README_VIDEO_PREVIEW_UPLOAD_PENDING -->
+https://github.com/user-attachments/assets/b364f4ad-455c-4309-86c8-d45963512cb6
 
 [1080p 完整成片](https://github.com/iewiad/miku-intercom/releases/download/v0-rc-20261025/miku-intercom-demo-20261025.mp4) · [逐段导读](docs/demo-review-guide.md)。核对屏幕细字请看完整成片。
 

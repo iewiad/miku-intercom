@@ -1,0 +1,34 @@
+{
+  "schema": "miku-intercom.readme-preview.v1",
+  "purpose": "private README inline video; derived from the complete original film",
+  "file": "miku-intercom-readme-preview-20261026.mp4",
+  "bytes": 9156551,
+  "sha256": "6cd68ab67d412d56ff28e640b277e22d97cba7df8576e97f160ec0bbcba62df5",
+  "under_10_000_000_bytes": true,
+  "format_duration_seconds": 147.306,
+  "video": {
+    "codec": "h264",
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "duration_seconds": 147.3,
+    "frames": 4419,
+    "pixel_format": "yuv420p",
+    "color": "BT709 limited"
+  },
+  "audio": {
+    "codec": "AAC LC",
+    "sample_rate": 48000,
+    "channels": 1,
+    "target_bitrate": 48000
+  },
+  "source": {
+    "file": "miku-intercom-demo-20261025.mp4",
+    "bytes": 46450705,
+    "sha256": "b0e2b7222f511097b81485c8428634e7ada291ee117df522ed6e09df65bbaad6"
+  },
+  "scope": "Full film retained, including need-based selection, phone restart disclosure, original editorial audio sequence; lossy preview, use 1080p original for fine text.",
+  "remote_media_url": "https://github.com/user-attachments/assets/b364f4ad-455c-4309-86c8-d45963512cb6",
+  "repository": "iewiad/miku-intercom",
+  "access": "private repository media attachment; repository read access required"
+}
