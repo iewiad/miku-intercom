@@ -14,8 +14,9 @@
 #include "rta_command_events.h"
 #include "group_config.h"
 #include "group_recommendation.h"
-#define portENTER_CRITICAL(p) ((void)(p))
-#define portEXIT_CRITICAL(p) ((void)(p))
+static unsigned guard_depth;
+#define portENTER_CRITICAL(p) ((void)(p), ++guard_depth)
+#define portEXIT_CRITICAL(p) ((void)(p), assert(guard_depth), --guard_depth)
 #define HTTP_METHOD_POST 1
 #define HTTP_METHOD_GET 2
 #define MALLOC_CAP_SPIRAM 2
@@ -32,6 +33,8 @@ static board_audio_t audio;
 static group_intent_t intent;
 static group_command_state_t command;
 static group_config_t config;
+static bool stored_configured;
+static uint32_t config_status_generation;
 static rti_session_t command_session;
 static bool command_session_live,command_peer_live;
 static int64_t command_deadline_us,command_cleanup_retry_us,now_us;
@@ -178,7 +181,8 @@ static esp_err_t esp_event_handler_register(int base,int32_t event,void (*callba
 static esp_err_t esp_event_handler_unregister(int base,int32_t event,void (*callback)(void *,int,int32_t,void *)) {
  assert(base==WIFI_EVENT&&event==WIFI_EVENT_STA_DISCONNECTED&&callback==wifi_event);return ESP_OK;
 }
-static void group_controller_action(bool stop,void *context) {(void)stop;(void)context;}
+void group_controller_action(bool stop,void *context);
+void group_controller_refresh_config_status(void);
 static void group_controller_ptt(bool pressed,void *context) {(void)pressed;(void)context;}
 static esp_err_t group_controller_switch_group(const char *target,uint32_t view,void *context) {(void)target;(void)view;(void)context;return ESP_OK;}
 static esp_err_t board_audio_set_output_volume(board_audio_t *board,uint8_t value,bool persist) {
@@ -195,7 +199,45 @@ static esp_err_t board_display_set_group_commands(esp_err_t (*join)(const char *
 static esp_err_t board_display_set_group_recommendation_action(group_recommendation_action_cb_t callback,void *context) {
  assert(callback==group_controller_recommendation_action&&!context);return ESP_OK;
 }
-bool group_config_ready(void) {return true;}
+static bool saved_config_present=true, refresh_during_load, refresh_during_check;
+static unsigned config_checks,config_loads,config_writes,status_allocations;
+static bool status_sampling, remove_config_on_failed_write;
+static esp_err_t config_load_result,config_write_result;
+bool group_config_ready(void) {
+ assert(!guard_depth&&!status_sampling);++config_checks;
+ const bool result=saved_config_present;
+ if(refresh_during_check) {
+  refresh_during_check=false;saved_config_present=false;group_controller_refresh_config_status();
+ }
+ return result;
+}
+esp_err_t group_config_load(group_config_t *out) {
+ assert(!guard_depth&&!status_sampling&&out==&config);++config_loads;
+ strlcpy(out->device_id,"loaded_identity",sizeof(out->device_id));
+ if(refresh_during_load) {
+  refresh_during_load=false;saved_config_present=false;group_controller_refresh_config_status();
+ }
+ return config_load_result;
+}
+esp_err_t group_config_store_json(const char *json,size_t size) {
+ assert(!guard_depth&&!status_sampling&&size==2&&!memcmp(json,"{}",2));++config_writes;
+ if(config_write_result==ESP_OK)saved_config_present=true;
+ else if(remove_config_on_failed_write)saved_config_present=false;
+ return config_write_result;
+}
+static bool hex_decode(const char *hex,uint8_t *out,size_t capacity,size_t *size) {
+ if(strcmp(hex,"fixture_encoded_config"))return false;
+ assert(capacity>=3);memcpy(out,"{}",3);*size=2;return true;
+}
+static void *tracked_calloc(size_t count,size_t size) {
+ if(status_sampling)++status_allocations;return calloc(count,size);
+}
+static __attribute__((unused)) void *tracked_malloc(size_t size) {
+ if(status_sampling)++status_allocations;return malloc(size);
+}
+static void tracked_free(void *pointer) {
+ if(status_sampling)++status_allocations;free(pointer);
+}
 static void run(void *context) {(void)context;assert(!"task must not run in this fixture");}
 static int xTaskCreate(void (*task)(void *),const char *name,unsigned stack,void *context,unsigned priority,TaskHandle_t *handle) {
  assert(task==run&&!strcmp(name,"group_lifecycle")&&stack==20*1024&&context==NULL&&priority==10);*handle=&task_object;return pdPASS;
@@ -217,7 +259,13 @@ static void quiet_log(const char *tag,const char *format,...) {
 #define ESP_LOGW(...) quiet_log(__VA_ARGS__)
 #define ESP_LOGE(...) quiet_log(__VA_ARGS__)
 #define printf status_printf
+#define calloc tracked_calloc
+#define malloc tracked_malloc
+#define free tracked_free
 /* @production-functions */
+#undef free
+#undef malloc
+#undef calloc
 #undef printf
 // Execute the group-mode boot path too, with the board_audio_init boundary
 // returning a codec volume already loaded/applied from NVS. Both saved Wi-Fi
@@ -276,6 +324,53 @@ static void verify_initial_volume(void) {
  }
  worker=NULL;
 }
+static void expect_configured(bool expected) {
+ const unsigned checks=config_checks,loads=config_loads,allocations=status_allocations;
+ status_sampling=true;
+ for(unsigned i=0;i<100;++i)group_controller_print_status();
+ status_sampling=false;
+ assert(config_checks==checks&&config_loads==loads&&status_allocations==allocations&&!guard_depth);
+ assert(!strstr(status_output,"active_identity")&&!strstr(status_output,"loaded_identity"));
+ cJSON *status=cJSON_Parse(status_output+16);assert(status);
+ const cJSON *configured=cJSON_GetObjectItemCaseSensitive(status,"configured");
+ assert(cJSON_IsBool(configured)&&cJSON_IsTrue(configured)==expected);cJSON_Delete(status);
+}
+static void verify_config_status(void) {
+ worker=NULL;stored_configured=false;saved_config_present=false;
+ config_checks=config_loads=config_writes=status_allocations=0;
+ expect_configured(false);assert(!config_checks&&!config_loads);
+ board_audio_t board={.microphone=&task_object,.speaker=&mutex_object,.output_volume=30};
+ assert(group_controller_init(&board)==ESP_OK);assert(config_checks==1);
+ assert(strstr(last_detail,"USB"));expect_configured(false);
+ strlcpy(config.device_id,"active_identity",sizeof(config.device_id));
+ handle_intercom_config("fixture_encoded_config");
+ assert(config_writes==1&&config_checks==2&&!strcmp(config.device_id,"active_identity"));
+ expect_configured(true);
+ // Rejected/failed saves revalidate the old durable config. An ambiguous
+ // failure whose readable result is absent must not retain a previous true.
+ config_write_result=ESP_FAIL;handle_intercom_config("fixture_encoded_config");
+ assert(config_writes==2&&config_checks==3);expect_configured(true);
+ remove_config_on_failed_write=true;handle_intercom_config("fixture_encoded_config");
+ assert(config_writes==3&&config_checks==4);expect_configured(false);
+ handle_intercom_config("invalid_encoding");
+ assert(config_writes==3&&config_checks==4);expect_configured(false);
+ config_write_result=ESP_OK;remove_config_on_failed_write=false;
+ handle_intercom_config("fixture_encoded_config");expect_configured(true);
+ intent.desired=intent.ready=intent.pressed=intent.held=true;
+ group_controller_action(true,NULL);
+ assert(!intent.desired&&!intent.ready&&!intent.pressed&&!intent.held);expect_configured(true);
+ // Exercise the same worker load helper used by run(), including a newer
+ // explicit refresh interrupting an old successful verification.
+ config_load_result=ESP_FAIL;assert(load_config()==ESP_FAIL);expect_configured(false);
+ config_load_result=ESP_OK;assert(load_config()==ESP_OK);expect_configured(true);
+ refresh_during_load=true;assert(load_config()==ESP_OK);expect_configured(false);
+ saved_config_present=true;refresh_during_check=true;
+ group_controller_refresh_config_status();expect_configured(false);
+ saved_config_present=true;worker=NULL;
+ const unsigned before=config_checks;
+ assert(group_controller_init(&board)==ESP_OK&&config_checks==before+1);expect_configured(true);
+ worker=NULL;
+}
 static void reset(void) {
  memset(&intent,0,sizeof(intent));memset(&command,0,sizeof(command));memset(&config,0,sizeof(config));
  memset(&command_session,0,sizeof(command_session));command_session_live=command_peer_live=false;
@@ -324,6 +419,7 @@ static void choose_recommendation(void) {
 }
 static void *no_cjson_memory(size_t size) {(void)size;return NULL;}
 int main(void) {
+ verify_config_status();
  verify_initial_volume();
  reset();begin_voice();const uint32_t first_ticket=command.ticket;
  final_event(first_ticket,"切到乙群");final_event(first_ticket,"切到甲群");
@@ -477,6 +573,6 @@ int main(void) {
   assert(!strcmp(saved_record.recommendation_epoch,"epoch_fixture")&&saved_record.expected_version==7);
  }
  free(recommendation);recommendation=NULL;free(recommendation_need);recommendation_need=NULL;
- puts("controller command flow: passed (saved volume/UI/status, first final, stop ACK retry, late event, early/in-flight cancel, journal handoff, join STOP)");
+ puts("controller command flow: passed (RAM-only status, config init/save/load/STOP and stale validation, saved volume, first final, stop ACK retry, late event, cancel, journal handoff)");
  return 0;
 }

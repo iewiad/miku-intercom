@@ -165,6 +165,9 @@ static void handle_intercom_config(const char *hex)
     esp_err_t err = ESP_ERR_INVALID_ARG;
     if (hex_decode(hex, json, GROUP_CONFIG_JSON_MAX + 1, &size) && size > 0) {
         err = group_config_store_json((const char *)json, size);
+        /* A failed write may still leave the old valid config in NVS. Refresh
+         * once here; ordinary INTERCOM_STATUS must remain a RAM-only read. */
+        group_controller_refresh_config_status();
     }
     mbedtls_platform_zeroize(json, GROUP_CONFIG_JSON_MAX + 1);
     free(json);

@@ -8,6 +8,11 @@
 
 esp_err_t group_controller_init(const board_audio_t *audio);
 
+/* Explicit init/config-write refresh only: may read NVS and validate CA, outside
+ * the controller guard. Does not replace an active worker identity. STATUS uses
+ * the resulting RAM snapshot, which survives STOP. */
+void group_controller_refresh_config_status(void);
+
 /* UI-safe intent updates: no HTTP, display calls, allocation, or blocking wait.
  * Release/stop synchronously close the peer admission gate under the same guard
  * used to validate a grant. Lifecycle work runs on the persistent worker. */

@@ -345,6 +345,11 @@ static portMUX_TYPE guard = portMUX_INITIALIZER_UNLOCKED;
 static TaskHandle_t worker;
 static board_audio_t audio;
 static group_config_t config;
+/* Stored-config presence is distinct from the worker's active identity. STOP
+ * clears that identity, but a status read must neither reopen NVS nor parse CA.
+ * A refresh generation fences validations started before a config save. */
+static bool stored_configured;
+static uint32_t config_status_generation;
 static group_intent_t intent;
 /* Protocol bindings and JSON are owned only by the lifecycle worker. */
 static char group_id[81], group_name[129], server_epoch[81], peer_id[81], lease_id[81];
@@ -396,6 +401,34 @@ static char *recommendation_need;
 static int64_t recommendation_deadline_us, recommendation_next_poll_us;
 static uint32_t recommendation_catalog_view;
 static char recommendation_request_id[81], recommendation_epoch[81];
+
+void group_controller_refresh_config_status(void)
+{
+    portENTER_CRITICAL(&guard);
+    const uint32_t generation = ++config_status_generation;
+    stored_configured = false;
+    portEXIT_CRITICAL(&guard);
+
+    /* This owns a temporary config; never replace the worker's active identity
+     * from the UART task, and never perform NVS/CA work under the guard. */
+    const bool configured = group_config_ready();
+
+    portENTER_CRITICAL(&guard);
+    if (generation == config_status_generation) stored_configured = configured;
+    portEXIT_CRITICAL(&guard);
+}
+
+static esp_err_t load_config(void)
+{
+    portENTER_CRITICAL(&guard);
+    const uint32_t generation = config_status_generation;
+    portEXIT_CRITICAL(&guard);
+    const esp_err_t err = group_config_load(&config);
+    portENTER_CRITICAL(&guard);
+    if (generation == config_status_generation) stored_configured = err == ESP_OK;
+    portEXIT_CRITICAL(&guard);
+    return err;
+}
 
 
 static void advance_view_locked(void)
@@ -2065,7 +2098,7 @@ static void run(void *arg)
             if (esp_timer_get_time() < retry_at) {
                 continue;
             }
-            if (group_config_load(&config) != ESP_OK) {
+            if (load_config() != ESP_OK) {
                 (void)update_ui("请通过 USB 配置群服务");
                 retry_at = esp_timer_get_time() + 3000000;
                 continue;
@@ -2240,7 +2273,11 @@ esp_err_t group_controller_init(const board_audio_t *board)
     }
     if (err == ESP_OK) err = board_display_set_group_recommendation_action(group_controller_recommendation_action, NULL);
     if (err == ESP_OK) {
-        update_ui(group_config_ready() ? "已配置，点击连接群音频" : "请通过 USB 配置群服务");
+        group_controller_refresh_config_status();
+        portENTER_CRITICAL(&guard);
+        const bool configured = stored_configured;
+        portEXIT_CRITICAL(&guard);
+        update_ui(configured ? "已配置，点击连接群音频" : "请通过 USB 配置群服务");
         TaskHandle_t task = NULL;
         if (xTaskCreate(run, "group_lifecycle", 20 * 1024, NULL, 10, &task) == pdPASS) {
             portENTER_CRITICAL(&guard);
@@ -2367,6 +2404,7 @@ void group_controller_print_status(void)
     const uint64_t connections = tls_connections;
     const uint64_t failures = http_failures;
     const bool known = catalog_known;
+    const bool configured = stored_configured;
     const uint32_t view = view_generation;
     const uint64_t current_version = published_version;
     const size_t group_count = published_group_count;
@@ -2391,7 +2429,7 @@ void group_controller_print_status(void)
            "\"http_requests\":%" PRIu64 ",\"tls_connections\":%" PRIu64 ",\"http_failures\":%" PRIu64 ","
            "\"catalog_known\":%s,\"view_generation\":%" PRIu32 ",\"current_group_id\":\"%s\",\"current_version\":%" PRIu64 ","
            "\"group_count\":%u,\"switch_pending\":%s,\"switch_phase\":%u,\"switch_operation_id\":\"%s\",\"target_group_id\":\"%s\",\"command_kind\":%u,\"command_phase\":%u,\"command_revision\":%" PRIu32 "}\n",
-           group_config_ready() ? "true" : "false", snapshot.desired ? "true" : "false", connected ? "true" : "false",
+           configured ? "true" : "false", snapshot.desired ? "true" : "false", connected ? "true" : "false",
            snapshot.pressed ? "true" : "false", holding ? "true" : "false", snapshot.busy ? "true" : "false",
            stats.source_frames, stats.sent_packets, stats.received_packets, stats.decoded_samples,
            (double)stats.source_rms_peak, (double)stats.remote_rms_peak, (unsigned)board_audio_get_output_volume(&audio),
