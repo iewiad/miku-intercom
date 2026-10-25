@@ -141,7 +141,7 @@ export class ControlClient {
       this.state.current_version !== next.current_version || this.state.current_group_id !== next.current_group_id);
     if (changed) {
       const restarted = this.state.server_epoch !== next.server_epoch;
-      this.cancelFloor(); this.audio?.suspend('群状态已变化，正在恢复音频。');
+      this.cancelFloor(); this.audio?.suspend(this.audio?.desired ? '群状态已变化，正在恢复音频。' : '');
       if (restarted) { this.notice = '连接已恢复，需要发言时请重新按住说话。'; this.noticeTone = 'success'; }
     }
     this.state = next; this.stateAt = this.now(); this.connected = true; this.recommendation?.observeState(); this.emit(); void this.audio?.sync(); return true;
