@@ -11,9 +11,10 @@ export class RecommendationClient {
   constructor({control, onChange = () => {}}) {
     Object.assign(this, {control, onChange});
     this.available = false; this.phase = 'unavailable'; this.generation = 0; this.result = null; this.snapshot = null;
+    this.voiceReservation = null;
     this.message = '正在检查需求推荐。';
   }
-  get blocking() { return this.phase === 'requesting' || this.phase === 'review'; }
+  get blocking() { return ['capturing', 'awaiting_cleanup', 'requesting', 'review'].includes(this.phase); }
   emit() { this.onChange(this); }
   async initialize() {
     this.interrupt();
@@ -27,25 +28,47 @@ export class RecommendationClient {
     this.message = this.available ? '描述需要的帮助，只向已加入的群推荐。' : '需求推荐暂不可用，可从群列表选择或按群名语音切换。';
     this.emit();
   }
-  canRequest() {
+  canRequest(reservation = null) {
     const c = this.control;
+    const handoff = !!reservation && this.voiceReservation === reservation &&
+      reservation.generation === this.generation && reservation.identity === c.identity?.token &&
+      c.voice?.canHandoffNeed?.(reservation);
+    if (reservation && !handoff) return false;
     return this.available && c.allowed() && c.connected && !!c.state?.groups?.length &&
-      !c.uiBlocked && !c.voice?.blocking && !c.mutationBusy && !c.pendingSwitch && !this.blocking;
+      !c.uiBlocked && (!c.voice?.blocking || handoff) && !c.mutationBusy && !c.pendingSwitch && (!this.blocking || handoff);
+  }
+  reserveVoiceNeed() {
+    if (!this.canRequest()) return null;
+    const reservation = {generation: ++this.generation, identity: this.control.identity?.token};
+    this.voiceReservation = reservation; this.result = null; this.snapshot = null; this.phase = 'capturing';
+    this.message = '请说出需要的帮助；本次需求会交给模型生成建议，仍需你确认进入。'; this.emit();
+    return reservation;
+  }
+  awaitVoiceCleanup(reservation) {
+    if (this.voiceReservation !== reservation) return;
+    this.phase = 'awaiting_cleanup'; this.message = '已停止采集，正在确认语音会话结束；尚未请求推荐。'; this.emit();
   }
   interrupt(message = '') {
+    const reservation = this.voiceReservation; this.voiceReservation = null;
     ++this.generation; this.result = null; this.snapshot = null;
     this.phase = this.available ? 'idle' : 'unavailable';
     if (message) this.message = message;
+    if (reservation) this.control.voice?.interruptNeed?.(reservation, message || '已取消语音需求。');
     this.emit();
   }
   observeState() {
+    if (this.voiceReservation) {
+      if (!this.control.allowed() || this.voiceReservation.identity !== this.control.identity?.token) this.interrupt('身份或页面使用权已变化，请重新发起需求。');
+      return; // Voice handoff binds only after cleanup and a fresh authorized state.
+    }
     if (this.blocking && !sameBinding(this.snapshot, binding(this.control))) this.interrupt('群组或连接状态已变化，请重新获取建议。');
     else if (this.result && Date.parse(this.result.expires_at) <= this.control.serverNow()) this.interrupt('建议已过期，请重新描述需求。');
   }
-  async request(need) {
-    if (!this.canRequest()) return false;
+  async request(need, reservation = null) {
+    if (!this.canRequest(reservation)) return false;
     if (!validNeed(need)) { this.message = '请输入 1–512 个字符的需求，不能包含控制字符。'; this.emit(); return false; }
     const c = this.control;
+    this.voiceReservation = null;
     c.cancelFloor();
     this.snapshot = binding(c); this.result = null; this.phase = 'requesting';
     this.message = '正在向已加入的群获取建议，当前群保持不变。';

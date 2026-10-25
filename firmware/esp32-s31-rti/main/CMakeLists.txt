@@ -9,6 +9,7 @@ idf_component_register(
         "group_audio_level.c"
         "group_controller.c"
         "group_command_state.c"
+        "group_recommendation.c"
         "group_switch_journal.c"
         "rti_controller.c"
         "rti_font_source_han_sans_sc_16_gb2312.c"

@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {VoiceCommandClient} from './voice.js';
+import {RecommendationClient} from './recommendation.js';
 import {ControlClient} from './app.js';
 const tick=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};};
-function fixture({respond,source,closeThrows=false,realControl=false}={}){
+function fixture({respond,source,closeThrows=false,realControl=false,recommendation=false,isVisible}={}){
  const calls=[],timers=new Map();let timerID=0,peer;
  const track={enabled:false,stopped:false,stop(){this.stopped=true;}};
  const stream={getTracks:()=>[track],getAudioTracks:()=>[track]};
@@ -21,6 +22,12 @@ function fixture({respond,source,closeThrows=false,realControl=false}={}){
   if(path.endsWith('/stop'))return{stopped:true,command_id:path.split('/')[3]};
   if(path==='/voice/resolve')return{group_id:'group_b',name:'后勤组'};
   if(path==='/state')return currentState;
+  if(path==='/recommendations'){
+   if(method==='GET')return{available:true};
+   const group=currentState.groups.find(group=>group.id==='group_b');
+   return{recommendation:{recommendation_id:'recommendation_test',request_id:body.request_id,server_epoch:currentState.server_epoch,current_version:currentState.current_version,
+    candidate_digest:'a'.repeat(64),expires_at:new Date(Date.now()+60000).toISOString(),suggestions:group?[{group_id:group.id,name:group.name,purpose:group.purpose||'',reason:'职责适合本次需求'}]:[]}};
+  }
   if(path==='/current-group'){
    currentState={...currentState,current_group_id:body.group_id,current_version:2};
    return{operation:{...body,status:'applied',current_group_id:body.group_id,current_version:2},state:currentState};
@@ -32,7 +39,7 @@ function fixture({respond,source,closeThrows=false,realControl=false}={}){
   cancelFloor(){calls.push({cancelFloor:true});},async switchGroup(id){calls.push({switch:id});},async refresh(){calls.push({refresh:true});},
  };
  if(realControl){control.identity={device:baseState.device,token:'local-test-token'};control.state=currentState;control.connected=true;}
- const voice=new VoiceCommandClient({control,audio,request,source:source||(()=>Promise.resolve(stream)),random:()=>`command_123`,
+ const voice=new VoiceCommandClient({control,audio,request,source:source||(()=>Promise.resolve(stream)),random:()=>`command_123`,isVisible,
   createPeer:()=>{
    const channel={sent:[],close(){this.closed=true;},send(text){this.sent.push(JSON.parse(text));}};
    peer={connectionState:'connected',iceGatheringState:'complete',channel,createDataChannel:()=>channel,
@@ -41,9 +48,10 @@ function fixture({respond,source,closeThrows=false,realControl=false}={}){
    return peer;
   },schedule:(fn,ms)=>{const id=++timerID;timers.set(id,{fn,ms});return id;},cancel:id=>timers.delete(id)});
  control.voice=voice;
+ if(recommendation){control.recommendation=new RecommendationClient({control});control.recommendation.available=true;control.recommendation.phase='idle';}
  const message=e=>peer.channel.onmessage?.({data:JSON.stringify(e)});
- const ready=async()=>{await voice.initialize();await voice.start();message({type:'session.created'});message({type:'session.updated'});};
- return{voice,control,audio,calls,timers,track,get peer(){return peer;},message,ready};
+ const ready=async(mode='command')=>{await voice.initialize();await voice.start({mode});message({type:'session.created'});message({type:'session.updated'});};
+ return{voice,control,audio,calls,timers,track,get peer(){return peer;},message,ready,setServerState:next=>{currentState=next;}};
 }
 
 test('explicit action closes group Peer before RTA; mic starts only after session updated; final executes once through durable switch',async()=>{
@@ -154,4 +162,77 @@ test('timeout clears READY status and late session updated cannot reopen ended c
  assert.equal(f.track.enabled,false);assert.equal(f.track.stopped,true);assert.match(f.voice.message,/超时/);
  stop.resolve({stopped:true,command_id:'command_123'});await tick();assert.equal(f.voice.current,null);assert.equal(f.voice.phase,'idle');assert.match(f.voice.message,/超时/);
  late({data:JSON.stringify({type:'session.updated'})});assert.equal(f.track.enabled,false);assert.equal(f.voice.phase,'idle');assert.match(f.voice.message,/超时/);
+});
+
+test('need final closes local and upstream peers, refreshes authorization, then binds one recommendation without executing',async()=>{
+ const stopped=deferred(),state=deferred();let final=false;
+ const f=fixture({realControl:true,recommendation:true,respond:path=>path.endsWith('/stop')?stopped.promise:path==='/state'&&final?state.promise:undefined});
+ await f.ready('need');const session=f.voice.current;
+ const latest={...f.control.state,server_epoch:'epoch_latest',current_version:7,groups:f.control.state.groups.map(group=>({...group,purpose:group.id==='group_b'?'新的设备维修职责':''}))};f.setServerState(latest);
+ f.message({type:'conversation.item.input_audio_transcription.delta',delta:'需要修设备'});assert.equal(f.calls.some(c=>c.path==='/recommendations'),false);
+ final=true;f.message({type:'conversation.item.input_audio_transcription.completed',transcript:'需要修设备'});
+ f.message({type:'conversation.item.input_audio_transcription.done',transcript:'另一条迟到文本'});
+ assert.equal(f.track.stopped,true);assert.equal(f.peer.connectionState,'closed');assert.equal(f.control.canPress(),false);await tick();
+ assert.equal(f.calls.some(c=>c.path==='/recommendations'),false);
+ stopped.resolve({stopped:true,command_id:'command_123'});await tick();
+ assert.equal(f.calls.some(c=>c.path==='/recommendations'),false);assert.equal(f.voice.phase,'refreshing_need');
+ state.resolve(latest);await tick();await tick();
+ const requests=f.calls.filter(c=>c.path==='/recommendations');assert.equal(requests.length,1);
+ assert.equal(requests[0].body.need,'需要修设备');assert.equal(requests[0].body.expected_version,7);assert.equal(requests[0].body.server_epoch,'epoch_latest');
+ assert.equal(f.control.recommendation.phase,'review');assert.equal(f.control.recommendation.result.suggestions[0].purpose,'新的设备维修职责');
+ assert.equal(f.voice.blocking,false);assert.equal(session.need,null);assert.equal(f.control.pendingSwitch,null);assert.equal(f.control.state.current_group_id,'group_a');assert.equal(f.control.canPress(),false);
+ assert.equal(f.calls.some(c=>['/voice/resolve','/current-group','/recommendations/confirm'].includes(c.path)),false);
+});
+
+test('need-mode explicit group-name text still requests suggestions and never falls through to exact command execution',async()=>{
+ const f=fixture({realControl:true,recommendation:true});await f.ready('need');
+ f.message({type:'conversation.item.input_audio_transcription.completed',transcript:'切到后勤组'});await tick();await tick();
+ assert.equal(f.control.recommendation.phase,'review');assert.equal(f.calls.filter(c=>c.path==='/recommendations').length,1);
+ assert.equal(f.calls.some(c=>c.path==='/voice/resolve'||c.path==='/current-group'),false);
+});
+
+test('unconfirmed need cleanup keeps recommendation reserved until the same local and remote cleanup succeeds',async()=>{
+ let stops=0,localFailure=true;
+ const f=fixture({realControl:true,recommendation:true,closeThrows:()=>localFailure,respond:path=>{if(path.endsWith('/stop')&&++stops===1)return Promise.reject(new Error('unconfirmed'));}});
+ await f.ready('need');f.message({type:'conversation.item.input_audio_transcription.done',transcript:'需要设备协助'});await tick();
+ assert.equal(f.voice.phase,'cleanup_pending');assert.equal(f.control.recommendation.phase,'awaiting_cleanup');assert.equal(f.calls.some(c=>c.path==='/recommendations'),false);
+ const before=f.audio.syncs;localFailure=false;[...f.timers.values()].find(timer=>timer.ms===2000).fn();await tick();await tick();
+ assert.equal(stops,2);assert.equal(f.control.recommendation.phase,'review');assert.ok(f.audio.syncs>before);
+});
+
+test('need cancellation during deferred cleanup cannot start a model after late cleanup acknowledgement',async()=>{
+ const stop=deferred();const f=fixture({realControl:true,recommendation:true,respond:path=>path.endsWith('/stop')?stop.promise:undefined});
+ await f.ready('need');f.message({type:'conversation.item.input_audio_transcription.done',transcript:'需要帮忙'});await tick();
+ const session=f.voice.current;f.control.recommendation.interrupt('取消');assert.equal(session.need,null);
+ stop.resolve({stopped:true,command_id:'command_123'});await tick();await tick();
+ assert.equal(f.calls.some(c=>c.path==='/recommendations'),false);assert.equal(f.voice.current,null);assert.equal(f.control.recommendation.result,null);
+});
+
+test('hidden, owner loss and identity change while refreshing a need reject late state and transcript',async()=>{
+ for(const change of ['hidden','owner','identity']){
+  let visible=true,final=false;const state=deferred();
+  const f=fixture({realControl:true,recommendation:true,isVisible:()=>visible,respond:path=>path==='/state'&&final?state.promise:undefined});await f.ready('need');
+  const late=f.peer.channel.onmessage;final=true;f.message({type:'conversation.item.input_audio_transcription.done',transcript:'需要协助'});await tick();
+  if(change==='hidden')visible=false;
+  if(change==='owner')f.control.authorize=()=>false;
+  if(change==='identity')f.control.load({...f.control.identity,token:'changed_identity'});
+  state.resolve(f.control.state);await tick();await tick();
+  late({data:JSON.stringify({type:'session.updated'})});late({data:JSON.stringify({type:'conversation.item.input_audio_transcription.done',transcript:'迟到需求'})});await tick();
+  assert.equal(f.calls.some(c=>c.path==='/recommendations'),false,change);assert.equal(f.track.enabled,false,change);assert.equal(f.track.stopped,true,change);assert.equal(f.control.pendingSwitch,null,change);
+ }
+});
+
+test('cancelled need capture stops late microphone permission and never posts an offer or recommendation',async()=>{
+ const permission=deferred(),lateTrack={enabled:true,stopped:false,stop(){this.stopped=true;}};
+ const f=fixture({realControl:true,recommendation:true,source:()=>permission.promise});await f.voice.initialize();const start=f.voice.start({mode:'need'});await tick();
+ f.control.recommendation.interrupt('取消');permission.resolve({getTracks:()=>[lateTrack],getAudioTracks:()=>[lateTrack]});await start;await tick();
+ assert.equal(lateTrack.enabled,false);assert.equal(lateTrack.stopped,true);assert.equal(f.calls.some(c=>c.path?.endsWith('/offer')||c.path==='/recommendations'),false);
+});
+
+test('failed fresh authorization and malformed need never send recommendation requests',async()=>{
+ for(const need of ['设备\n维修','字'.repeat(513),'需要帮忙']){
+  const f=fixture({realControl:true,recommendation:true,respond:path=>path==='/state'?Promise.reject(new Error('offline')):undefined});await f.ready('need');
+  f.message({type:'conversation.item.input_audio_transcription.done',transcript:need});await tick();await tick();
+  assert.equal(f.calls.some(c=>c.path==='/recommendations'),false);assert.equal(f.track.stopped,true);assert.equal(f.control.recommendation.result,null);
+ }
 });

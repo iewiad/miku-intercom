@@ -1,3 +1,5 @@
+import {validNeed} from './recommendation.js';
+
 const finalTypes = new Set(['conversation.item.input_audio_transcription.completed', 'conversation.item.input_audio_transcription.done']);
 const sourceFactory = () => navigator.mediaDevices.getUserMedia({audio:{channelCount:{ideal:1},echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
 const stopTracks = stream => { for (const track of stream?.getTracks?.() || []) { track.enabled=false; track.stop(); } };
@@ -13,8 +15,8 @@ export const voiceErrorText = error => ({
 export class VoiceCommandClient {
   constructor({control, audio, request, scopeRequest=()=>request, source=sourceFactory,
     createPeer=()=>new RTCPeerConnection({iceServers:[]}), random=()=>crypto.randomUUID(),
-    schedule=(fn,delay)=>setTimeout(fn,delay), cancel=id=>clearTimeout(id), onChange=()=>{}}={}) {
-    Object.assign(this,{control,audio,request,scopeRequest,source,createPeer,random,schedule,cancel,onChange});
+    schedule=(fn,delay)=>setTimeout(fn,delay), cancel=id=>clearTimeout(id), isVisible=()=>typeof document==='undefined'||!document.hidden, onChange=()=>{}}={}) {
+    Object.assign(this,{control,audio,request,scopeRequest,source,createPeer,random,schedule,cancel,isVisible,onChange});
     this.phase='checking'; this.available=false; this.current=null; this.generation=0; this.message='正在检查语音切群。';
     this.initializing=null;
   }
@@ -40,10 +42,19 @@ export class VoiceCommandClient {
     })();
     try{await this.initializing;}finally{this.initializing=null;this.emit();}
   }
-  currentSession(s){return this.current===s && s.generation===this.generation && !s.finishing;}
-  async start(){
-    if(this.blocking || !this.available || !this.control.allowed() || !this.control.connected || this.control.uiBlocked || this.control.recommendation?.blocking || this.control.pendingSwitch || this.control.mutationBusy || !this.control.state?.current_group_id)return;
-    const s={id:this.random(),request:this.scopeRequest(),generation:++this.generation,createRequested:false,submitted:false,accepted:false};
+  currentSession(s){
+    if(this.current!==s||s.generation!==this.generation||s.finishing)return false;
+    if(!this.isVisible()||!this.control.allowed()||s.identityToken!==this.control.identity?.token||
+       (s.mode==='need'&&this.control.recommendation?.voiceReservation!==s.reservation)){
+      this.interrupt('页面或身份状态已变化，语音采集已停止。');return false;
+    }
+    return true;
+  }
+  async start({mode='command'}={}){
+    if(!['command','need'].includes(mode) || !this.isVisible() || this.blocking || !this.available || !this.control.allowed() || !this.control.connected || this.control.uiBlocked || this.control.recommendation?.blocking || this.control.pendingSwitch || this.control.mutationBusy || !this.control.state?.current_group_id)return;
+    const reservation=mode==='need'?this.control.recommendation?.reserveVoiceNeed():null;
+    if(mode==='need'&&!reservation)return;
+    const s={id:this.random(),request:this.scopeRequest(),generation:++this.generation,mode,reservation,identityToken:this.control.identity?.token,createRequested:false,submitted:false,accepted:false,cancelled:false};
     this.current=s;this.phase='preparing';this.message='正在关闭群音频，准备语音指令。';
     this.control.cancelFloor();this.audio.suspend('语音指令期间群音频暂停，结束后恢复。');this.emit();
     s.timer=this.schedule(()=>{if(this.currentSession(s))void this.finish(s,'语音指令超时，已停止采集。');},30000);
@@ -111,11 +122,14 @@ export class VoiceCommandClient {
     if(event.type==='session.created'){
       this.ensureSession(s);
     }else if(event.type==='session.updated'&&s.updated){
-      this.phase='listening';this.message='请说“切到”加完整群名。';for(const track of s.stream?.getAudioTracks()||[])track.enabled=true;this.emit();
+      this.phase='listening';this.message=s.mode==='need'?'请描述需要的帮助，结束后会生成建议，由你确认进入。':'请说“切到”加完整群名。';for(const track of s.stream?.getAudioTracks()||[])track.enabled=true;this.emit();
     }else if(finalTypes.has(event.type)&&this.phase==='listening'){
-      if(typeof event.transcript!=='string'||!event.transcript.trim()||[...event.transcript].length>256){void this.finish(s,'没有识别到明确群名，正在恢复。');return;}
+      if(s.mode==='need'?!validNeed(event.transcript):typeof event.transcript!=='string'||!event.transcript.trim()||[...event.transcript].length>256){void this.finish(s,s.mode==='need'?'需求内容无效，请重新说出 1–512 个字符的需求。':'没有识别到明确群名，正在恢复。');return;}
       s.accepted=true;for(const track of s.stream?.getAudioTracks()||[])track.enabled=false;
-      void this.resolve(s,event.transcript);
+      if(s.mode==='need'){
+        s.need=event.transcript;this.control.recommendation.awaitVoiceCleanup(s.reservation);
+        void this.finish(s,'已停止采集，正在结束语音会话后获取建议。');
+      }else void this.resolve(s,event.transcript);
     }else if(event.type==='session.closed'||event.type==='error'||event.type==='rtid.error'||event.type==='conversation.item.input_audio_transcription.failed')void this.finish(s,'语音会话未完成，正在恢复。');
   }
   async resolve(s,transcript){
@@ -132,8 +146,21 @@ export class VoiceCommandClient {
   }
   interrupt(message='已取消语音指令。'){
     const s=this.current;if(!s)return;
+    s.cancelled=true;s.need=null;s.cancelMessage=message;
+    if(s.mode==='need'&&this.control.recommendation?.voiceReservation===s.reservation)this.control.recommendation.interrupt(message);
     // Submitted group operations are durable and cannot be revoked. Only stop the RTA session.
     void this.finish(s,s.submitted?'正在确认已提交的切群结果。':message);
+  }
+  interruptNeed(reservation,message){if(this.current?.reservation===reservation)this.interrupt(message);}
+  needActive(s){
+    const c=this.control;
+    return this.current===s&&!s.cancelled&&s.mode==='need'&&this.isVisible()&&c.allowed()&&
+      s.identityToken===c.identity?.token&&!c.uiBlocked&&!c.pendingSwitch&&!c.mutationBusy&&
+      c.recommendation?.voiceReservation===s.reservation;
+  }
+  canHandoffNeed(reservation){
+    const s=this.current;
+    return s?.reservation===reservation&&s.cleanConfirmed===true&&s.authorizedStateRefreshed===true&&this.needActive(s);
   }
   async finish(s,message){
     if(s.finishTask)return s.finishTask;
@@ -151,9 +178,33 @@ export class VoiceCommandClient {
         s.finishTask=null;s.retry=this.schedule(()=>{void this.finish(s,message);},2000);return;
       }
       if(this.current!==s)return;
-      this.current=null;++this.generation;this.phase=this.available?'idle':'unavailable';this.message=message;this.emit();
+      let finalMessage=message;
+      if(s.mode==='need'&&s.need&&this.needActive(s)){
+        s.cleanConfirmed=true;this.phase='refreshing_need';this.message='语音会话已结束，正在核对最新群组后获取建议。';this.emit();
+        try{
+          const epoch=this.control.epoch,next=await s.request('/state');
+          if(this.needActive(s)){
+            if(!this.control.applyState(next,epoch))throw new Error('state unconfirmed');
+            s.authorizedStateRefreshed=true;
+            const need=s.need;s.need=null;
+            // request() admits the verified reservation synchronously before its
+            // first await, so there is no gap that re-enables PTT or another task.
+            void this.control.recommendation.request(need,s.reservation);
+            finalMessage='语音会话已结束。请核对需求建议，并明确确认要进入的群。';
+          }
+        }catch{
+          if(this.needActive(s)){
+            this.control.connected=false;
+            finalMessage='群状态尚未确认，未请求推荐；请恢复连接后重试。';
+          }
+        }
+      }
+      s.need=null;
+      if(s.mode==='need'&&this.control.recommendation?.voiceReservation===s.reservation)this.control.recommendation.interrupt(s.cancelled?'已取消语音需求，当前群保持不变。':finalMessage);
+      if(s.mode==='need'&&s.cancelled&&s.cancelMessage)finalMessage=s.cancelMessage;
+      this.current=null;++this.generation;this.phase=this.available?'idle':'unavailable';this.message=finalMessage;this.emit();
       // Latest control state (or its durable pending operation) decides which group may resume.
-      if(this.control.allowed()){if(!this.control.pendingSwitch)await this.control.refresh();void this.audio.sync();}
+      if(this.control.allowed()){if(!this.control.pendingSwitch&&!s.authorizedStateRefreshed)await this.control.refresh();void this.audio.sync();}
     });
     return s.finishTask;
   }

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "board_audio.h"
 #include "esp_err.h"
+#include "group_recommendation.h"
 
 esp_err_t group_controller_init(const board_audio_t *audio);
 
@@ -19,3 +20,5 @@ void group_controller_print_groups(void);
 /* These intents synchronously cancel PTT; the worker performs all network I/O. */
 esp_err_t group_controller_join_group(const char *code, void *context);
 esp_err_t group_controller_voice_action(bool cancel, void *context);
+esp_err_t group_controller_recommendation_action(group_recommendation_action_t action,
+                                                 unsigned index, uint32_t revision, void *context);

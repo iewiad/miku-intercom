@@ -32,7 +32,8 @@ def main():
     if not intent:
         raise RuntimeError('production intent type missing')
     names = ('intent_cancel', 'intent_queue_switch', 'string_field', 'command_event', 'finish_command',
-             'join_command', 'process_command', 'group_controller_join_group', 'group_controller_voice_action',
+             'join_command', 'recommendation_recover', 'request_recommendation', 'prepare_recommended_switch',
+             'process_command', 'group_controller_join_group', 'group_controller_voice_action', 'group_controller_recommendation_action',
              'prepare_selected_switch', 'volume', 'group_controller_init', 'group_controller_print_status')
     fixture = Path(__file__).with_name('group_command_flow_fixture.c.in').read_text()
     fixture = fixture.replace('/* @production-intent */', intent.group())
@@ -56,6 +57,7 @@ def main():
         subprocess.run([compiler,'-std=gnu11','-DGROUP_CONTROLLER_HOST_TEST','-Wall','-Wextra','-Werror','-Wno-deprecated-declarations',
                         '-fsanitize=address,undefined','-I',str(tmp),'-I',str(project/'main'),'-I',str(args.cjson_dir),
                         str(src),str(project/'main/group_command_state.c'),str(project/'main/group_switch_journal.c'),
+                        str(project/'main/group_recommendation.c'),
                         str(args.cjson_dir/'cJSON.c'),'-lm','-o',str(exe)],check=True)
         subprocess.run([str(exe)],check=True)
 

@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "group_recommendation.h"
 
 typedef enum {
     BOARD_CONVERSATION_IDLE = 0,
@@ -102,3 +103,13 @@ esp_err_t board_display_set_group_command_state(uint32_t revision,
                                                 bool voice_active,
                                                 bool can_cancel,
                                                 const char *detail);
+
+/** Independent explicit-need flow. The GUI callback admits intent only; card
+ * selection never calls it. CONFIRM is a separate, revision-fenced action. */
+esp_err_t board_display_set_group_recommendation_action(group_recommendation_action_cb_t callback,
+                                                        void *context);
+/** Worker-only publication. Bounded items are copied into explicit PSRAM before
+ * taking the GUI lock. Repeated snapshots never acknowledge a pending action,
+ * extend the local expiry, invoke PTT, or execute a selection. */
+esp_err_t board_display_set_group_recommendation(const group_recommendation_view_t *view,
+                                                 const group_recommendation_item_t *items);

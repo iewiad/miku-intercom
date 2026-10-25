@@ -75,9 +75,10 @@
           <form id="recommendation-form" class="compact-form">
             <label for="recommendation-need">描述你的需求</label>
             <input id="recommendation-need" placeholder="例如：音响没有声音，需要排查设备" maxlength="1024" autocomplete="off" aria-describedby="recommendation-help recommendation-status">
-            <p id="recommendation-help" class="field-help">本次需求及已加入群的名称、职责会交给模型生成建议。普通对讲不参与分析。</p>
+            <p id="recommendation-help" class="field-help">本次需求及已加入群的名称、职责会交给模型生成建议。普通对讲不参与分析。选择“说出需求”才会采集本次语音，生成建议后仍需确认进入。</p>
             <button id="recommendation-request" class="button secondary form-submit" type="submit" disabled>获取建议</button>
           </form>
+          <button id="recommendation-voice" class="button secondary" type="button" disabled aria-describedby="recommendation-help recommendation-status voice-status">说出需求</button>
           <p id="recommendation-status" class="field-help" role="status" aria-live="polite">正在检查需求推荐。</p>
           <ul id="recommendation-results" class="recommendation-results" aria-label="群组建议"></ul>
           <button id="recommendation-cancel" class="button quiet" type="button" hidden>取消推荐，返回对讲</button>

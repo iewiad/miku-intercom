@@ -10,7 +10,9 @@
 static bool valid_utf8_text(const unsigned char *text, size_t size)
 {
     bool nonblank = false;
+    unsigned codepoints = 0;
     for (size_t i = 0; i < size;) {
+        if (++codepoints > WEBRTC_COMMAND_CODEPOINT_MAX) return false;
         const unsigned char c = text[i];
         if (c < 0x80) {
             if (c < 0x20 && c != '\t' && c != '\n' && c != '\r') return false;

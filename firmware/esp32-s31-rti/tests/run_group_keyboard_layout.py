@@ -69,7 +69,11 @@ def png_previews(directory):
     """Losslessly encode the actual LVGL RGB framebuffer; no image dependency."""
     def chunk(kind, data):
         return struct.pack('!I', len(data)) + kind + data + struct.pack('!I', zlib.crc32(kind + data))
-    for name in ('connecting', 'ready', 'speaking', 'long-name', 'group-list', 'join', 'voice'):
+    for name in ('connecting', 'ready', 'speaking', 'long-name', 'group-list', 'join', 'voice',
+                 'recommendation-prepare', 'recommendation-listening', 'recommendation-waiting',
+                 'recommendation-choices', 'recommendation-scrolled', 'recommendation-selected',
+                 'recommendation-confirming', 'recommendation-expired', 'recommendation-recovering',
+                 'recommendation-failed', 'recommendation-typical', 'recommendation-typical-selected'):
         path = directory / f'board-{name}.ppm'
         raw = path.read_bytes()
         header = b'P6\n800 480\n255\n'
@@ -93,6 +97,11 @@ def run(project, lvgl, build, previews=None):
         "group_create_command_overlay", "group_join_open_event_cb", "group_voice_open_event_cb",
         "group_cancel_ptt", "group_ptt_event_cb", "group_screen_event_cb", "group_action_event_cb",
         "group_volume_event_cb", "board_display_show_group",
+        "group_valid_text", "group_recommendation_label", "group_recommendation_expired",
+        "group_recommendation_card_event_cb", "group_recommendation_submit_event_cb",
+        "group_recommendation_cancel_event_cb", "group_render_recommendation", "group_recommendation_tick",
+        "group_recommendation_build_cards", "group_recommendation_open_event_cb",
+        "board_display_set_group_recommendation_action", "board_display_set_group_recommendation",
     )
     bodies = [function(source, name) for name in names]
     declarations = "\n".join(body[:body.index("{")].strip() + ";" for body in bodies)
@@ -102,13 +111,15 @@ def run(project, lvgl, build, previews=None):
                        source.index("static bool group_command_ready(void)")]
     fixture = Path(__file__).with_name("group_keyboard_layout_fixture.c.in").read_text()
     rendered = fixture.replace("/* @maps */", wifi_maps + "\n" + join_maps)
-    coverage = ''.join(sorted({c for c in source.split('/* Group mode owns', 1)[1] if ord(c) > 127}))
+    legacy_source = source.split('/* Group mode owns', 1)[1]
+    legacy_source = legacy_source.split('/* Recommendation UI begin:', 1)[0] + legacy_source.split('/* Recommendation UI end. */', 1)[1]
+    coverage = ''.join(sorted({c for c in legacy_source if ord(c) > 127}))
     rendered = rendered.replace("/* @font_coverage */", "static const char *font_coverage = " + json.dumps(coverage, ensure_ascii=False) + ";")
     old_font = (project / 'main/rti_font_source_han_sans_sc_16_gb2312.c').read_text()
     options = shlex.split(next(line.split('Opts:', 1)[1] for line in old_font.splitlines()[:12] if 'Opts:' in line))
     dynamic_coverage = options[options.index('--symbols') + 1]
     rendered = rendered.replace("/* @dynamic_coverage */", "static const char *dynamic_coverage = " + json.dumps(dynamic_coverage, ensure_ascii=False) + ";")
-    rendered = rendered.replace("/* @production */", declarations + "\n" + "\n\n".join(bodies))
+    rendered = rendered.replace("/* @production */", '#define GROUP_RECOMMENDATION_ENTRY "需求找组"\n' + declarations + "\n" + "\n\n".join(bodies))
     old = rendered
     for y in (178, 190):
         pattern = rf"lv_obj_align\(keyboard,\s*LV_ALIGN_TOP_LEFT,\s*12,\s*{y}\);"
@@ -116,6 +127,7 @@ def run(project, lvgl, build, previews=None):
         if count != 1:
             raise RuntimeError(f"Expected one explicit keyboard TOP_LEFT alignment at y={y}; found {count}.")
     build.mkdir(parents=True, exist_ok=True)
+    write_changed(build / "esp_err.h", '#pragma once\ntypedef int esp_err_t;\n')
     write_changed(build / "lv_conf.h", CONFIG)
     write_changed(build / "layout.c", rendered)
     write_changed(build / "layout_old.c", old)
@@ -128,7 +140,7 @@ add_subdirectory("{lvgl.as_posix()}" lvgl)
 foreach(target layout layout_old)
   add_executable(${{target}} ${{target}}.c "{(project / 'main/rti_font_source_han_sans_sc_16_gb2312.c').as_posix()}" "{(project / 'main/shenglu_brand_24.c').as_posix()}" "{(project / 'main/shenglu_ui_24.c').as_posix()}" "{(project / 'main/shenglu_group_20_gb2312.c').as_posix()}")
   target_link_libraries(${{target}} PRIVATE lvgl::lvgl m)
-  target_include_directories(${{target}} PRIVATE "{(project / 'main').as_posix()}")
+  target_include_directories(${{target}} PRIVATE "${{CMAKE_CURRENT_SOURCE_DIR}}" "{(project / 'main').as_posix()}")
   target_compile_options(${{target}} PRIVATE -Wall -Wextra)
 endforeach()
 '''

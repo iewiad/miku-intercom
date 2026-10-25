@@ -261,9 +261,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) handle(w http.ResponseWriter, r *http.Request, path, id string) error {
 	if path == "/recommendations" || path == "/recommendations/confirm" {
-		if s.deviceHost != "" {
-			return invalid("not_found", "resource not found", 404)
-		}
+		// Both native TLS and localhost clients use the same authenticated
+		// candidate snapshot and atomic confirmation transaction. The native
+		// Host/Origin/TLS gate above remains mandatory for every request.
 		return s.handleRecommendations(w, r, path, id)
 	}
 	if s.voice != nil && (path == "/voice/sessions" || path == "/media/peers") {

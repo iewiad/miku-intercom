@@ -6,7 +6,8 @@
 
 #include "esp_err.h"
 
-#define WEBRTC_COMMAND_TEXT_MAX 512
+#define WEBRTC_COMMAND_TEXT_MAX 2048
+#define WEBRTC_COMMAND_CODEPOINT_MAX 512
 
 typedef enum {
     WEBRTC_COMMAND_READY,

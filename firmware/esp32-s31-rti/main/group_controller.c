@@ -323,6 +323,7 @@ int main(void)
 #include <stdlib.h>
 #include "board_display.h"
 #include "cJSON.h"
+#include "group_json_response.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
@@ -338,7 +339,7 @@ int main(void)
 #include "mbedtls/platform_util.h"
 #include "webrtc_peer.h"
 
-#define RESPONSE_MAX (48 * 1024)
+#define RESPONSE_MAX GROUP_JSON_RESPONSE_BYTES
 static const char *TAG = "group_controller";
 static portMUX_TYPE guard = portMUX_INITIALIZER_UNLOCKED;
 static TaskHandle_t worker;
@@ -388,6 +389,13 @@ static bool command_session_live, command_peer_live;
 static int64_t command_deadline_us, command_cleanup_retry_us;
 static char command_target[81], command_result[160];
 static uint64_t command_expected_version;
+/* Only the lifecycle worker mutates result storage; GUI callbacks read one
+ * admitted index under guard while CHOOSING and never allocate or perform I/O. */
+static group_recommendation_t *recommendation;
+static char *recommendation_need;
+static int64_t recommendation_deadline_us, recommendation_next_poll_us;
+static uint32_t recommendation_catalog_view;
+static char recommendation_request_id[81], recommendation_epoch[81];
 
 
 static void advance_view_locked(void)
@@ -617,7 +625,8 @@ static esp_err_t request(const char *path, esp_http_client_method_t method,
         err = ESP_ERR_INVALID_SIZE;
         goto done;
     }
-    const int timeout = method == HTTP_METHOD_POST && strcmp(path, "/media/peers") == 0 ? 8000 : 2500;
+    const int timeout = method == HTTP_METHOD_POST && strcmp(path, "/recommendations") == 0 ? 35000 :
+                        method == HTTP_METHOD_POST && strcmp(path, "/media/peers") == 0 ? 8000 : 2500;
     if (!control_client) {
         const esp_http_client_config_t opts = {
             .url = url,
@@ -678,7 +687,7 @@ static esp_err_t request(const char *path, esp_http_client_method_t method,
         err = ESP_FAIL;
     }
     if (err == ESP_OK && result) {
-        *result = cJSON_ParseWithLengthOpts(response.data, response.used + 1, NULL, true);
+        *result = group_json_response_parse(response.data, response.used);
         if (!*result) {
             err = ESP_ERR_INVALID_RESPONSE;
         }
@@ -720,6 +729,38 @@ done:
     return err;
 }
 
+static esp_err_t publish_recommendation(void)
+{
+    group_recommendation_view_t view = {0};
+    const int64_t now = esp_timer_get_time();
+    portENTER_CRITICAL(&guard);
+    view.revision = command.revision;
+    view.can_start = command.kind == GROUP_COMMAND_NONE && intent.desired && intent.ready &&
+                     catalog_known && !intent.link_lost && !intent.switch_pending;
+    if (command.kind == GROUP_COMMAND_RECOMMEND) {
+        switch (command.phase) {
+        case GROUP_COMMAND_LISTENING: view.phase = GROUP_RECOMMENDATION_LISTENING; break;
+        case GROUP_COMMAND_CLEANUP: view.phase = GROUP_RECOMMENDATION_CLEANUP; break;
+        case GROUP_COMMAND_REQUESTING: view.phase = GROUP_RECOMMENDATION_REQUESTING; break;
+        case GROUP_COMMAND_CHOOSING: view.phase = GROUP_RECOMMENDATION_CHOOSING; break;
+        case GROUP_COMMAND_CONFIRMING: view.phase = GROUP_RECOMMENDATION_CONFIRMING; break;
+        case GROUP_COMMAND_RECOVERING: view.phase = GROUP_RECOMMENDATION_RECOVERING; break;
+        default: view.phase = GROUP_RECOMMENDATION_PREPARING; break;
+        }
+        view.can_cancel = !command.cancelled && !command.submitted && command.phase != GROUP_COMMAND_RECOVERING;
+        if (command.phase == GROUP_COMMAND_CHOOSING && recommendation) {
+            view.count = recommendation->count;
+            if (recommendation_deadline_us > now)
+                view.expires_remaining_ms = (uint32_t)((recommendation_deadline_us - now) / 1000);
+            view.can_confirm = view.expires_remaining_ms > 0 && !command.cancelled &&
+                               intent.desired && !intent.link_lost && recommendation_catalog_view == view_generation;
+        }
+        strlcpy(view.detail, command_result[0] ? command_result : ui_detail, sizeof(view.detail));
+    }
+    portEXIT_CRITICAL(&guard);
+    return board_display_set_group_recommendation(&view, view.count ? recommendation->items : NULL);
+}
+
 static bool update_ui(const char *detail)
 {
     portENTER_CRITICAL(&guard);
@@ -758,6 +799,7 @@ static bool update_ui(const char *detail)
         choices_published = true;
     }
     if (board_display_set_group_command_state(command_revision, joining, voice, can_cancel, ui_detail) != ESP_OK) return false;
+    if (publish_recommendation() != ESP_OK) return false;
     return board_display_set_group_state(group_name, ui_detail, connected, speaking) == ESP_OK;
 }
 
@@ -1243,7 +1285,7 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t event, void *da
     portENTER_CRITICAL(&guard);
     webrtc_peer_group_suspend_media();
     intent_link_lost(&intent);
-    if (command.kind == GROUP_COMMAND_VOICE) {
+    if (command.kind == GROUP_COMMAND_VOICE || command.kind == GROUP_COMMAND_RECOMMEND) {
         (void)group_command_cancel(&command);
         webrtc_peer_command_cancel();
     }
@@ -1355,7 +1397,12 @@ static bool switch_session_active(uint32_t session)
 static bool parse_switch_terminal(const cJSON *response, group_switch_terminal_t *terminal)
 {
     memset(terminal, 0, sizeof(*terminal));
+    if (!group_json_tree_unambiguous(response)) return false;
     const cJSON *operation = cJSON_GetObjectItemCaseSensitive(response, "operation");
+    const cJSON *rec_id = cJSON_GetObjectItemCaseSensitive(operation, "recommendation_id");
+    const cJSON *rec_epoch = cJSON_GetObjectItemCaseSensitive(operation, "recommendation_epoch");
+    if ((rec_id && !string_field(operation, "recommendation_id", terminal->recommendation_id, 81)) ||
+        (rec_epoch && !string_field(operation, "recommendation_epoch", terminal->recommendation_epoch, 81))) return false;
     return string_field(operation, "operation_id", terminal->operation_id, sizeof(terminal->operation_id)) &&
            string_field(operation, "group_id", terminal->group_id, sizeof(terminal->group_id)) &&
            json_version(operation, "expected_version", &terminal->expected_version) &&
@@ -1399,7 +1446,13 @@ static esp_err_t resolve_pending_switch(uint32_t session)
         }
         /* Never change this ID, target, or version after a timeout, reconnect,
          * STOP/START, reboot, or server_epoch change. */
-        err = request("/current-group", HTTP_METHOD_PUT, body, &out);
+        const bool recommended = pending_operation.recommendation_id[0] != 0;
+        if (recommended && (!cJSON_AddStringToObject(body, "recommendation_id", pending_operation.recommendation_id) ||
+                            !cJSON_AddStringToObject(body, "server_epoch", pending_operation.recommendation_epoch))) {
+            cJSON_Delete(body);
+            return ESP_ERR_NO_MEM;
+        }
+        err = request(recommended ? "/recommendations/confirm" : "/current-group", HTTP_METHOD_PUT, body, &out);
         cJSON_Delete(body);
     }
     group_switch_terminal_t terminal;
@@ -1524,6 +1577,124 @@ static void join_command(void)
 
 /* True means this iteration belongs exclusively to the RTA lifecycle. A
  * recovering command allows the existing journal/state/RTC worker to proceed. */
+static bool recommendation_recover(const char *detail)
+{
+    portENTER_CRITICAL(&guard);
+    /* A UI confirmation admitted while a worker refreshed CHOOSING is already
+     * irrevocable. Only prepare_recommended_switch may move it to recovery,
+     * after saving or re-reading the durable slot. */
+    if (command.kind == GROUP_COMMAND_RECOMMEND && command.submitted && command.phase == GROUP_COMMAND_CONFIRMING) {
+        portEXIT_CRITICAL(&guard);
+        return false;
+    }
+    mbedtls_platform_zeroize(command.transcript, sizeof(command.transcript));
+    intent.command_busy = false;
+    intent_cancel(&intent);
+    intent.ready = false;
+    group_command_phase(&command, GROUP_COMMAND_RECOVERING);
+    portEXIT_CRITICAL(&guard);
+    if (recommendation_need) mbedtls_platform_zeroize(recommendation_need, GROUP_RECOMMENDATION_NEED_BYTES + 1);
+    strlcpy(command_result, detail, sizeof(command_result));
+    (void)update_ui(detail);
+    return true;
+}
+
+static void request_recommendation(group_command_state_t *current)
+{
+    (void)update_ui("正在按需求查找已加入群，尚未切群");
+    if (!recommendation) recommendation = heap_caps_calloc(1, sizeof(*recommendation), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    cJSON *body = cJSON_CreateObject(), *out = NULL;
+    esp_err_t err = ESP_ERR_NO_MEM;
+    if (recommendation && body && group_recommendation_need_valid(current->need) &&
+        cJSON_AddStringToObject(body, "request_id", recommendation_request_id) &&
+        cJSON_AddStringToObject(body, "need", current->need) &&
+        cJSON_AddStringToObject(body, "server_epoch", recommendation_epoch) &&
+        cJSON_AddNumberToObject(body, "expected_version", (double)command_expected_version)) {
+        /* The final admission check follows UI publication and JSON allocation:
+         * a cancellation accepted during either must prevent this POST. Once
+         * admitted, cancellation may race an already in-flight HTTP request. */
+        portENTER_CRITICAL(&guard);
+        const bool admitted = command.kind == GROUP_COMMAND_RECOMMEND && command.ticket == current->ticket &&
+            command.phase == GROUP_COMMAND_REQUESTING && !command.cancelled && !command.failed &&
+            intent.desired && !intent.link_lost;
+        portEXIT_CRITICAL(&guard);
+        if (admitted) err = request("/recommendations", HTTP_METHOD_POST, body, &out);
+        else err = ESP_ERR_INVALID_STATE;
+    }
+    cJSON *need = cJSON_GetObjectItemCaseSensitive(body, "need");
+    if (cJSON_IsString(need)) mbedtls_platform_zeroize(need->valuestring, strlen(need->valuestring));
+    if (current->need) mbedtls_platform_zeroize(current->need, current->need_capacity);
+    portENTER_CRITICAL(&guard);
+    mbedtls_platform_zeroize(command.transcript, sizeof(command.transcript));
+    const bool active = command.kind == GROUP_COMMAND_RECOMMEND && command.ticket == current->ticket &&
+        command.phase == GROUP_COMMAND_REQUESTING && !command.cancelled && !command.failed && intent.desired && !intent.link_lost;
+    portEXIT_CRITICAL(&guard);
+    cJSON_Delete(body);
+    bool valid = active && err == ESP_OK && group_recommendation_parse(out, recommendation_request_id,
+                            recommendation_epoch, command_expected_version, recommendation);
+    if (valid) {
+        recommendation->expires_at_ms = parse_time(recommendation->expires_at);
+        const int64_t remaining_ms = recommendation->expires_at_ms - server_now();
+        valid = remaining_ms > 0 && remaining_ms <= 60000;
+        if (valid) recommendation_deadline_us = esp_timer_get_time() + remaining_ms * 1000;
+        for (unsigned i = 0; valid && i < recommendation->count; ++i) {
+            bool member = false;
+            for (size_t j = 0; j < catalog_count; ++j)
+                if (!strcmp(recommendation->group_ids[i], catalog_items[j].id)) member = true;
+            valid = member;
+        }
+    }
+    cJSON_Delete(out);
+    if (!valid || !recommendation->count) {
+        recommendation_recover(active ? "推荐未完成或没有有效建议，未切群" : "需求找组已取消，正在恢复当前群");
+        return;
+    }
+    portENTER_CRITICAL(&guard);
+    if (!command.cancelled && !command.failed && intent.desired && !intent.link_lost &&
+        command.kind == GROUP_COMMAND_RECOMMEND && command.phase == GROUP_COMMAND_REQUESTING && command.ticket == current->ticket) {
+        recommendation_catalog_view = view_generation;
+        recommendation_next_poll_us = esp_timer_get_time() + 1000000;
+        group_command_phase(&command, GROUP_COMMAND_CHOOSING);
+    }
+    portEXIT_CRITICAL(&guard);
+    (void)update_ui("请选择建议并明确确认进入，未确认不会切群");
+}
+
+static void prepare_recommended_switch(void)
+{
+    /* Explicit UI confirmation reserved this immutable target before this
+     * worker call. Persist it even if STOP/disconnect raced admission; no PUT
+     * is allowed until the ordinary resolver's active-session gate permits it. */
+    group_switch_journal_t record = {.format = GROUP_SWITCH_JOURNAL_FORMAT,
+                                     .expected_version = command_expected_version};
+    strlcpy(record.server_url, config.server_url, sizeof(record.server_url));
+    strlcpy(record.device_id, config.device_id, sizeof(record.device_id));
+    strlcpy(record.group_id, command_target, sizeof(record.group_id));
+    strlcpy(record.recommendation_id, recommendation->recommendation_id, sizeof(record.recommendation_id));
+    strlcpy(record.recommendation_epoch, recommendation->server_epoch, sizeof(record.recommendation_epoch));
+    random_id(record.operation_id);
+    const esp_err_t err = group_switch_journal_save(&record);
+    if (err != ESP_OK) {
+        reload_switch_journal();
+        portENTER_CRITICAL(&guard);
+        group_command_phase(&command, GROUP_COMMAND_RECOVERING);
+        portEXIT_CRITICAL(&guard);
+        recommendation_recover("推荐确认记录尚未保存，正在核对当前群");
+        return;
+    }
+    pending_operation = record;
+    pending_saved = true;
+    journal_blocked = false;
+    portENTER_CRITICAL(&guard);
+    intent.switch_pending = true;
+    switch_phase = SWITCH_CONFIRMING;
+    strlcpy(switch_operation_id, record.operation_id, sizeof(switch_operation_id));
+    strlcpy(switch_target_id, record.group_id, sizeof(switch_target_id));
+    group_command_phase(&command, GROUP_COMMAND_RECOVERING);
+    portEXIT_CRITICAL(&guard);
+    recommendation_recover("正在确认推荐切群结果，确认前暂停音频");
+}
+
 static bool process_command(void)
 {
     portENTER_CRITICAL(&guard);
@@ -1534,14 +1705,32 @@ static bool process_command(void)
     portEXIT_CRITICAL(&guard);
     if (current.kind == GROUP_COMMAND_NONE) return false;
     if (current.kind == GROUP_COMMAND_JOIN) { join_command(); return true; }
+    if (current.kind == GROUP_COMMAND_RECOMMEND && current.phase == GROUP_COMMAND_CONFIRMING) {
+        prepare_recommended_switch();
+        return false;
+    }
     if (current.phase == GROUP_COMMAND_RECOVERING) {
         if (!active || ready) finish_command(active ? (command_result[0] ? command_result : "语音操作结束，当前群音频已就绪") : "已停止，未确认的切群将在下次连接时继续");
         return false;
     }
-    if (current.phase == GROUP_COMMAND_QUEUED) {
+    if (current.phase == GROUP_COMMAND_QUEUED && !command_deadline_us) {
         command_result[0] = command_target[0] = 0;
         command_deadline_us = esp_timer_get_time() + 45000000;
         command_cleanup_retry_us = 0;
+        if (current.kind == GROUP_COMMAND_RECOMMEND) {
+            recommendation_deadline_us = 0;
+            random_id(recommendation_request_id);
+            strlcpy(recommendation_epoch, server_epoch, sizeof(recommendation_epoch));
+            if (recommendation) memset(recommendation, 0, sizeof(*recommendation));
+            if (!recommendation_need) recommendation_need = heap_caps_calloc(
+                1, GROUP_RECOMMENDATION_NEED_BYTES + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            portENTER_CRITICAL(&guard);
+            command.need = recommendation_need;
+            command.need_capacity = recommendation_need ? GROUP_RECOMMENDATION_NEED_BYTES + 1 : 0;
+            if (!recommendation_need) (void)group_command_error(&command, current.ticket);
+            portEXIT_CRITICAL(&guard);
+            if (!recommendation_need) return true;
+        }
     }
     if ((!active || lost || (command_deadline_us && esp_timer_get_time() >= command_deadline_us)) && !current.cancelled) {
         portENTER_CRITICAL(&guard);
@@ -1559,6 +1748,21 @@ static bool process_command(void)
     }
     if (current.phase == GROUP_COMMAND_QUEUED) {
         disconnect_peer();
+        if (current.kind == GROUP_COMMAND_RECOMMEND) {
+            if (!webrtc_peer_stopped()) {
+                (void)update_ui("正在等待原群音频安全结束");
+                return true;
+            }
+            cJSON *capability = NULL;
+            const esp_err_t capability_error = request("/recommendations", HTTP_METHOD_GET, NULL, &capability);
+            const bool available = capability_error == ESP_OK &&
+                cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(capability, "available"));
+            cJSON_Delete(capability);
+            if (!available) {
+                recommendation_recover("需求推荐暂不可用，请从群列表选择");
+                return false;
+            }
+        }
         portENTER_CRITICAL(&guard);
         if (command.cancelled || !intent.desired) {
             group_command_phase(&command, GROUP_COMMAND_CLEANUP);
@@ -1589,10 +1793,43 @@ static bool process_command(void)
         return true;
     }
     if (current.phase == GROUP_COMMAND_STARTING || current.phase == GROUP_COMMAND_LISTENING) {
-        (void)update_ui(current.phase == GROUP_COMMAND_LISTENING ? "请说：切到某某群；完成后会自动恢复对讲" : "正在等待语音通道就绪，暂时无法收听群聊");
+        (void)update_ui(current.phase == GROUP_COMMAND_LISTENING ?
+            (current.kind == GROUP_COMMAND_RECOMMEND ? "请说需要什么帮助，稍后由您确认建议" : "请说：切到某某群；完成后会自动恢复对讲") :
+            "正在等待语音通道就绪，暂时无法收听群聊");
+        return true;
+    }
+    if (current.phase == GROUP_COMMAND_REQUESTING) {
+        request_recommendation(&current);
+        return true;
+    }
+    if (current.phase == GROUP_COMMAND_CHOOSING) {
+        if (esp_timer_get_time() >= recommendation_next_poll_us) {
+            recommendation_next_poll_us = esp_timer_get_time() + 1000000;
+            if (refresh_state(false) != ESP_OK) {
+                return !recommendation_recover("群状态暂不可确认，推荐已取消，未切群");
+            }
+        }
+        portENTER_CRITICAL(&guard);
+        const bool reviewing = command.kind == GROUP_COMMAND_RECOMMEND && command.ticket == current.ticket &&
+                               command.phase == GROUP_COMMAND_CHOOSING && !command.submitted;
+        portEXIT_CRITICAL(&guard);
+        if (!reviewing) return true;
+        if (esp_timer_get_time() >= recommendation_deadline_us || server_now() >= recommendation->expires_at_ms ||
+            recommendation_catalog_view != view_generation) {
+            return !recommendation_recover("推荐已过期或候选已变化，未切群，请重新说需求");
+        }
+        (void)update_ui("请选择建议并明确确认进入，未确认不会切群");
         return true;
     }
     if (current.phase == GROUP_COMMAND_RESOLVING) {
+        if (current.kind == GROUP_COMMAND_RECOMMEND) {
+            command_deadline_us = 0;
+            portENTER_CRITICAL(&guard);
+            group_command_phase(&command, GROUP_COMMAND_CLEANUP);
+            portEXIT_CRITICAL(&guard);
+            mbedtls_platform_zeroize(current.transcript, sizeof(current.transcript));
+            return true;
+        }
         (void)update_ui("已收到语音，正在核对已加入群");
         const int64_t resolve_started = esp_timer_get_time();
         const size_t input_bytes = strlen(current.transcript);
@@ -1645,7 +1882,14 @@ static bool process_command(void)
          * exists. Retire it before a future start can overwrite its peer_id. */
         if (peer_id[0] || floor_request) disconnect_peer();
         webrtc_peer_command_cancel();
-        if (command_peer_live) { webrtc_peer_stop(); command_peer_live = false; }
+        if (command_peer_live) {
+            webrtc_peer_stop();
+            if (!webrtc_peer_stopped()) {
+                (void)update_ui("正在等待本地语音资源安全结束");
+                return true;
+            }
+            command_peer_live = false;
+        }
         if (command_session_live) {
             if (esp_timer_get_time() < command_cleanup_retry_us) return true;
             (void)update_ui("正在结束语音会话，确认后恢复群音频");
@@ -1658,6 +1902,12 @@ static bool process_command(void)
             command_session_live = false;
         }
         mbedtls_platform_zeroize(&command_session, sizeof(command_session));
+        if (current.kind == GROUP_COMMAND_RECOMMEND && !current.cancelled && !current.failed && active && !lost) {
+            portENTER_CRITICAL(&guard);
+            if (!command.cancelled && intent.desired && !intent.link_lost) group_command_phase(&command, GROUP_COMMAND_REQUESTING);
+            portEXIT_CRITICAL(&guard);
+            return true;
+        }
         portENTER_CRITICAL(&guard);
         intent.command_busy = false;
         const bool submit = command_target[0] && !command.cancelled && !command.failed && intent.desired && !intent.link_lost;
@@ -1714,6 +1964,45 @@ esp_err_t group_controller_voice_action(bool cancel, void *context)
             intent.ready = false;
             intent.command_busy = true;
             command_expected_version = published_version;
+        }
+    }
+    portEXIT_CRITICAL(&guard);
+    if (accepted) notify_worker();
+    return accepted ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
+
+esp_err_t group_controller_recommendation_action(group_recommendation_action_t action,
+                                                 unsigned index, uint32_t revision, void *context)
+{
+    (void)context;
+    const int64_t now = esp_timer_get_time();
+    portENTER_CRITICAL(&guard);
+    bool accepted = false;
+    if (action == GROUP_RECOMMENDATION_START) {
+        accepted = revision == command.revision && intent.desired && intent.ready && catalog_known &&
+            published_group_id[0] && !intent.link_lost && !intent.switch_pending &&
+            group_command_begin(&command, GROUP_COMMAND_RECOMMEND, NULL);
+        if (accepted) {
+            cancel_locked();
+            webrtc_peer_group_suspend_media();
+            intent.ready = false;
+            intent.command_busy = true;
+            command_expected_version = published_version;
+        }
+    } else if (action == GROUP_RECOMMENDATION_CANCEL) {
+        accepted = command.kind == GROUP_COMMAND_RECOMMEND && revision == command.revision && group_command_cancel(&command);
+        if (accepted) webrtc_peer_command_cancel();
+    } else if (action == GROUP_RECOMMENDATION_CONFIRM) {
+        accepted = command.kind == GROUP_COMMAND_RECOMMEND && command.phase == GROUP_COMMAND_CHOOSING &&
+            revision == command.revision && !command.cancelled && !command.submitted && recommendation &&
+            index < recommendation->count && now < recommendation_deadline_us && intent.desired &&
+            !intent.link_lost && catalog_known && !intent.switch_pending &&
+            recommendation_catalog_view == view_generation && published_version == command_expected_version;
+        if (accepted) {
+            strlcpy(command_target, recommendation->group_ids[index], sizeof(command_target));
+            command.submitted = true;
+            group_command_phase(&command, GROUP_COMMAND_CONFIRMING);
+            cancel_locked();
         }
     }
     portEXIT_CRITICAL(&guard);
@@ -1949,6 +2238,7 @@ esp_err_t group_controller_init(const board_audio_t *board)
     if (err == ESP_OK) {
         err = board_display_set_group_commands(group_controller_join_group, group_controller_voice_action, NULL);
     }
+    if (err == ESP_OK) err = board_display_set_group_recommendation_action(group_controller_recommendation_action, NULL);
     if (err == ESP_OK) {
         update_ui(group_config_ready() ? "已配置，点击连接群音频" : "请通过 USB 配置群服务");
         TaskHandle_t task = NULL;

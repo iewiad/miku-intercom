@@ -38,6 +38,10 @@ bool group_switch_journal_valid(const group_switch_journal_t *record)
            group_switch_identifier(record->device_id) &&
            group_switch_identifier(record->operation_id) &&
            group_switch_identifier(record->group_id) &&
+           terminated(record->recommendation_id, sizeof(record->recommendation_id)) &&
+           terminated(record->recommendation_epoch, sizeof(record->recommendation_epoch)) &&
+           ((!record->recommendation_id[0] && !record->recommendation_epoch[0]) ||
+            (group_switch_identifier(record->recommendation_id) && group_switch_identifier(record->recommendation_epoch))) &&
            record->expected_version <= GROUP_SWITCH_MAX_VERSION;
 }
 
@@ -57,6 +61,10 @@ bool group_switch_terminal_matches(const group_switch_journal_t *record,
         !terminated(terminal->status, sizeof(terminal->status)) ||
         !terminated(terminal->error_code, sizeof(terminal->error_code)) ||
         !terminated(terminal->current_group_id, sizeof(terminal->current_group_id)) ||
+        !terminated(terminal->recommendation_id, sizeof(terminal->recommendation_id)) ||
+        !terminated(terminal->recommendation_epoch, sizeof(terminal->recommendation_epoch)) ||
+        strcmp(terminal->recommendation_id, record->recommendation_id) ||
+        strcmp(terminal->recommendation_epoch, record->recommendation_epoch) ||
         strcmp(terminal->operation_id, record->operation_id) ||
         strcmp(terminal->group_id, record->group_id) ||
         terminal->expected_version != record->expected_version ||
@@ -88,6 +96,14 @@ bool group_switch_state_confirms(const group_switch_terminal_t *terminal,
 #define JOURNAL_NAMESPACE "intercom"
 #define JOURNAL_KEY "pending_switch"
 
+/* Exact legacy on-flash layout. Read normalization does not rewrite or erase an
+ * unresolved v1 operation; the original endpoint and payload stay immutable. */
+typedef struct {
+    uint32_t format;
+    char server_url[192], device_id[81], operation_id[81], group_id[81];
+    uint64_t expected_version;
+} journal_v1_t;
+
 esp_err_t group_switch_journal_load(group_switch_journal_t *record)
 {
     if (!record) {
@@ -105,6 +121,10 @@ esp_err_t group_switch_journal_load(group_switch_journal_t *record)
     size_t size = sizeof(*record);
     err = nvs_get_blob(handle, JOURNAL_KEY, record, &size);
     nvs_close(handle);
+    if (err == ESP_OK && size == sizeof(journal_v1_t) && record->format == 1U) {
+        record->format = GROUP_SWITCH_JOURNAL_FORMAT;
+        size = sizeof(*record);
+    }
     if (err == ESP_ERR_NVS_NOT_FOUND) {
         err = ESP_ERR_NOT_FOUND;
     } else if (err == ESP_OK && (size != sizeof(*record) || !group_switch_journal_valid(record))) {
@@ -128,6 +148,8 @@ esp_err_t group_switch_journal_save(const group_switch_journal_t *record)
                strcmp(old.device_id, record->device_id) == 0 &&
                strcmp(old.operation_id, record->operation_id) == 0 &&
                strcmp(old.group_id, record->group_id) == 0 &&
+               strcmp(old.recommendation_id, record->recommendation_id) == 0 &&
+               strcmp(old.recommendation_epoch, record->recommendation_epoch) == 0 &&
                old.expected_version == record->expected_version ? ESP_OK : ESP_ERR_INVALID_STATE;
     }
     if (err != ESP_ERR_NOT_FOUND) {

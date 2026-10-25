@@ -36,6 +36,7 @@ export function bindPTTPointer(button, client) {
 export function bindAudioDisable(button, client) {
   button.addEventListener('click', () => {
     client.voice?.interrupt('音频已关闭，语音指令已停止。');
+    client.recommendation?.interrupt('音频已关闭，需求推荐已取消。');
     if (client.pressed || client.floorRequest) client.cancelFloor();
     client.audio?.disable();
   });
@@ -101,7 +102,7 @@ export class ControlClient {
     if (this.uiBlocked) this.cancelFloor();
     else this.emit();
   }
-  load(identity, pending = null) { if (this.identity?.token !== identity?.token) { this.cancelFloor(); this.audio?.suspend(); this.recommendation?.interrupt(); } this.identity = identity; this.pendingSwitch = pending; this.emit(); }
+  load(identity, pending = null) { if (this.identity?.token !== identity?.token) { this.voice?.interrupt('身份已变化，语音采集已停止。'); this.cancelFloor(); this.audio?.suspend(); this.recommendation?.interrupt(); } this.identity = identity; this.pendingSwitch = pending; this.emit(); }
   async request(path, method = 'GET', body, {token = this.identity?.token, keepalive = false, timeoutMs = 8000} = {}) {
     const headers = {'Accept': 'application/json'};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -328,7 +329,9 @@ export function channelPresentation(client) {
   const view = (phase, title, detail, hint = '按住说话，松开结束', button = '按住说话') => ({phase, title, detail, hint, button});
   if (!client.allowed()) return view('paused', '此页面已暂停', '返回正在使用的页面，或在这里继续。', '继续使用后再说话');
   if (client.pendingSwitch) return view('switching', '正在切换群组', '切换完成后将更新当前群，请稍候。', '正在切换，请稍候');
-  if (client.voice?.blocking) return view('voice', client.voice.current ? '正在语音切群' : '正在准备', '语音操作结束后，会恢复群内对讲。', '结束语音操作后再说话');
+  if (client.voice?.blocking) return client.voice.current?.mode === 'need' ?
+    view('voice', '正在语音找组', '语音会话结束后生成建议，确认前当前群保持不变。', '先完成或取消语音需求') :
+    view('voice', client.voice.current ? '正在语音切群' : '正在准备', '语音操作结束后，会恢复群内对讲。', '结束语音操作后再说话');
   if (client.recommendation?.blocking) return view('recommending', '正在选择协作群', '当前群保持不变。请先确认建议或取消。', '先完成或取消需求推荐');
   if (client.uiBlocked) return view('managing', '正在添加群组', '当前发言已停止。关闭面板后可返回对讲操作。', '先关闭添加群组面板');
   if (client.mutationBusy) return view('updating', '正在更新群组', '正在更新群组信息，请稍候。', '操作进行中，请稍候');
@@ -452,12 +455,13 @@ function boot() {
     const voice=client.voice;
     $('voice-start').disabled=!operable || addPanelOpen || !current || !client.connected || !voice?.available;
     $('voice-cancel').hidden=!voice?.current; $('voice-cancel').disabled=!voice?.canCancel;
-    text('voice-cancel', voice?.canCancel ? '取消语音切群' : voice?.current?.submitted ? '正在切换，请稍候' : '正在返回群组');
+    text('voice-cancel', voice?.canCancel ? (voice.current.mode === 'need' ? '取消语音需求' : '取消语音切群') : voice?.current?.submitted ? '正在切换，请稍候' : '正在返回群组');
     $('voice-check').hidden=voice?.phase!=='checking' || !!voice?.initializing;
     text('voice-status',voice?.message || '正在检查语音切群。');
     const recommendation = client.recommendation;
     $('recommendation-need').disabled = !recommendation?.canRequest();
     $('recommendation-request').disabled = !recommendation?.canRequest();
+    $('recommendation-voice').disabled = !recommendation?.canRequest() || !voice?.available || !!voice?.blocking || !current;
     $('recommendation-cancel').hidden = !recommendation?.blocking;
     text('recommendation-status', recommendation?.message || '正在检查需求推荐。');
     const recommendations = $('recommendation-results'); recommendations.replaceChildren();
@@ -486,6 +490,7 @@ function boot() {
     scopeRequest:()=>{const token=client.identity?.token;return(path,method,body,options)=>client.request(path,method,body,{...options,token});},onChange:render});
   client.recommendation = new RecommendationClient({control: client, onChange: render});
   $('recommendation-form').addEventListener('submit', event => { event.preventDefault(); void client.recommendation.request($('recommendation-need').value); });
+  $('recommendation-voice').addEventListener('click', () => { void client.voice.start({mode: 'need'}); });
   $('recommendation-cancel').addEventListener('click', () => { if (!client.pendingSwitch && client.recommendation.blocking) client.recommendation.interrupt('已取消建议，当前群保持不变。'); });
   $('voice-start').addEventListener('click',()=>{if (!client.uiBlocked) void client.voice.start();});
   $('voice-cancel').addEventListener('click',()=>client.voice.interrupt());

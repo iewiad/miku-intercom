@@ -101,3 +101,9 @@ void webrtc_peer_group_get_stats(webrtc_group_stats_t *stats);
 
 /** Close the DataChannel and PeerConnection. Safe when no connection is active. */
 void webrtc_peer_stop(void);
+
+/** Lifecycle-owner-only confirmation after stop. A deferred stop keeps this
+ * false until every local worker/resource is retired and released. No I/O,
+ * allocation or wait; do not call from UI/peer callbacks or critical sections.
+ * This does not confirm the remote RTA session's terminal state. */
+bool webrtc_peer_stopped(void);

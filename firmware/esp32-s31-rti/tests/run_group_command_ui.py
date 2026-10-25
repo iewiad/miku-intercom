@@ -37,6 +37,10 @@ static void *group_ptt_button=&ptt_object;
 static void *group_join_textarea=&textarea_object, *group_dropdown=&dropdown_object;
 static void *group_switch_button=&label_object, *group_switch_label=&label_object;
 static void *group_join_button=&label_object, *group_voice_button=&label_object;
+static void *group_recommendation_button=&label_object;
+static void *group_recommendation_callback;
+static struct { bool can_start; } group_recommendation_view;
+static bool group_recommendation_active,group_recommendation_pending;
 static void *group_status_label=&label_object, *group_ptt_label=&label_object;
 static bool lv_dropdown_is_open(void *o) { (void)o;return false; }
 static uint32_t lv_dropdown_get_selected(void *o) { (void)o;return 0; }
@@ -95,6 +99,7 @@ static void reset(void) {
  ptt_calls=0;connection_generation=123;
  group_joining=group_voice_active=group_voice_can_cancel=false;
  group_command_pending=group_voice_submitted=false;group_command_revision=7;
+ group_recommendation_active=group_recommendation_pending=false;
  group_modal=GROUP_MODAL_JOIN;typed[0]=0;submitted[0]=0;
  callback_result=ESP_OK;join_calls=voice_calls=cancel_calls=0;
 }
@@ -164,6 +169,13 @@ int main(void) {
  group_command_revision=UINT32_MAX;group_command_pending=true;group_command_pending_revision=UINT32_MAX;
  board_display_set_group_command_state(0,false,false,false,"wrapped terminal");
  assert(group_command_revision==0 && !group_command_pending);
+ // Recommendation admission and its pending ACK fence all older entry points.
+ reset();group_recommendation_active=true;assert(!group_command_ready());
+ strlcpy(typed,"ABCDEFG2",sizeof(typed));group_join_submit();assert(join_calls==0);
+ group_recommendation_active=false;group_recommendation_pending=true;
+ assert(!group_command_ready());group_join_submit();assert(join_calls==0);
+ group_modal=GROUP_MODAL_VOICE;group_transport_ready=true;current_index=0;
+ group_voice_submit_event_cb(&click);assert(voice_calls==0);
  lock_ok=false;assert(board_display_set_group_command_state(1,false,false,false,"")==ESP_ERR_TIMEOUT);
  puts("display commands: passed (code guard, empty join, fast/stale ACK, duplicate voice, cancel boundary, one-way recovery publication, wrap)");
  return 0;
