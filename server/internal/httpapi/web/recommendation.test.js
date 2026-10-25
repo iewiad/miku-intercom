@@ -152,14 +152,17 @@ function targetSetup(source = 'exact') {
 test('target bounds reject control characters and invalid Unicode without changing S5 need rules', () => {
   assert.equal(validVoiceTarget('切到维修组'), true);
   assert.equal(validVoiceTarget('😀'.repeat(256)), true);
+  assert.equal(validVoiceTarget('\n  切到维修组\r\n'), true);
+  assert.equal(validVoiceTarget(' '.repeat(300) + '😀'.repeat(256) + '\n'), true);
   for (const text of ['', ' ', '切到\n维修组', '\u0000维修组', '\ud800', '😀'.repeat(257)]) assert.equal(validVoiceTarget(text), false);
+  for (const text of ['\n \r\t', ' \ud800\n', ' 切到\t维修组 ', ' ' + '😀'.repeat(257) + '\n']) assert.equal(validVoiceTarget(text), false);
   assert.equal(validNeed('中'.repeat(512)), true);
 });
 
 for (const source of ['exact', 'model']) test(`${source} voice target works without S5 model capability and still needs explicit confirmation`, async () => {
   const f = targetSetup(source);
   assert.ok(f.reservation); assert.equal(f.reservation.mode, 'target');
-  assert.equal(await f.r.requestVoiceTarget('切到维修组', f.reservation), true);
+  assert.equal(await f.r.requestVoiceTarget('\n 切到维修组 \n', f.reservation), true);
   assert.equal(f.r.result.source, source); assert.equal(f.r.phase, 'review');
   assert.equal(f.c.state.current_group_id, 'group_one'); assert.equal(f.c.pendingSwitch, null);
   assert.deepEqual(f.requests[0].body, {request_id: 'synthetic_1', transcript: '切到维修组', expected_version: 2, server_epoch: 'epoch_one'});

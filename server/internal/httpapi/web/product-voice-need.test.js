@@ -155,7 +155,7 @@ for (const source of ['exact', 'model']) test(`product ${source} voice target ha
     assert.equal(f.tracks.length, 0); assert.equal(f.$('voice-start').disabled, false);
     f.$('voice-start').dispatch('click'); await flush();
     assert.match(f.$('voice-status').textContent, /识别后核对确认/);
-    f.settings.stop = deferred(); f.settings.state = deferred(); f.final('切到<维修组>'); await flush();
+    f.settings.stop = deferred(); f.settings.state = deferred(); f.final('\n 切到<维修组> \n'); await flush();
     assert.equal(f.tracks.at(-1).stopped, true); assert.equal(f.peers.at(-1).connectionState, 'closed');
     assert.equal(f.requests.some(r => r.path === '/voice/proposals'), false);
     f.settings.stop.resolve(); await flush();

@@ -2,8 +2,12 @@
 // creates the durable operation after capture and upstream cleanup have ended.
 export const validNeed = value => typeof value === 'string' && [...value.trim()].length >= 1 &&
   [...value.trim()].length <= 512 && !/\p{Cc}/u.test(value.trim());
-export const validVoiceTarget = value => typeof value === 'string' && !!value.trim() && [...value].length <= 256 &&
-  !/[\p{Cc}\p{Cs}]/u.test(value) && new TextEncoder().encode(value).length <= 1024;
+export const validVoiceTarget = value => {
+  if (typeof value !== 'string') return false;
+  const transcript = value.trim();
+  return !!transcript && [...transcript].length <= 256 && !/[\p{Cc}\p{Cs}]/u.test(transcript) &&
+    new TextEncoder().encode(transcript).length <= 1024;
+};
 export const voiceTargetReason = '请核对识别出的目标群，确认后才会切换。';
 const directory = state => JSON.stringify((state?.groups || []).map(({id, name, purpose = ''}) => ({id, name, purpose})).sort((a, b) => a.id.localeCompare(b.id)));
 const binding = control => ({identity: control.identity?.token, epoch: control.state?.server_epoch,
