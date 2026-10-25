@@ -2578,9 +2578,9 @@ static void group_recommendation_build_cards(void)
         const group_recommendation_item_t *item = &group_recommendation_items[i];
         group_recommendation_label(card, item->name, 0, 0, 672, 0xF1FAFC);
         lv_obj_t *purpose = group_recommendation_label(card, "", 0, 0, 672, 0xBBD8DD);
-        lv_label_set_text_fmt(purpose, "职责：%s", item->purpose[0] ? item->purpose : "尚未填写职责");
+        lv_label_set_text_fmt(purpose, "群职责（填写内容）：%s", item->purpose[0] ? item->purpose : "尚未填写职责");
         lv_obj_t *reason = group_recommendation_label(card, "", 0, 0, 672, 0x91EEE0);
-        lv_label_set_text_fmt(reason, "推荐理由：%s", item->reason);
+        lv_label_set_text_fmt(reason, "推荐说明：%s", item->reason);
     }
 }
 

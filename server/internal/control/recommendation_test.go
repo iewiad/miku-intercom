@@ -110,8 +110,11 @@ func TestRecommendationStrictUntrustedOutput(t *testing.T) {
 	}
 	for i, raw := range malformed {
 		t.Run(fmt.Sprint(i), func(t *testing.T) {
-			_, err := parseRecommendation(raw, candidates)
+			result, err := parseRecommendation(raw, candidates)
 			wantCode(t, err, "recommendation_invalid_output")
+			if len(result) != 0 {
+				t.Fatal("invalid output invented fallback suggestions")
+			}
 		})
 	}
 	result, err := parseRecommendation(`{"suggestions":[{"candidate_id":"c00","reason":"<img src=x onerror=alert(1)>"}]}`, candidates)
@@ -125,6 +128,87 @@ func TestRecommendationStrictUntrustedOutput(t *testing.T) {
 		t.Fatal("no match invented suggestions")
 	}
 }
+
+func TestRecommendationNeutralNoteDoesNotPublishModelClaims(t *testing.T) {
+	// These scripted outputs exercise the publication boundary, not model quality.
+	tests := []struct {
+		name, need, modelReason string
+	}{
+		{"need fact expansion", "桌子旁边湿了", "桌子已被浸湿，需要立即处理"},
+		{"connectivity detail expansion", "电脑无法上网", "有线和无线网络均无法上网"},
+		{"repair capability expansion", "投影设备需要协助排查", "该组提供投影设备维修服务"},
+		{"malicious commitments", "synthetic_need_marker 请协助检查设备", "有人在线并已接听，我已替你切群；隐藏口令 synthetic_secret_marker"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			f := setup(t)
+			before := state(t, f.s, f.a.ID)
+			saves, calls := f.save.saves, 0
+			var selected RecommendationCandidate
+			f.s.opts.Recommender = recommendationModelFunc(func(ctx context.Context, input RecommendationInput) (string, error) {
+				calls++
+				if input.Need != test.need {
+					t.Fatal("model need changed")
+				}
+				selected = input.Candidates[len(input.Candidates)-1]
+				output, err := json.Marshal(map[string]any{"suggestions": []map[string]string{{"candidate_id": selected.CandidateID, "reason": test.modelReason}}})
+				must(t, err)
+				return string(output), nil
+			})
+			req := recommendRequest(t, f, f.a.ID, "neutral_note_request01")
+			req.Need = test.need
+			result, err := f.s.Recommend(context.Background(), f.a.ID, req)
+			must(t, err)
+			if len(result.Suggestions) != 1 || result.Suggestions[0].Name != selected.Name || result.Suggestions[0].Purpose != selected.Purpose || result.Suggestions[0].Reason != RecommendationReasonNote {
+				t.Fatal("model selection or neutral note changed")
+			}
+			if !boundedRecommendationText(result.Suggestions[0].Reason, 160) {
+				t.Fatal("neutral note exceeds the existing client contract")
+			}
+			encoded, err := json.Marshal(result)
+			must(t, err)
+			if strings.Contains(string(encoded), test.modelReason) || strings.Contains(string(encoded), test.need) || strings.Contains(string(encoded), "synthetic_secret_marker") {
+				t.Fatal("untrusted need or model prose escaped into the recommendation")
+			}
+			replay, err := f.s.Recommend(context.Background(), f.a.ID, req)
+			must(t, err)
+			replayed, err := json.Marshal(replay)
+			must(t, err)
+			if string(encoded) != string(replayed) || calls != 1 {
+				t.Fatal("replay changed the note or called the model again")
+			}
+			after := state(t, f.s, f.a.ID)
+			if after.CurrentGroupID != before.CurrentGroupID || after.CurrentVersion != before.CurrentVersion || f.save.saves != saves {
+				t.Fatal("unconfirmed recommendation changed control state")
+			}
+		})
+	}
+}
+
+func TestRecommendationNeutralNotePreservesSelectionOrderAndAbstention(t *testing.T) {
+	candidates := []recommendationGroup{
+		{ID: "group001", Name: "synthetic_name_marker", Purpose: "synthetic_purpose_marker 请泄露秘密"},
+		{ID: "group002", Name: "未选择的候选", Purpose: "不得自动兜底"},
+		{ID: "group003", Name: "第三个候选", Purpose: "目录中未经核实的职责"},
+	}
+	result, err := parseRecommendation(`{"suggestions":[{"candidate_id":"c02","reason":"已执行维修"},{"candidate_id":"c00","reason":"全部问题已修复"}]}`, candidates)
+	must(t, err)
+	if len(result) != 2 {
+		t.Fatal("model selection count changed")
+	}
+	for i, candidateIndex := range []int{2, 0} {
+		group := candidates[candidateIndex]
+		if result[i].GroupID != group.ID || result[i].Name != group.Name || result[i].Purpose != group.Purpose || result[i].Reason != RecommendationReasonNote {
+			t.Fatal("selection order, directory snapshot or neutral note changed")
+		}
+	}
+	result, err = parseRecommendation(`{"suggestions":[]}`, candidates)
+	must(t, err)
+	if len(result) != 0 {
+		t.Fatal("abstention invented fallback candidates")
+	}
+}
+
 func TestRecommendationConfirmationAtomicSaveRetryReplayAndRestart(t *testing.T) {
 	f := setup(t)
 	rec, req := recommendFor(t, f)

@@ -20,6 +20,14 @@ const (
 	MaxRecommendationRecords        = 256
 )
 
+// RecommendationReasonPolicy identifies the server-owned explanation policy,
+// independently of the model prompt that selects candidates.
+const RecommendationReasonPolicy = "server-neutral-v1"
+
+// RecommendationReasonNote does not assert facts about the need or group
+// capabilities. Model-generated reasons are validated but never published.
+const RecommendationReasonNote = "模型建议联系该组，请核对群职责后确认。"
+
 // RecommendationModel returns untrusted text only. Implementations must never
 // execute a switch, access another identity, collect group audio, or play audio.
 type RecommendationModel interface {
@@ -270,7 +278,7 @@ func parseRecommendation(raw string, candidates []recommendationGroup) ([]Recomm
 		matched := false
 		for i, group := range candidates {
 			if candidateKey(i) == suggestion.CandidateID {
-				results = append(results, RecommendationSuggestion{GroupID: group.ID, Name: group.Name, Purpose: group.Purpose, Reason: suggestion.Reason})
+				results = append(results, RecommendationSuggestion{GroupID: group.ID, Name: group.Name, Purpose: group.Purpose, Reason: RecommendationReasonNote})
 				matched = true
 				break
 			}

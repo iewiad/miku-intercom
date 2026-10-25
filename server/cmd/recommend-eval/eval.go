@@ -24,7 +24,7 @@ type reportingModel interface {
 }
 type suggestion struct {
 	Key    string `json:"key"`
-	Reason string `json:"reason"` // Only strict control-validated synthetic reasons, private report only.
+	Reason string `json:"reason"` // API explanation after the declared reason policy; not provider prose.
 }
 type caseReport struct {
 	CaseID             string                `json:"case_id"`
@@ -59,6 +59,7 @@ type metrics struct {
 }
 type evaluation struct {
 	Version           int          `json:"version"`
+	ReasonPolicy      string       `json:"reason_policy"`
 	DatasetVersion    int          `json:"dataset_version"`
 	Selected          int          `json:"cases_selected"`
 	StopReason        string       `json:"stop_reason"`
@@ -322,7 +323,7 @@ func contextStopReason(err error) string {
 func runEvaluation(ctx context.Context, data dataset, cases []evalCase, model reportingModel, options runOptions) evaluation {
 	started := options.now()
 	deadline := started.Add(runLimit)
-	result := evaluation{Version: 1, DatasetVersion: data.Version, Selected: len(cases), StopReason: "completed", Cases: []caseReport{}}
+	result := evaluation{Version: 1, ReasonPolicy: control.RecommendationReasonPolicy, DatasetVersion: data.Version, Selected: len(cases), StopReason: "completed", Cases: []caseReport{}}
 	var lastStart time.Time
 	for _, c := range cases {
 		if ctx.Err() != nil {

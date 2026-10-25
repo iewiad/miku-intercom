@@ -1,0 +1,491 @@
+{
+  "version": 1,
+  "date": "2026-10-25",
+  "scope": "software_fix_and_board_free_closeout",
+  "merged_pr21": {
+    "url": "https://github.com/iewiad/miku-intercom/pull/21",
+    "merge_commit": "2820e80337194f1f8a1cbad52616873d823cce2e"
+  },
+  "reason_policy": {
+    "version": "server-neutral-v1",
+    "published_note": "模型建议联系该组，请核对群职责后确认。",
+    "provider_reason": "strict_shape_checked_then_discarded",
+    "candidate_selection": "original_real_model_ids_order_and_abstention_unchanged",
+    "directory_purpose": "original_user_written_data_not_verified",
+    "human_review": "pending_final_acceptance"
+  },
+  "host_checks": {
+    "source_commit": "6272a358167ff42747357933fab2cec7030a56c9",
+    "passed": 25,
+    "go_packages": 9,
+    "node_tests": 130,
+    "python_tests": 34,
+    "firmware_host_suites": 20,
+    "initial_attempt": {
+      "source_commit": "42bf84161803446c86a5f12a6fe537ff591be119",
+      "result": "old_browser_voice_test_label_expectation_failed",
+      "correction": "expected_copy_updated_only_production_behavior_unchanged"
+    },
+    "final_attempt": "passed_all_25"
+  },
+  "firmware_build": {
+    "source_commit": "42bf84161803446c86a5f12a6fe537ff591be119",
+    "sdk": "ESP-IDF v6.2.0",
+    "target": "esp32s31",
+    "project_version": "v0-91-g42bf841",
+    "source_clean_at_build": true,
+    "reconfigure": "passed",
+    "build": "passed",
+    "size": "passed",
+    "network": "denied_for_build",
+    "source_and_sdkconfig_manifest_sha256": "7937908411587d4ddc3d11f64e4c11b4836957e7cd25a14d9d8def6f19a9763c",
+    "source_unchanged_through_validation_commit": true,
+    "static_dram_sections": {
+      ".dram0.data": 31664,
+      ".dram0.bss": 59544
+    },
+    "app_bytes": 3501696,
+    "app_sha256": "2415a0487a8b57c8e837beb5f4e0a2188cec5e7e2e95d2f18463be76caa6da76",
+    "app_partition_bytes": 4194304,
+    "app_free_bytes": 692608
+  },
+  "targeted_model_runs": [
+    {
+      "run": "targeted-regression",
+      "source_commit": "42bf84161803446c86a5f12a6fe537ff591be119",
+      "dataset": "../evaluation/recommendation-cases-v1.json",
+      "dataset_sha256": "d2d55747b47db9b8aba5b656bf4563694782f37b4f6bba96a9a9b9493c6e7c8c",
+      "report_sha256": "fa97d15da65de018bfe1f570d0ff7b4bc2a1571a5be857029b197f1dc6c5ee62",
+      "reason_policy": "server-neutral-v1",
+      "cohort": "targeted_regression_previously_seen_inputs",
+      "planned": 9,
+      "executed": 9,
+      "valid": 9,
+      "policy_passed": 9,
+      "suggestion_precision": {
+        "numerator": 7,
+        "denominator": 7
+      },
+      "positive_policy": {
+        "numerator": 6,
+        "denominator": 6
+      },
+      "abstain_policy": {
+        "numerator": 3,
+        "denominator": 3
+      },
+      "required_set": {
+        "numerator": 1,
+        "denominator": 1
+      },
+      "known_sessions_stopped": 9,
+      "published_notes_controlled": 7,
+      "raw_model_reason_faithfulness": "not_scored_provider_prose_discarded",
+      "cases": [
+        {
+          "case_id": "C16",
+          "candidate_order": [
+            "network",
+            "facilities",
+            "logistics",
+            "device",
+            "coordination",
+            "power"
+          ],
+          "selected_keys": [
+            "facilities"
+          ],
+          "protocol": "valid",
+          "transport": "ok",
+          "cleanup": "confirmed",
+          "policy_passed": true,
+          "published_note_matches_policy": true,
+          "elapsed_ms": 3655
+        },
+        {
+          "case_id": "C18",
+          "candidate_order": [
+            "audio",
+            "stage",
+            "network",
+            "streaming",
+            "visitor",
+            "captions"
+          ],
+          "selected_keys": [
+            "streaming"
+          ],
+          "protocol": "valid",
+          "transport": "ok",
+          "cleanup": "confirmed",
+          "policy_passed": true,
+          "published_note_matches_policy": true,
+          "elapsed_ms": 2911
+        },
+        {
+          "case_id": "C22",
+          "candidate_order": [
+            "network",
+            "newcomer",
+            "account",
+            "rooms",
+            "admin",
+            "device"
+          ],
+          "selected_keys": [
+            "network"
+          ],
+          "protocol": "valid",
+          "transport": "ok",
+          "cleanup": "confirmed",
+          "policy_passed": true,
+          "published_note_matches_policy": true,
+          "elapsed_ms": 3029
+        },
+        {
+          "case_id": "C25",
+          "candidate_order": [
+            "account",
+            "device",
+            "network",
+            "admin",
+            "newcomer",
+            "rooms"
+          ],
+          "selected_keys": [
+            "rooms",
+            "device"
+          ],
+          "protocol": "valid",
+          "transport": "ok",
+          "cleanup": "confirmed",
+          "policy_passed": true,
+          "published_note_matches_policy": true,
+          "elapsed_ms": 3418
+        },
+        {
+          "case_id": "C42",
+          "candidate_order": [
+            "audio",
+            "network",
+            "captions",
+            "streaming",
+            "visitor",
+            "stage"
+          ],
+          "selected_keys": [],
+          "protocol": "valid",
+          "transport": "ok",
+          "cleanup": "confirmed",
+          "policy_passed": true,
+          "published_note_matches_policy": true,
+          "elapsed_ms": 3322
+        },
+        {
+          "case_id": "C47",
+          "candidate_order": [
+            "device",
+            "account",
+            "newcomer",
+            "admin",
+            "network",
+            "rooms"
+          ],
+          "selected_keys": [
+            "account"
+          ],
+          "protocol": "valid",
+          "transport": "ok",
+          "cleanup": "confirmed",
+          "policy_passed": true,
+          "published_note_matches_policy": true,
+          "elapsed_ms": 3056
+        },
+        {
+          "case_id": "C48",
+          "candidate_order": [
+            "power",
+            "coordination",
+            "logistics",
+            "device",
+            "network",
+            "facilities"
+          ],
+          "selected_keys": [],
+          "protocol": "valid",
+          "transport": "ok",
+          "cleanup": "confirmed",
+          "policy_passed": true,
+          "published_note_matches_policy": true,
+          "elapsed_ms": 2515
+        },
+        {
+          "case_id": "C51",
+          "candidate_order": [
+            "power",
+            "captions",
+            "network",
+            "logistics",
+            "device",
+            "schedule"
+          ],
+          "selected_keys": [
+            "network"
+          ],
+          "protocol": "valid",
+          "transport": "ok",
+          "cleanup": "confirmed",
+          "policy_passed": true,
+          "published_note_matches_policy": true,
+          "elapsed_ms": 3081
+        },
+        {
+          "case_id": "C55",
+          "candidate_order": [
+            "logistics",
+            "demo",
+            "network",
+            "registration",
+            "device",
+            "venue"
+          ],
+          "selected_keys": [],
+          "protocol": "valid",
+          "transport": "ok",
+          "cleanup": "confirmed",
+          "policy_passed": true,
+          "published_note_matches_policy": true,
+          "elapsed_ms": 1907
+        }
+      ]
+    },
+    {
+      "run": "targeted-former-holdout",
+      "source_commit": "42bf84161803446c86a5f12a6fe537ff591be119",
+      "dataset": "../evaluation/recommendation-cases-holdout-v1.json",
+      "dataset_sha256": "c6f4dad5f3871a45256eb74a491e4a8645868e69fb3a21c8841c982cbb0f275f",
+      "report_sha256": "005263e2709bae748b27439b77a88f8cd1b2d1e06c853a3b0e6bcf734eaa1ead",
+      "reason_policy": "server-neutral-v1",
+      "cohort": "targeted_regression_previously_seen_inputs",
+      "planned": 4,
+      "executed": 4,
+      "valid": 4,
+      "policy_passed": 4,
+      "suggestion_precision": {
+        "numerator": 4,
+        "denominator": 4
+      },
+      "positive_policy": {
+        "numerator": 3,
+        "denominator": 3
+      },
+      "abstain_policy": {
+        "numerator": 1,
+        "denominator": 1
+      },
+      "required_set": {
+        "numerator": 1,
+        "denominator": 1
+      },
+      "known_sessions_stopped": 4,
+      "published_notes_controlled": 4,
+      "raw_model_reason_faithfulness": "not_scored_provider_prose_discarded",
+      "cases": [
+        {
+          "case_id": "H03",
+          "candidate_order": [
+            "streaming",
+            "stage",
+            "visitor",
+            "captions",
+            "audio",
+            "network"
+          ],
+          "selected_keys": [
+            "visitor"
+          ],
+          "protocol": "valid",
+          "transport": "ok",
+          "cleanup": "confirmed",
+          "policy_passed": true,
+          "published_note_matches_policy": true,
+          "elapsed_ms": 2048
+        },
+        {
+          "case_id": "H07",
+          "candidate_order": [
+            "account",
+            "admin",
+            "network",
+            "rooms",
+            "newcomer",
+            "device"
+          ],
+          "selected_keys": [
+            "account",
+            "admin"
+          ],
+          "protocol": "valid",
+          "transport": "ok",
+          "cleanup": "confirmed",
+          "policy_passed": true,
+          "published_note_matches_policy": true,
+          "elapsed_ms": 2293
+        },
+        {
+          "case_id": "H19",
+          "candidate_order": [
+            "network",
+            "schedule",
+            "captions",
+            "device",
+            "logistics",
+            "power"
+          ],
+          "selected_keys": [
+            "power"
+          ],
+          "protocol": "valid",
+          "transport": "ok",
+          "cleanup": "confirmed",
+          "policy_passed": true,
+          "published_note_matches_policy": true,
+          "elapsed_ms": 2833
+        },
+        {
+          "case_id": "H22",
+          "candidate_order": [
+            "network",
+            "coordination",
+            "logistics",
+            "device",
+            "facilities",
+            "power"
+          ],
+          "selected_keys": [],
+          "protocol": "valid",
+          "transport": "ok",
+          "cleanup": "confirmed",
+          "policy_passed": true,
+          "published_note_matches_policy": true,
+          "elapsed_ms": 4024
+        }
+      ]
+    }
+  ],
+  "model_call_summary": {
+    "new_calls": 13,
+    "new_known_sessions_stopped": 13,
+    "retries_or_backfills": 0,
+    "original_204_reports_preserved": true,
+    "source": "original_approved_gateway_and_profile",
+    "gateway": "https://miku-rtic.qiniuapi.com",
+    "profile": "qwen3.5-omni-plus-realtime",
+    "prompt_prefix_sha256": "0358da7437f9da3d61ce8a7cec588df02971ddf3f67a80e5472738b325d27673",
+    "population_or_fresh_holdout_accuracy_claim": false,
+    "raw_model_reason_quality_improvement_claim": false
+  },
+  "local_delivery": {
+    "archive": "shenglu-v0-rc-20261025-6272a35.tar.gz",
+    "archive_bytes": 11977403,
+    "archive_sha256": "0894882501ed59f7518c49dfd6a0187f0c9e7a2597e3666d0368695eb39e4098",
+    "manifest_sha256": "86eb5877a990a9925028084c63e90d6b230f1b7bf20c33aab208f625757d5b7f",
+    "files": [
+      "bin/intercom",
+      "firmware/bootloader.bin",
+      "firmware/miku_rti_esp32s31.bin",
+      "firmware/partition-table.bin",
+      "manifest.json",
+      "README.txt",
+      "SHA256SUMS"
+    ],
+    "manifest": {
+      "candidate": "shenglu-v0-rc-20261025-6272a35",
+      "delivery_status": "local_candidate_not_deployed_or_human_accepted",
+      "service": {
+        "source_commit": "6272a358167ff42747357933fab2cec7030a56c9",
+        "platform": "darwin/arm64",
+        "go_version": "/Users/davy/Documents/Codex/2026-10-23/miku-intercom/work/release/shenglu-v0-rc-20261025-6272a35/bin/intercom: go1.27.1",
+        "vcs_modified": false,
+        "artifacts": [
+          {
+            "path": "bin/intercom",
+            "bytes": 17811618,
+            "sha256": "86d29c92b596f979d6c606a135be163c9633ead18f0d52c492ce4a176fb196d6"
+          }
+        ]
+      },
+      "firmware": {
+        "source_commit": "42bf84161803446c86a5f12a6fe537ff591be119",
+        "source_unchanged_at_service_commit": true,
+        "sdk": "ESP-IDF v6.2.0",
+        "target": "esp32s31",
+        "project_version": "v0-91-g42bf841",
+        "artifacts": [
+          {
+            "path": "firmware/bootloader.bin",
+            "bytes": 22384,
+            "sha256": "59d4e45f1ea434c858b9b1e8ee0783bb8e3881e19590d19883bf13c9a106060b"
+          },
+          {
+            "path": "firmware/miku_rti_esp32s31.bin",
+            "bytes": 3501696,
+            "sha256": "2415a0487a8b57c8e837beb5f4e0a2188cec5e7e2e95d2f18463be76caa6da76"
+          },
+          {
+            "path": "firmware/partition-table.bin",
+            "bytes": 3072,
+            "sha256": "fd8026bff850ca0dee41c41305160317fffe604dda30a9bd5a701ac82d96fa17"
+          }
+        ],
+        "application_offset": "0x10000",
+        "application_partition_bytes": 4194304,
+        "application_free_bytes": 692608,
+        "static_dram_sections": {
+          ".dram0.data": 31664,
+          ".dram0.bss": 59544
+        },
+        "built": true,
+        "flashed": false
+      },
+      "validation": {
+        "host_source_commit": "6272a358167ff42747357933fab2cec7030a56c9",
+        "host_checks_passed": 25,
+        "targeted_live_model_source_commit": "42bf84161803446c86a5f12a6fe537ff591be119",
+        "targeted_live_cases": 13,
+        "known_evaluation_sessions_stopped": 13,
+        "reason_policy": "server-neutral-v1",
+        "prompt_version": "direct-duty-v3",
+        "prompt_prefix_sha256": "0358da7437f9da3d61ce8a7cec588df02971ddf3f67a80e5472738b325d27673"
+      },
+      "pending_acceptance": [
+        "human_card_review",
+        "real_browser_and_board_need_flow",
+        "confirmed_target_media_and_listening",
+        "complete_demo",
+        "fresh_three_endpoint_shutdown_reports"
+      ],
+      "known_issue": "https://github.com/iewiad/miku-intercom/issues/16",
+      "deployment_note": "Use this new service and refresh browser pages. Existing running services and old views are unchanged. Firmware binaries have not been flashed."
+    },
+    "uploaded": false,
+    "configured_secret_matches": 0
+  },
+  "host_visual_check": {
+    "source": "production_LVGL_functions_with_synthetic_fixture_states",
+    "typical_png_sha256": "ae7f5eb92cecb0bb7c3e904587a094cf51d690731cd4e015abd60bea33165d22",
+    "labels_and_note_visible": true,
+    "hardware_touch_or_display_acceptance": false
+  },
+  "runtime_actions": {
+    "existing_product_service_restarted": false,
+    "browser_automated": false,
+    "serial_opened": false,
+    "board_probed": false,
+    "firmware_flashed": false,
+    "microphone_captured": false,
+    "sound_played": false,
+    "real_group_state_mutated": false
+  },
+  "remaining": "Final human/board/browser acceptance in docs/demo.md; Issue20 remains open until its human review condition is met; Issue16 root cause unresolved."
+}

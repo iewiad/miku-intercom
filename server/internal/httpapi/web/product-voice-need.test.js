@@ -101,7 +101,7 @@ test('product needs explicit speech action, waits for cleanup and state, shows p
     assert.equal(f.requests.some(r => r.path === '/recommendations' && r.method === 'POST'), false);
     f.settings.stop.resolve(); await flush(); assert.equal(f.requests.some(r => r.path === '/recommendations' && r.method === 'POST'), false);
     f.settings.state.resolve(f.state); await flush();
-    const row = f.$('recommendation-results').children[0]; assert.equal(row.children[2].textContent, '建议理由 · 模型生成：<b>职责涵盖设备问题</b>');
+    const row = f.$('recommendation-results').children[0]; assert.equal(row.children[2].textContent, '推荐说明：<b>职责涵盖设备问题</b>');
     assert.equal(f.$('current-name').textContent, '当前群'); assert.equal(f.$('ptt').disabled, true);
     assert.equal(f.requests.some(r => r.path === '/voice/resolve' || r.path === '/current-group' || r.path === '/recommendations/confirm'), false);
     assert.equal([...f.store.values()].some(value => value.includes('设备没有声音')), false);

@@ -63,6 +63,9 @@ func TestRealHTTPControlPathMapsAuthorizedCandidatesWithoutConfirmation(t *testi
 	if len(result.Suggestions) != 1 || result.Suggestions[0].Key != "repair" || len(result.CandidateOrder) != 2 {
 		t.Fatal("authoritative group mapping missing")
 	}
+	if result.Suggestions[0].Reason != control.RecommendationReasonNote {
+		t.Fatal("evaluation must record the published API note, not raw provider prose")
+	}
 	for index, candidate := range model.input.Candidates {
 		want := map[string]string{"维修组": "repair", "后勤组": "logistics"}[candidate.Name]
 		if result.CandidateOrder[index] != want {
@@ -178,6 +181,9 @@ func TestSequentialRunStopsImmediatelyOnUnconfirmedCleanup(t *testing.T) {
 		return "", recommendmodel.Report{Stage: "cleanup_unconfirmed", ResponseDone: true}, errors.New("unavailable")
 	}}
 	result := runEvaluation(context.Background(), data, data.Cases, model, runOptions{now: time.Now, wait: waitContext, cleanupPending: func() bool { return pending }, checkpoint: func(evaluation) error { return nil }})
+	if result.ReasonPolicy != control.RecommendationReasonPolicy {
+		t.Fatal("report must distinguish API note policy from model reason quality")
+	}
 	if result.Selected != 2 || len(result.Cases) != 1 || model.calls != 1 || result.StopReason != "cleanup_unconfirmed" || result.Metrics.CleanupUnconfirmed != 1 || result.Metrics.SemanticScored != 0 {
 		t.Fatalf("cleanup failure admitted another case: %+v", result)
 	}
