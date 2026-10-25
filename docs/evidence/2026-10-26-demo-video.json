@@ -1,0 +1,260 @@
+{
+  "schema": "miku-intercom.demo-video-evidence.v1",
+  "filmed_date": "2026-10-25",
+  "edited_date": "2026-10-26",
+  "purpose": "Neutral self-contained project/video description for human and AI review; no scoring instructions.",
+  "release": {
+    "tag": "v0-rc-20261025",
+    "url": "https://github.com/iewiad/miku-intercom/releases/tag/v0-rc-20261025",
+    "repository_visibility": "private",
+    "asset_links_require_existing_repository_access": true,
+    "publication_status": "see_actual_release_attachments",
+    "core_guide_readable_offline": true
+  },
+  "product": {
+    "name": "声路同行 / Miku Intercom",
+    "firmware_version": "v0-108-g528a352",
+    "implementation_source_commit": "528a35238f4d1cb7a2afcafd2db556cd632c6930",
+    "merged_main_commit": "11c5aad623bae716f9c39311e24dc8f23f14a619",
+    "implemented_components": [
+      "Go identity, group and membership control",
+      "versioned current group and microphone leases",
+      "WebRTC/Opus group media relay with authorization gates",
+      "Chrome and ESP32-S31 clients, PTT and recovery",
+      "durable idempotent switch operations and atomic recommendation consumption"
+    ],
+    "rta_reused_capabilities": [
+      "explicit real-time transcription",
+      "bounded authorized-candidate text-model suggestions"
+    ],
+    "new_model_training_claimed": false,
+    "ordinary_group_audio_sent_to_rta": false,
+    "confirmation_required_for_all_target_results": true,
+    "confirmation_server_rechecks": [
+      "identity and membership permission",
+      "current group version",
+      "complete authorized catalog digest",
+      "server epoch",
+      "TTL",
+      "immutable idempotent operation binding"
+    ],
+    "target_resolution": {
+      "unique_exact_target": "deterministic; may bypass text model; still requires explicit confirmation",
+      "other_target_expression_prompt": "voice-target-v2",
+      "s5_need_prompt": "direct-duty-v3; independent intent and prompt"
+    }
+  },
+  "assets": [
+    {
+      "basename": "miku-intercom-demo-20261025.mp4",
+      "bytes": 46450705,
+      "sha256": "b0e2b7222f511097b81485c8428634e7ada291ee117df522ed6e09df65bbaad6",
+      "download_url": "https://github.com/iewiad/miku-intercom/releases/download/v0-rc-20261025/miku-intercom-demo-20261025.mp4",
+      "kind": "combined_video",
+      "duration_seconds": 147.3
+    },
+    {
+      "basename": "miku-intercom-demo-s5-20261025.mp4",
+      "bytes": 22128329,
+      "sha256": "33ebbcb299d49ebb27cfa9beaefa40c8c4edfb53231693b33fae0b3dae5c8046",
+      "download_url": "https://github.com/iewiad/miku-intercom/releases/download/v0-rc-20261025/miku-intercom-demo-s5-20261025.mp4",
+      "kind": "standalone_s5_video",
+      "duration_seconds": 67.9
+    },
+    {
+      "basename": "miku-intercom-demo-cover-20261025.png",
+      "bytes": 828360,
+      "sha256": "51c60feca8b6d23587ccd7bef8edd512d6abb51aa5ef601f601f2d130388b607",
+      "download_url": "https://github.com/iewiad/miku-intercom/releases/download/v0-rc-20261025/miku-intercom-demo-cover-20261025.png",
+      "kind": "cover",
+      "width": 1920,
+      "height": 1080
+    },
+    {
+      "basename": "miku-intercom-demo-20261025.srt",
+      "bytes": 1422,
+      "sha256": "a77e9f42088a1b61922dedd1ffade2bf912f5778ff3fd2750507789a652cefa0",
+      "download_url": "https://github.com/iewiad/miku-intercom/releases/download/v0-rc-20261025/miku-intercom-demo-20261025.srt",
+      "kind": "action_subtitles"
+    },
+    {
+      "basename": "miku-intercom-demo-s5-20261025.srt",
+      "bytes": 620,
+      "sha256": "fdefab3fba0809bf2de7fc4e8f2004168f88feadcacb32ba5b07365fe4387e24",
+      "download_url": "https://github.com/iewiad/miku-intercom/releases/download/v0-rc-20261025/miku-intercom-demo-s5-20261025.srt",
+      "kind": "action_subtitles"
+    },
+    {
+      "basename": "shenglu-v0-rc-20261025-528a352-closeout.tar.gz",
+      "bytes": 12012577,
+      "sha256": "e26b97924e9e700107c9bde5ef6c993f309ed59a8a485a50b69039f05d70952a",
+      "download_url": "https://github.com/iewiad/miku-intercom/releases/download/v0-rc-20261025/shenglu-v0-rc-20261025-528a352-closeout.tar.gz",
+      "kind": "candidate_package"
+    },
+    {
+      "basename": "shenglu-v0-rc-20261025-528a352-closeout.tar.gz.sha256",
+      "bytes": 113,
+      "sha256": "b75c7664b0847afde38c3f317ed63b8be26ef6509aeab5710f203d46d62583ff",
+      "download_url": "https://github.com/iewiad/miku-intercom/releases/download/v0-rc-20261025/shenglu-v0-rc-20261025-528a352-closeout.tar.gz.sha256",
+      "kind": "package_checksum"
+    }
+  ],
+  "video_scope": {
+    "combined_duration_seconds": 147.3,
+    "standalone_s5_duration_seconds": 67.9,
+    "visible_endpoints": [
+      "one ESP32-S31 board",
+      "Chrome A"
+    ],
+    "browser_b": "extra acceptance only, not a second visible browser role in this film",
+    "phone_sources_count": 3,
+    "main_phone_restart_disclosed": true,
+    "main_confirmation_sequence_preserved": true,
+    "s5_phone_take_continuous": true,
+    "audio": {
+      "ptt": "actual browser A receive track",
+      "explicit_voice_and_need": "phone field recording",
+      "editorial_sync_only": true,
+      "latency_measurement": false
+    },
+    "subtitles": "feature/action captions, not verbatim transcription",
+    "recorded_target_instance": {
+      "source": "model",
+      "candidate_count": 1,
+      "http_status": 200,
+      "does_not_establish_overall_accuracy": true
+    }
+  },
+  "timed_segments": [
+    {
+      "start_seconds": 4,
+      "end_seconds": 16.5,
+      "topic": "ordinary_ptt",
+      "observed_action": "物资组普通PTT，板端发送、Chrome A接收",
+      "audio_source": "A端电子回传"
+    },
+    {
+      "start_seconds": 16.5,
+      "end_seconds": 38.5,
+      "topic": "explicit_target_voice",
+      "observed_action": "主动语音与转写，等待允许后口述目标",
+      "audio_source": "手机现场口述"
+    },
+    {
+      "start_seconds": 38.5,
+      "end_seconds": 44.5,
+      "topic": "target_review_select_confirm",
+      "observed_action": "识别文字、候选、选卡与独立确认",
+      "audio_source": "手机现场口述"
+    },
+    {
+      "start_seconds": 44.5,
+      "end_seconds": 55.5,
+      "topic": "target_recovery",
+      "observed_action": "等待终态并恢复设备群",
+      "audio_source": "手机现场口述"
+    },
+    {
+      "start_seconds": 55.5,
+      "end_seconds": 58.5,
+      "topic": "phone_recording_restart_disclosure",
+      "observed_action": "明确披露手机暂停后续拍",
+      "audio_source": "转场"
+    },
+    {
+      "start_seconds": 58.5,
+      "end_seconds": 74.4,
+      "topic": "target_group_ptt",
+      "observed_action": "续拍设备组PTT，板端发送、A接收",
+      "audio_source": "A端电子回传"
+    },
+    {
+      "start_seconds": 79.4,
+      "end_seconds": 111.9,
+      "topic": "s5_explicit_need",
+      "observed_action": "S5准备、主动需求与建议等待",
+      "audio_source": "手机现场口述"
+    },
+    {
+      "start_seconds": 111.9,
+      "end_seconds": 117.9,
+      "topic": "s5_review_select_confirm",
+      "observed_action": "物资组职责与固定说明、选中后独立确认",
+      "audio_source": "手机现场口述"
+    },
+    {
+      "start_seconds": 117.9,
+      "end_seconds": 142.3,
+      "topic": "s5_recovery_and_ptt",
+      "observed_action": "恢复物资组，随后普通PTT",
+      "audio_source": "恢复现场音；PTT使用A端电子回传"
+    }
+  ],
+  "technical_qa": {
+    "result": "passed",
+    "format": "H264/AAC 1920x1080 30fps SDR BT709",
+    "full_audio_video_decode": "passed",
+    "h264_sps_colour_fields": "1/1/1/0",
+    "final_caption_boundary_review": "passed",
+    "visual_review_scope": "sampled key states and corrected boundary frames",
+    "main_audio_integrated_lufs": -22.3,
+    "main_audio_true_peak_dbtp": -2.0,
+    "location_metadata_removed": true,
+    "apple_metadata_and_data_tracks_removed": true,
+    "sampled_visual_review_passed": true,
+    "corrected_boundary_samples_seconds": [
+      44.4,
+      44.5,
+      44.6,
+      117.9
+    ],
+    "audio_playback_by_visual_reviewer": false,
+    "exhaustive_frame_review": false
+  },
+  "evidence_levels": {
+    "code_and_offline_checks": {
+      "standard_checks_passed": 25,
+      "standard_checks_total": 25,
+      "node_tests_passed": 149,
+      "python_tests": 34,
+      "source": "docs/evidence/2026-10-25-v108-closeout.json"
+    },
+    "extra_physical_acceptance": {
+      "board_a_b_four_directions": true,
+      "slide_out_stop": true,
+      "stop_reconnect": true,
+      "s5_cancel_expiry_and_browser_hidden": true,
+      "source": "docs/evidence/2026-10-25-v108-closeout.json"
+    },
+    "fixed_text_regression": {
+      "cases": 22,
+      "passed": 22,
+      "does_not_include_microphone_asr": true,
+      "source": "docs/evidence/2026-10-25-voice-negation-guard-regression.json"
+    }
+  },
+  "limitations": [
+    "Video contains selected observed paths, not every code capability or test case.",
+    "Earlier failed attempts and human report corrections remain in acceptance evidence; retries do not imply zero errors.",
+    "Some home auxiliary confirmation/recovery text remains stale in original footage. Observe authoritative current group, ready status and PTT separately; footage was not replaced to conceal it.",
+    "Speech-based editorial synchronization is not network, end-to-end or acoustic stopping latency measurement.",
+    "S5 duties are entered directory data, and the fixed neutral note does not promise online, available or answered members.",
+    "Physical power loss, long-term reliability, two physical boards, public-network deployment and exact latency are not covered by this film.",
+    "Issue 16 historical causes and long-term reliability remain open."
+  ],
+  "privacy": {
+    "private_identity_operation_session_values_exported": false,
+    "credentials_or_join_codes_exported": false,
+    "gps_or_user_local_absolute_paths_exported": false,
+    "source_phone_paths_exported": false,
+    "mp4_committed_to_git": false,
+    "cover_included_in_repository": true
+  },
+  "documentation": {
+    "guide": "docs/demo-review-guide.md",
+    "acceptance": "docs/acceptance.md",
+    "need_contract": "docs/specs/009-model-recommendation.md",
+    "target_contract": "docs/specs/010-voice-target-review.md",
+    "final_release_asset_manifest": "https://github.com/iewiad/miku-intercom/releases/download/v0-rc-20261025/miku-intercom-demo-manifest-20261025.json"
+  }
+}
