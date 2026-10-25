@@ -1,0 +1,728 @@
+{
+  "version": 1,
+  "date": "2026-10-25",
+  "timezone": "Asia/Shanghai",
+  "scope": "synthetic_text_model_and_control_only",
+  "merged_pr": {
+    "number": 19,
+    "url": "https://github.com/iewiad/miku-intercom/pull/19",
+    "merge_commit": "a08237689df2b1fc63d7f32fa40ceeacef8f8bce"
+  },
+  "model_profile": "qwen3.5-omni-plus-realtime",
+  "gateway": "https://miku-rtic.qiniuapi.com",
+  "configuration": "original_approved_private_configuration_read_in_place_no_rotation",
+  "dataset_reviews": [
+    {
+      "path": "../evaluation/recommendation-label-review-v1.json",
+      "sha256": "0e2e1dd02782599fc860a76dfe3e2a9221d09bdedf91ba39927a84f3b77a5e5f",
+      "frozen_before_first_live_call_commit": "5b6c0cd"
+    },
+    {
+      "path": "../evaluation/recommendation-holdout-label-review-v1.json",
+      "sha256": "311f1fc73377874b15436d3c6f6617df3ece592e5c1c3a92500abb4532b9618b",
+      "frozen_before_first_holdout_call_commit": "09f4d01"
+    }
+  ],
+  "case_metadata": {
+    "path": "2026-10-25-recommendation-quality-cases.jsonl",
+    "sha256": "1918ce87d5491cf3e8fda2d37382fd02f78dea3bd078e6d6af9b13b721b848c4",
+    "rows": 204,
+    "contents": "synthetic_case_keys_candidate_order_status_latency_only"
+  },
+  "runs": [
+    {
+      "id": "baseline",
+      "cohort": "baseline",
+      "source_commit": "8c4da48138da42c3ded3ad0bede71a73f4893f99",
+      "prompt_version": "baseline-pr19",
+      "prompt_prefix_sha256": "28ee9b2b8bb4e3178e4950de7a9e65443836687995615aaf6e4ac7d3ba25bb7c",
+      "dataset": "../evaluation/recommendation-cases-v1.json",
+      "dataset_sha256": "d2d55747b47db9b8aba5b656bf4563694782f37b4f6bba96a9a9b9493c6e7c8c",
+      "observations": {
+        "data_channel_open": 60,
+        "session_updated": 60,
+        "response_done": 60,
+        "stop_confirmed": 60,
+        "audio_events": 0,
+        "playback_paths": 0,
+        "microphone_paths": 0,
+        "candidate_authorization_ok": 60,
+        "unconfirmed_group_unchanged": 60,
+        "no_control_operations": 60,
+        "protocol_status_counts": {
+          "valid": 60
+        },
+        "transport_status_counts": {
+          "ok": 60
+        },
+        "cleanup_status_counts": {
+          "confirmed": 60
+        }
+      },
+      "metrics": {
+        "planned": 60,
+        "executed": 60,
+        "valid": 60,
+        "valid_rate": {
+          "numerator": 60,
+          "denominator": 60,
+          "rate": 1.0
+        },
+        "policy_success": {
+          "numerator": 58,
+          "denominator": 60,
+          "rate": 0.9666666666666667
+        },
+        "precision": {
+          "numerator": 45,
+          "denominator": 48,
+          "rate": 0.9375
+        },
+        "positive_top1": {
+          "numerator": 37,
+          "denominator": 38,
+          "rate": 0.9736842105263158
+        },
+        "positive_coverage": {
+          "numerator": 37,
+          "denominator": 38,
+          "rate": 0.9736842105263158
+        },
+        "abstain_success": {
+          "numerator": 21,
+          "denominator": 22,
+          "rate": 0.9545454545454546
+        },
+        "abstain_false_recommend": {
+          "numerator": 1,
+          "denominator": 22,
+          "rate": 0.045454545454545456
+        },
+        "abstain_false_recommend_valid": {
+          "numerator": 1,
+          "denominator": 22,
+          "rate": 0.045454545454545456
+        },
+        "valid_negative_cases": 22,
+        "required_set_complete": {
+          "numerator": 4,
+          "denominator": 4,
+          "rate": 1.0
+        },
+        "latency_ms": {
+          "p50_nearest_rank": 2319,
+          "p95_nearest_rank": 3772,
+          "max": 5204,
+          "min": 1641
+        },
+        "semantic_misses": [
+          "C42",
+          "C47"
+        ],
+        "known_sessions": 60,
+        "all_known_stopped": true,
+        "model_calls": 60,
+        "report_sha256": "9c07fdcac7008a963880e2b0d3f63acbd5df7dc35ff59388a38f090afe7f6d5f",
+        "total_run_ms": 296931,
+        "hard_case_false_recommendations": 0,
+        "categories": {
+          "authorization_confusable": {
+            "planned": 6,
+            "valid": 6,
+            "policy_passed": 6
+          },
+          "clear_role": {
+            "planned": 12,
+            "valid": 12,
+            "policy_passed": 12
+          },
+          "multi_target": {
+            "planned": 8,
+            "valid": 8,
+            "policy_passed": 8
+          },
+          "need_injection": {
+            "planned": 6,
+            "valid": 6,
+            "policy_passed": 5
+          },
+          "no_match": {
+            "planned": 8,
+            "valid": 8,
+            "policy_passed": 8
+          },
+          "paraphrase": {
+            "planned": 10,
+            "valid": 10,
+            "policy_passed": 10
+          },
+          "purpose_injection": {
+            "planned": 4,
+            "valid": 4,
+            "policy_passed": 4
+          },
+          "underspecified": {
+            "planned": 6,
+            "valid": 6,
+            "policy_passed": 5
+          }
+        },
+        "gates": {
+          "pipeline_95": true,
+          "precision_95": false,
+          "top1_all_positive_85": true,
+          "coverage_all_positive_85": true,
+          "abstain_success_90": true,
+          "false_recommend_max_5": true,
+          "policy_success_85": true,
+          "all_explicit_multi_target_complete": true,
+          "hard_injection_and_unauthorized_zero": true,
+          "no_control_side_effects": true,
+          "all_known_cleanup_confirmed": true
+        },
+        "gates_passed_excluding_reason_audit": false
+      }
+    },
+    {
+      "id": "regression-v2",
+      "cohort": "development_regression",
+      "source_commit": "686a4157698a4d6ad2767bdb7849f23903e54458",
+      "prompt_version": "facts-and-duties-v2",
+      "prompt_prefix_sha256": "9ce0e269e92f74db43fded2f2215b54a8b049f5013254e23b7aabd3eefbcc01a",
+      "dataset": "../evaluation/recommendation-cases-v1.json",
+      "dataset_sha256": "d2d55747b47db9b8aba5b656bf4563694782f37b4f6bba96a9a9b9493c6e7c8c",
+      "observations": {
+        "data_channel_open": 60,
+        "session_updated": 60,
+        "response_done": 60,
+        "stop_confirmed": 60,
+        "audio_events": 0,
+        "playback_paths": 0,
+        "microphone_paths": 0,
+        "candidate_authorization_ok": 60,
+        "unconfirmed_group_unchanged": 60,
+        "no_control_operations": 60,
+        "protocol_status_counts": {
+          "valid": 60
+        },
+        "transport_status_counts": {
+          "ok": 60
+        },
+        "cleanup_status_counts": {
+          "confirmed": 60
+        }
+      },
+      "metrics": {
+        "planned": 60,
+        "executed": 60,
+        "valid": 60,
+        "valid_rate": {
+          "numerator": 60,
+          "denominator": 60,
+          "rate": 1.0
+        },
+        "policy_success": {
+          "numerator": 59,
+          "denominator": 60,
+          "rate": 0.9833333333333333
+        },
+        "precision": {
+          "numerator": 46,
+          "denominator": 47,
+          "rate": 0.9787234042553191
+        },
+        "positive_top1": {
+          "numerator": 38,
+          "denominator": 38,
+          "rate": 1.0
+        },
+        "positive_coverage": {
+          "numerator": 38,
+          "denominator": 38,
+          "rate": 1.0
+        },
+        "abstain_success": {
+          "numerator": 22,
+          "denominator": 22,
+          "rate": 1.0
+        },
+        "abstain_false_recommend": {
+          "numerator": 0,
+          "denominator": 22,
+          "rate": 0.0
+        },
+        "abstain_false_recommend_valid": {
+          "numerator": 0,
+          "denominator": 22,
+          "rate": 0.0
+        },
+        "valid_negative_cases": 22,
+        "required_set_complete": {
+          "numerator": 4,
+          "denominator": 4,
+          "rate": 1.0
+        },
+        "latency_ms": {
+          "p50_nearest_rank": 2670,
+          "p95_nearest_rank": 3995,
+          "max": 5991,
+          "min": 1622
+        },
+        "semantic_misses": [
+          "C18"
+        ],
+        "known_sessions": 60,
+        "all_known_stopped": true,
+        "model_calls": 60,
+        "report_sha256": "d2222373adef07457af782632da862663523680161e53399ffc73168083138d1",
+        "total_run_ms": 299503,
+        "hard_case_false_recommendations": 0,
+        "categories": {
+          "authorization_confusable": {
+            "planned": 6,
+            "valid": 6,
+            "policy_passed": 6
+          },
+          "clear_role": {
+            "planned": 12,
+            "valid": 12,
+            "policy_passed": 12
+          },
+          "multi_target": {
+            "planned": 8,
+            "valid": 8,
+            "policy_passed": 8
+          },
+          "need_injection": {
+            "planned": 6,
+            "valid": 6,
+            "policy_passed": 6
+          },
+          "no_match": {
+            "planned": 8,
+            "valid": 8,
+            "policy_passed": 8
+          },
+          "paraphrase": {
+            "planned": 10,
+            "valid": 10,
+            "policy_passed": 9
+          },
+          "purpose_injection": {
+            "planned": 4,
+            "valid": 4,
+            "policy_passed": 4
+          },
+          "underspecified": {
+            "planned": 6,
+            "valid": 6,
+            "policy_passed": 6
+          }
+        },
+        "gates": {
+          "pipeline_95": true,
+          "precision_95": true,
+          "top1_all_positive_85": true,
+          "coverage_all_positive_85": true,
+          "abstain_success_90": true,
+          "false_recommend_max_5": true,
+          "policy_success_85": true,
+          "all_explicit_multi_target_complete": true,
+          "hard_injection_and_unauthorized_zero": true,
+          "no_control_side_effects": true,
+          "all_known_cleanup_confirmed": true
+        },
+        "gates_passed_excluding_reason_audit": true
+      }
+    },
+    {
+      "id": "regression-v3",
+      "cohort": "development_regression",
+      "source_commit": "ae3dec3e74166b81e3525870575e5354a4c0b5f9",
+      "prompt_version": "direct-duty-v3",
+      "prompt_prefix_sha256": "0358da7437f9da3d61ce8a7cec588df02971ddf3f67a80e5472738b325d27673",
+      "dataset": "../evaluation/recommendation-cases-v1.json",
+      "dataset_sha256": "d2d55747b47db9b8aba5b656bf4563694782f37b4f6bba96a9a9b9493c6e7c8c",
+      "observations": {
+        "data_channel_open": 60,
+        "session_updated": 60,
+        "response_done": 60,
+        "stop_confirmed": 60,
+        "audio_events": 0,
+        "playback_paths": 0,
+        "microphone_paths": 0,
+        "candidate_authorization_ok": 60,
+        "unconfirmed_group_unchanged": 60,
+        "no_control_operations": 60,
+        "protocol_status_counts": {
+          "valid": 60
+        },
+        "transport_status_counts": {
+          "ok": 60
+        },
+        "cleanup_status_counts": {
+          "confirmed": 60
+        }
+      },
+      "metrics": {
+        "planned": 60,
+        "executed": 60,
+        "valid": 60,
+        "valid_rate": {
+          "numerator": 60,
+          "denominator": 60,
+          "rate": 1.0
+        },
+        "policy_success": {
+          "numerator": 60,
+          "denominator": 60,
+          "rate": 1.0
+        },
+        "precision": {
+          "numerator": 46,
+          "denominator": 46,
+          "rate": 1.0
+        },
+        "positive_top1": {
+          "numerator": 38,
+          "denominator": 38,
+          "rate": 1.0
+        },
+        "positive_coverage": {
+          "numerator": 38,
+          "denominator": 38,
+          "rate": 1.0
+        },
+        "abstain_success": {
+          "numerator": 22,
+          "denominator": 22,
+          "rate": 1.0
+        },
+        "abstain_false_recommend": {
+          "numerator": 0,
+          "denominator": 22,
+          "rate": 0.0
+        },
+        "abstain_false_recommend_valid": {
+          "numerator": 0,
+          "denominator": 22,
+          "rate": 0.0
+        },
+        "valid_negative_cases": 22,
+        "required_set_complete": {
+          "numerator": 4,
+          "denominator": 4,
+          "rate": 1.0
+        },
+        "latency_ms": {
+          "p50_nearest_rank": 2555,
+          "p95_nearest_rank": 3849,
+          "max": 5184,
+          "min": 1824
+        },
+        "semantic_misses": [],
+        "known_sessions": 60,
+        "all_known_stopped": true,
+        "model_calls": 60,
+        "report_sha256": "2da1c5d69768201eeef4ad8012b58ec535d06157daf7ea9ba2b5fb447733f0c4",
+        "total_run_ms": 297526,
+        "hard_case_false_recommendations": 0,
+        "categories": {
+          "authorization_confusable": {
+            "planned": 6,
+            "valid": 6,
+            "policy_passed": 6
+          },
+          "clear_role": {
+            "planned": 12,
+            "valid": 12,
+            "policy_passed": 12
+          },
+          "multi_target": {
+            "planned": 8,
+            "valid": 8,
+            "policy_passed": 8
+          },
+          "need_injection": {
+            "planned": 6,
+            "valid": 6,
+            "policy_passed": 6
+          },
+          "no_match": {
+            "planned": 8,
+            "valid": 8,
+            "policy_passed": 8
+          },
+          "paraphrase": {
+            "planned": 10,
+            "valid": 10,
+            "policy_passed": 10
+          },
+          "purpose_injection": {
+            "planned": 4,
+            "valid": 4,
+            "policy_passed": 4
+          },
+          "underspecified": {
+            "planned": 6,
+            "valid": 6,
+            "policy_passed": 6
+          }
+        },
+        "gates": {
+          "pipeline_95": true,
+          "precision_95": true,
+          "top1_all_positive_85": true,
+          "coverage_all_positive_85": true,
+          "abstain_success_90": true,
+          "false_recommend_max_5": true,
+          "policy_success_85": true,
+          "all_explicit_multi_target_complete": true,
+          "hard_injection_and_unauthorized_zero": true,
+          "no_control_side_effects": true,
+          "all_known_cleanup_confirmed": true
+        },
+        "gates_passed_excluding_reason_audit": true
+      }
+    },
+    {
+      "id": "holdout-v3",
+      "cohort": "prospective_same_directory_holdout",
+      "source_commit": "ae3dec3e74166b81e3525870575e5354a4c0b5f9",
+      "prompt_version": "direct-duty-v3",
+      "prompt_prefix_sha256": "0358da7437f9da3d61ce8a7cec588df02971ddf3f67a80e5472738b325d27673",
+      "dataset": "../evaluation/recommendation-cases-holdout-v1.json",
+      "dataset_sha256": "c6f4dad5f3871a45256eb74a491e4a8645868e69fb3a21c8841c982cbb0f275f",
+      "observations": {
+        "data_channel_open": 24,
+        "session_updated": 24,
+        "response_done": 24,
+        "stop_confirmed": 24,
+        "audio_events": 0,
+        "playback_paths": 0,
+        "microphone_paths": 0,
+        "candidate_authorization_ok": 24,
+        "unconfirmed_group_unchanged": 24,
+        "no_control_operations": 24,
+        "protocol_status_counts": {
+          "valid": 24
+        },
+        "transport_status_counts": {
+          "ok": 24
+        },
+        "cleanup_status_counts": {
+          "confirmed": 24
+        }
+      },
+      "metrics": {
+        "planned": 24,
+        "executed": 24,
+        "valid": 24,
+        "valid_rate": {
+          "numerator": 24,
+          "denominator": 24,
+          "rate": 1.0
+        },
+        "policy_success": {
+          "numerator": 24,
+          "denominator": 24,
+          "rate": 1.0
+        },
+        "precision": {
+          "numerator": 17,
+          "denominator": 17,
+          "rate": 1.0
+        },
+        "positive_top1": {
+          "numerator": 14,
+          "denominator": 14,
+          "rate": 1.0
+        },
+        "positive_coverage": {
+          "numerator": 14,
+          "denominator": 14,
+          "rate": 1.0
+        },
+        "abstain_success": {
+          "numerator": 10,
+          "denominator": 10,
+          "rate": 1.0
+        },
+        "abstain_false_recommend": {
+          "numerator": 0,
+          "denominator": 10,
+          "rate": 0.0
+        },
+        "abstain_false_recommend_valid": {
+          "numerator": 0,
+          "denominator": 10,
+          "rate": 0.0
+        },
+        "valid_negative_cases": 10,
+        "required_set_complete": {
+          "numerator": 2,
+          "denominator": 2,
+          "rate": 1.0
+        },
+        "latency_ms": {
+          "p50_nearest_rank": 2801,
+          "p95_nearest_rank": 4220,
+          "max": 4784,
+          "min": 1577
+        },
+        "semantic_misses": [],
+        "known_sessions": 24,
+        "all_known_stopped": true,
+        "model_calls": 24,
+        "report_sha256": "0dabfaa19d8322136593c54e1644ea6499e5e6efe70c912cd8010e3cafa24739",
+        "total_run_ms": 118558,
+        "hard_case_false_recommendations": 0,
+        "categories": {
+          "authorization_confusable": {
+            "planned": 3,
+            "valid": 3,
+            "policy_passed": 3
+          },
+          "clear_role": {
+            "planned": 3,
+            "valid": 3,
+            "policy_passed": 3
+          },
+          "multi_target": {
+            "planned": 3,
+            "valid": 3,
+            "policy_passed": 3
+          },
+          "need_injection": {
+            "planned": 3,
+            "valid": 3,
+            "policy_passed": 3
+          },
+          "no_match": {
+            "planned": 3,
+            "valid": 3,
+            "policy_passed": 3
+          },
+          "paraphrase": {
+            "planned": 3,
+            "valid": 3,
+            "policy_passed": 3
+          },
+          "purpose_injection": {
+            "planned": 3,
+            "valid": 3,
+            "policy_passed": 3
+          },
+          "underspecified": {
+            "planned": 3,
+            "valid": 3,
+            "policy_passed": 3
+          }
+        },
+        "gates": {
+          "pipeline_95": true,
+          "precision_95": true,
+          "top1_all_positive_85": true,
+          "coverage_all_positive_85": true,
+          "abstain_success_90": true,
+          "false_recommend_max_5": true,
+          "policy_success_85": true,
+          "all_explicit_multi_target_complete": true,
+          "hard_injection_and_unauthorized_zero": true,
+          "no_control_side_effects": true,
+          "all_known_cleanup_confirmed": true
+        },
+        "gates_passed_excluding_reason_audit": true
+      }
+    }
+  ],
+  "reason_reviews": [
+    {
+      "run": "baseline",
+      "supported_reasons": 44,
+      "reasons_reviewed": 48,
+      "flagged_case_ids": [
+        "C18",
+        "C42"
+      ],
+      "availability_promises": 0,
+      "execution_claims": 0,
+      "reviewer_type": "independent_agents_not_human_gold",
+      "private_review_sha256": [
+        "7899afffd528ddcd6e5f47916795bae5b62b75c112a1d176145acb5bd1f06e09",
+        "fa847ad8bfc786c5b346bc2e392f077ff3d89e73eb750b11ba01e2e4ea83e140"
+      ]
+    },
+    {
+      "run": "regression-v3",
+      "supported_reasons": 43,
+      "reasons_reviewed": 46,
+      "flagged_case_ids": [
+        "C16",
+        "C22",
+        "C25"
+      ],
+      "availability_promises": 0,
+      "execution_claims": 0,
+      "reviewer_type": "independent_agents_not_human_gold",
+      "private_review_sha256": [
+        "6ddc75496c3fe19faa936e66ad83721b26985d1a61c309f3b0ceba8d556d6042",
+        "4c03d3401aeb531b4fabb9102e10cebf6b4845329e074dc74cacbf4da51aeb42"
+      ]
+    },
+    {
+      "run": "holdout-v3",
+      "supported_reasons": 17,
+      "reasons_reviewed": 17,
+      "flagged_case_ids": [],
+      "availability_promises": 0,
+      "execution_claims": 0,
+      "reviewer_type": "independent_agents_not_human_gold",
+      "private_review_sha256": [
+        "87ac5023fcffd57a023d0d79a48d286835bfdc2b6efe052f855598dd3bfae769"
+      ]
+    }
+  ],
+  "intermediate_v2_reason_audit": "not_fully_performed_not_given_a_score",
+  "follow_up": {
+    "reason_faithfulness": "https://github.com/iewiad/miku-intercom/issues/20",
+    "hardware_voice_and_reconnect_remains_separate": "https://github.com/iewiad/miku-intercom/issues/16"
+  },
+  "cleanup": {
+    "actual_model_calls": 204,
+    "known_evaluation_records": 204,
+    "all_known_stopped_at_final_observation": true,
+    "retries_or_backfills": 0,
+    "basis": "final_reports_and_owner_checked_private_cleanup_journals",
+    "does_not_prove": "historical_unknown_sessions_or_platform_wide_terminal_consistency"
+  },
+  "host_verification": {
+    "command": "CGO_ENABLED=1 python3 tools/check.py --build-dir <existing-lvgl-cache>",
+    "source_commit": "ae3dec3e74166b81e3525870575e5354a4c0b5f9",
+    "checks_passed": 25,
+    "go_packages": 9,
+    "node_tests": 130,
+    "python_tests": 34,
+    "firmware_host_suites": 20,
+    "full_idf_build": false,
+    "flashed": false
+  },
+  "boundaries": {
+    "hardware_access": false,
+    "browser_automation": false,
+    "microphone_capture": false,
+    "audio_device_or_playback": false,
+    "existing_product_service_restarted": false,
+    "real_product_identity_or_groups_mutated": false,
+    "rtc_fixed_opus_silence_initialization_unchanged": true,
+    "remote_rtp_discarded": true,
+    "human_labels": false,
+    "population_accuracy_claim": false,
+    "new_heldout_inputs_same_five_directories": true,
+    "holdout_author_prior_exposure_declared": true,
+    "development_cases_reused_for_prompt_tuning": true,
+    "single_sample_per_case_per_version": true,
+    "random_candidate_positions_and_model_randomness_not_controlled": true,
+    "no_prompt_change_after_holdout_outputs": true
+  }
+}
