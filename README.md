@@ -4,9 +4,15 @@
 
 声路同行把浏览器与 ESP32 触屏终端接入同一套群对讲：按住说话，松手结束；知道群名就说出目标，不知道该找谁就描述需求。查看候选并明确确认后，再进入目标群继续交流。
 
-[观看实机演示](https://github.com/iewiad/miku-intercom/releases/tag/v0-rc-20261025) · [阅读视频导读](docs/demo-review-guide.md) · [开始体验](docs/first-run.md)
+[观看实机演示](#实机演示) · [阅读视频导读](docs/demo-review-guide.md) · [开始体验](docs/first-run.md)
 
-[![声路同行实机演示：按住对讲、语音切群、按需求找组](docs/images/demo-cover-20261025.png)](https://github.com/iewiad/miku-intercom/releases/tag/v0-rc-20261025)
+## 实机演示
+
+2 分 27.3 秒完整合辑，已包含按需求找组；下方为 720p 轻量预览。
+
+<!-- README_VIDEO_PREVIEW_UPLOAD_PENDING -->
+
+[1080p 完整成片](https://github.com/iewiad/miku-intercom/releases/download/v0-rc-20261025/miku-intercom-demo-20261025.mp4) · [逐段导读](docs/demo-review-guide.md)。核对屏幕细字请看完整成片。
 
 ## 为现场协作少找一步
 
