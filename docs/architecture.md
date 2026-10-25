@@ -1,26 +1,54 @@
 # 声路同行架构
 
-产品范围见 [product.md](product.md)，实测范围见 [acceptance.md](acceptance.md)。控制面决定群与发言权，媒体面传普通群音频，RTA 取得用户主动发出的群名指令。[006 首版](specs/006-first-version.md)已随 PR #12 合并：板端口令入群、串行语音指令、浏览器本地 RTA 代理和首次运行工具。代码完成与人工听测分别记录。
+产品范围见 [product.md](product.md)，实测范围见 [acceptance.md](acceptance.md)。控制面决定群与发言权，媒体面传普通群音频，RTA 取得用户主动语音的最终转写，受限文本适配器分别理解目标群与职责需求。[006 首版](specs/006-first-version.md)已随 PR #12 合并：板端口令入群、串行语音指令、浏览器本地 RTA 代理和首次运行工具。代码完成与人工听测分别记录。
+
+本文描述当前组件和交互契约，历史切片的数值证据单独标明。当前 v108 的分项验收与实机成片范围见[验收记录](acceptance.md)和[视频导读](demo-review-guide.md)，不从示意图推断未测试的可靠性或时延。
+
+<a id="system-architecture"></a>
 
 ## 组件与边界
 
+图中表示当前代码的组件与数据路径；各路径的实测范围以验收记录为准。控制面和媒体面在同一个 Go 进程中，通过权威状态配合工作。
+
 ```mermaid
 flowchart LR
-    W[浏览器终端] <-->|localhost 同源 HTTP 控制 API| C[独立 Go 对讲服务]
-    B[ESP32 群模式] <-->|指定 LAN IP 的 HTTPS| C
-    W <-->|WebRTC Opus| M[群媒体转发与门控]
-    B <-->|WebRTC Opus| M
-    C -->|当前群 / 身份 / 麦权| M
-    L[ESP32 RTA 回退模式] <-->|既有 RTA 语音| R[原 RTIC / RTID / 模型]
-    B <-->|主动指令时串行使用 RTA RTC| R
-    W <-->|主动指令 RTA RTC| R
-    W -->|同源会话 / offer / stop| P[RTA 信令代理]
-    P <-->|原网关 HTTPS| R
-    W -->|最终转写解析与原切群操作| C
-    B -->|最终转写解析与原切群操作| C
+    subgraph Clients[浏览器终端]
+        A[浏览器 A]
+        B[浏览器 B]
+    end
+    subgraph Server[Go 对讲服务 · 单进程]
+        C[控制面<br/>身份 / 群 / 当前群版本 / 麦权]
+        M[媒体面 · Pion WebRTC<br/>逐包授权 / 有界队列 / RTP 续接]
+        V[RTA 信令代理<br/>显式启用 / 私有会话日志]
+        N[需求推荐器<br/>已授权候选 / 有界文本 / 显式启用]
+        D[(本机快照<br/>身份 / 群 / 成员 / 切群结果)]
+        C -->|权威状态与租约| M
+        C <-->|原子保存与恢复| D
+        C -->|主动需求与授权候选| N
+        N -->|只返回建议，确认由控制面执行| C
+    end
+    A <-->|同源 HTTP · 控制与信令| C
+    B <-->|同源 HTTP · 控制与信令| C
+    A <-->|WebRTC · Opus| M
+    B <-->|WebRTC · Opus| M
+    subgraph Device[板端与主动语音指令]
+        E[ESP32 终端]
+        R[RTA · 主动语音指令]
+    end
+    E -->|指定 LAN IP · HTTPS 控制 API| C
+    E <-->|WebRTC Opus| M
+    E <-->|主动指令 · RTA RTC| R
+    A <-->|主动指令 · RTA RTC| R
+    B <-->|主动指令 · RTA RTC| R
+    A -->|同源语音信令| V
+    B -->|同源语音信令| V
+    V <-->|HTTPS · 会话 / offer / stop| R
+    N <-->|独立 RTC · 文本请求与结束确认| R
 ```
 
-图表示代码路径，不替代独立验收。群模式和原一对一应用由 Kconfig 选择；群模式中的主动指令仅串行借用同一 RTA Peer，不启动原应用控制器。媒体模块与控制面同进程，不要求额外部署服务。
+普通群音频经媒体面转发给同群其他成员，控制面是身份、当前群与麦权的唯一授权来源。源包入队与目标写出前都重新校验权限；麦权与 Peer 只保存在内存，服务重启后清空。语音指令先结束转写会话，再生成待确认目标：精确群名省去模型，其余由受限文本模型辅助理解。主动需求使用独立职责推荐规则。所有建议都不改变当前群，明确确认使用原持久切群终态并原子消费建议。默认部署保持 localhost；S3 通过完整显式参数开放指定 LAN IP 的设备 HTTPS 与 UDP 入口，配置见[开发指南](development.md#s3-板端-lan-开发入口)。板端实际证据单独记录，不外推到公网。
+
+群模式和原一对一应用由 Kconfig 选择；群模式中的主动指令仅串行借用同一 RTA Peer，不启动原应用控制器。媒体模块与控制面同进程，不要求额外部署服务。
 
 | 组件 | 负责 | 不承担 |
 | --- | --- | --- |
@@ -28,7 +56,7 @@ flowchart LR
 | 浏览器 | 发起人入口、成员操作、显示权威状态、请求代次与资源清理 | 不自行决定群权限或切换成功 |
 | 板端 | Wi-Fi/触屏/音频、PTT、口令入群、主动语音指令与单 Peer 生命周期 | 不新增行业实体，不保存服务端权限真相 |
 | 群媒体模块 | 校验当前群与有效麦权，转发给同群其他接收者，限制队列并清理旧帧 | 不将普通群音频送给模型 |
-| 现有 RTA | 主动语音阶段的最终转写；后续受限需求推荐 | 不执行入群、授权或切群，不承担群音频路由 |
+| 现有 RTA | 主动语音阶段的最终转写；独立的受限目标或需求候选 | 不执行入群、授权或切群，不承担群音频路由 |
 
 不需要修改 `miku-rti` 或 `mikud-live`。保留固件内部 `rti_*` 名称、NVS 和旧接口兼容；板端可见应用名为「声路同行」，技术标识与品牌文案分别维护。
 
@@ -58,6 +86,58 @@ server/internal/httpapi/web/     同源页面与浏览器状态测试
 
 PTT 申请、续租、释放绑定终端、当前群版本、本次按下标识与服务启动代次，申请有固定生效期限。群忙不排队；松手立即退出持有并取消申请；迟到授权不能让终端重新按下；过期、切群与重启释放麦权。S1 验收只覆盖控制授权；S2 在同一麦权语义上接入下述音频链路。
 
+<a id="manual-group-switch"></a>
+
+## 手动切群交互
+
+已加入群与当前群分开，加入第二个群不会自动打断当前群。主动切换会关闭旧媒体，确认操作终态后再按权威当前群重建连接。
+
+```mermaid
+sequenceDiagram
+    actor U as 用户
+    participant B as 终端（浏览器或板端）
+    participant C as Go 控制面
+    participant M as Go 媒体面
+
+    U->>B: 选择目标群
+    B->>B: 同步停发，暂停旧群接收与播放
+    B->>M: 关闭旧 Peer
+    opt 板端
+        B->>B: NVS 保存固定操作，重启后继续确认
+    end
+    B->>C: PUT /current-group（目标群 / operation_id / expected_version）
+    C->>C: 校验权限与版本，原子保存操作终态
+    Note over C,M: 成功切群使旧绑定与麦权失效
+    alt 收到已完成的操作结果
+        C-->>B: applied / rejected 与权威状态
+    else 响应丢失或超时
+        loop 直到确认同一个操作终态
+            B->>C: GET /operations/{operation_id}
+            alt 未找到操作（404）
+                B->>C: 用原 ID 与原载荷重试 PUT
+            else 找到操作终态
+                C-->>B: applied / rejected
+            end
+        end
+        B->>C: 必要时 GET /state
+        C-->>B: 当前权威状态
+    end
+    opt 板端
+        B->>C: GET /state 获取最新当前群
+        B->>B: 清理待确认操作日志
+    end
+    opt 音频已启用且身份与控制已确认（浏览器还须可见）
+        B->>B: 按权威当前群与版本创建新 Peer
+        B->>M: 完整 ICE 的 offer / answer
+        M-->>B: WebRTC 连接建立
+        B->>B: 媒体就绪，保持未按麦
+    end
+```
+
+结果未知时保持媒体关闭，并查询或重试同一操作；单次当前群快照不能代替操作终态。成功或拒绝后都以最新权威状态恢复，媒体连接失败时显示失败并保留重试入口。接口字段与完整异常语义见 [002](specs/002-control-api.md) / [003](specs/003-browser-media.md)。
+
+板端下拉仅选择，独立确认后才提交，权威当前群单独显示。板端 NVS 日志、停止/软重启恢复及历史多群证据见[板端手动切换](#board-manual-switch)和 [005](specs/005-device-multigroup.md)。
+
 ## 第二切片：浏览器群音频
 
 具体接口以 [003-browser-media.md](specs/003-browser-media.md) 为准。每身份一个 Peer、一条上行与一条下行 Opus 音轨，服务端使用固定 Pion WebRTC v4.2.23。HTTP 完整交换已收集 ICE 的 SDP；媒体通过本机 UDP，当前无外部 STUN/TURN、混音或转码。Peer 固定绑定身份、服务启动代次、当前群与版本，切群必须关闭旧 Peer 并重建。
@@ -75,13 +155,70 @@ flowchart LR
 
 每接收端独立 Track、writer 与受包数/字节/年龄约束的队列。换发言人时续接独立下行 RTP 时间轴，剥离源扩展头；持续读取 RTCP、发送必要报告，不使用可在撤权后重发旧声音的 NACK 缓存。空闲生成合法 Opus 静音以完成首次播放和维持时间轴；因此仅有 RTP 包/字节增长不能证明有人讲话。
 
-客户端 AudioClient 与控制状态代次分开。显式启用后申请麦克风，只有媒体就绪、获权 ACK 且仍按住时才打开源 track；松手先同步静音。autoplay 被阻止时显示显式开始收听，不能误报可对讲。切群、身份变化、隐藏、离线和重启均关闭旧媒体并清除播放入口；确认后恢复为未按麦。
+客户端 AudioClient 与控制状态代次分开；媒体就绪与持有麦权是两层状态，分别见下列状态机。
+
+
+<a id="audio-connection-state"></a>
+
+### 浏览器音频连接状态
+
+用户显式启用后才请求麦克风。Peer 已连接、远端播放已启动且绑定仍有效，才进入媒体就绪；它还不代表已经获权讲话。
+
+```mermaid
+stateDiagram-v2
+    [*] --> Disabled
+    state "未启用音频" as Disabled
+    state "等待有效当前群" as Waiting
+    state "采集与媒体连接中" as Connecting
+    state "播放受阻" as Blocked
+    state "媒体就绪" as Ready
+    state "权限或连接失败" as Failed
+
+    Disabled --> Waiting: 用户显式启用
+    Waiting --> Connecting: 页面可见且身份 / 当前群 / 控制已确认
+    Connecting --> Ready: Peer connected 且播放已启动
+    Connecting --> Blocked: 浏览器阻止播放
+    Blocked --> Connecting: 用户点击开始收听
+    Connecting --> Failed: 权限 / 协商 / 连接失败
+    Ready --> Failed: 采集或连接失败
+    Blocked --> Failed: 连接失败
+    Failed --> Waiting: 用户显式重试
+    Ready --> Waiting: 隐藏 / 离线 / 切群 / 服务重启
+    Connecting --> Waiting: 群或身份代次变化
+```
+
+任意状态点击“关闭音频”都会停止采集、关闭 Peer 并回到未启用。自动恢复只发生在用户已选择启用、页面可见且控制状态重新确认后，始终回到未按麦；权限或连接失败保留显式重试。隐藏、离线或切群会停止采集并关闭旧 Peer；收听静音只控制播放，单纯窗口失焦只取消发言。
+
+<a id="ptt-state"></a>
+
+### 按住说话（PTT）状态
+
+抢麦是独立状态机：按下时仍保持源音轨禁用；只有 ACK 匹配当前 Peer、群版本及请求代次，并且用户仍按住，才开始发送。
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    state "未按麦" as Idle
+    state "申请麦权 · 尚未发声" as Acquiring
+    state "持有麦权 · 发送中" as Sending
+    state "已停发 · 请求收尾中" as Ending
+
+    Idle --> Acquiring: 按下且媒体 / 控制均就绪
+    Acquiring --> Sending: 获权匹配且仍按住 / 启用源音轨
+    Acquiring --> Ending: 松手 / 取消 / 忙或失败
+    Sending --> Sending: 仍按住且续租成功
+    Sending --> Ending: 松手 / 失焦 / 到期 / 续租失败
+    Ending --> Ending: 迟到获权 / 按原请求再次释放
+    Ending --> Idle: 在途申请与释放请求已收尾
+```
+
+结束时先同步禁用源音轨，再异步释放麦权；普通松手保留采集和 Peer，下一次按下重新申请。忙时不排队，迟到授权不恢复发送，重连也不自动按麦。服务端逐包门控继续兜底；已经进入网络或播放缓冲的尾音无法撤回。
 
 门控不能撤回已进入网络或浏览器抖动缓冲的尾音；普通 RTP 也不携带每次按下标识，不能承诺绝对零尾音。旧群 Peer 与播放入口绝不作为新群连接复用。诊断用真实远端 PCM 与 Opus 统计区分有效声音、静音与尾音，并分别记录同页三终端和独立页面验证。
 
 默认入口和 ICE 候选仍限 localhost/回环。S3 仅在完整显式配置后增加下述指定 LAN 入口，不把本机 ICE 证据外推到板端或公网，也未接入 TURN。
 
-## 第三切片：板端群接入（首切片数值已通过）
+## 第三切片：板端群接入
 
 具体增量以 [004-device-lan.md](specs/004-device-lan.md) 为准。默认固件启用 `CONFIG_MIKU_INTERCOM_DEFAULT_MODE`，使用群控制/媒体接口；缺少配置时等待 USB 配置和显式启动，不自动创建 RTA Session。关闭该 Kconfig 项并重新构建，才使用原 RTA 应用及 `rti_auth` 凭据；两条链路不并存。
 
@@ -101,7 +238,9 @@ Peer 主循环保留 20 KiB 内部工作栈，在 `esp_peer_open` 前创建并�
 
 板端复用 Opus/AEC 与单 Peer 资源，普通群音频使用 PTT 与源发送门；只有显式进入指令阶段才建立 `oai-events`，不发欢迎请求并禁止模型音频播放。按下仅在 Peer 就绪、匹配群版本/启动代次的麦权 ACK 返回且仍按住时发送；松手或取消先同步关门，再释放，发送前重验本地租约。恢复只回到未按麦。配置、校时、控制状态、Opus/PCM 双向数值传输与人工听测分别记录。PR #10 首切片历史镜像的浏览器→板端窗口为 3010 ms，板端远端累计峰 0.519934；板端→浏览器 PULSE6 发送 299 包，浏览器远端累计峰 0.0075，松手后发送计数维持 299。120.26 秒正常观察为 1 次 TLS 连接、0 失败；计划服务中断另产生 7 次连接错误，恢复后为新 epoch/Peer、同群同版本、未按麦且 TX 为 0。它们支持首切片数值与短时恢复结论，不能称为全程零错误或长期稳定性/听感验收，详见[最终证据](evidence/2026-10-24-device-group.json)及 [acceptance.md](acceptance.md)。
 
-### 已加入群手动切换（005，本轮数值与软重启恢复已验证）
+<a id="board-manual-switch"></a>
+
+### 已加入群手动切换（005）
 
 [005](specs/005-device-multigroup.md) 复用 002/003，不新增另一套权限。板端显示已加入群下拉列表，选择本身不提交，点击确认才请求切换；当前群名称始终来自后台确认的 state。展开列表取消当前发言。目录未知、过期、切换中或媒体未就绪时禁用 PTT，旧 `view_generation` 的点击拒绝。目录及 UI 深拷贝使用 PSRAM，最多 128 群；超限或非法条目整体失败，不静默截断。
 
@@ -109,19 +248,58 @@ Peer 主循环保留 20 KiB 内部工作栈，在 `esp_peer_open` 前创建并�
 
 操作结果不明时不建任何群媒体。验证同一操作终态后再取最新 state，日志清理成功后才按该当前群重建单 Peer，并保持未按麦；拒绝也按最新状态恢复，不猜测回原群。USB 目录和切群命令经过同一控制器；`REQUESTED` 仅表示受理，不能证明切换完成。
 
-本轮三群 A/B/C 使用一个浏览器的合成 440 Hz，播放静音。同 A/B 时板端 RMS 分别为 0.071842/0.071816；板 B 听 A、板 C 听 B 的累计 remote_rms_peak 均为 0。持麦 A→B 后 pressed/held=false，新 Peer TX=0；十次连续切换 version 3→13，每次 ready、未按麦且 TX=0。SWITCH+STOP 保留 NVS pending，软重启读回同操作号，START 确认至 A/version 14，清理后再次软重启 pending=false；两次软重启不是实际断电测试。用户仅人工确认当前群、下拉及按钮显示，切换矩阵主要经串口同控制器驱动。
+以下三群矩阵及软重启数据为 2026-10-24 的历史轮次，不能替代当前 v108 分项验收。本轮三群 A/B/C 使用一个浏览器的合成 440 Hz，播放静音。同 A/B 时板端 RMS 分别为 0.071842/0.071816；板 B 听 A、板 C 听 B 的累计 remote_rms_peak 均为 0。持麦 A→B 后 pressed/held=false，新 Peer TX=0；十次连续切换 version 3→13，每次 ready、未按麦且 TX=0。SWITCH+STOP 保留 NVS pending，软重启读回同操作号，START 确认至 A/version 14，清理后再次软重启 pending=false；两次软重启不是实际断电测试。用户仅人工确认当前群、下拉及按钮显示，切换矩阵主要经串口同控制器驱动。
 
-[本轮多群证据](evidence/2026-10-24-device-multigroup.json) 与 PR #10 历史证据独立。16 次 Peer start/close 无 panic，但不外推长期稳定性、完整触控或听测。当前 HTTP 统计将每个新操作查询得到的预期 404 计为失败，本轮 13 次操作相应有 13 次非 2xx，不能称为零 HTTP 失败。Mac 独立开串口会复位，本轮使用一条长串口会话；工具不会自动校时或连接，未知目录拒绝切换。主机入口、串口前提与局限见[开发指南](development.md)。
+[本轮多群证据](evidence/2026-10-24-device-multigroup.json) 与 PR #10 历史证据独立。16 次 Peer start/close 无 panic，但不外推长期稳定性、完整触控或听测。该历史轮次的 HTTP 统计将每个新操作查询得到的预期 404 计为失败，本轮 13 次操作相应有 13 次非 2xx，不能称为零 HTTP 失败。Mac 独立开串口会复位，本轮使用一条长串口会话；工具不会自动校时或连接，未知目录拒绝切换。主机入口、串口前提与局限见[开发指南](development.md)。
 
-## 第四切片：主动语音切群
+<a id="voice-target-state"></a>
 
-当前语音目标路径以 [010](specs/010-voice-target-review.md) 为准：两端先完成转写清理，再请求 `/voice/proposals`，精确命中省模型，其余使用独立语音目标提示。所有结果均复用下节候选确认事务，用户明确确认后才能切群。以下两段保留首版解析/执行顺序的历史说明，不作为当前客户端行为。
+## 主动语音目标核对（当前流程）
+
+点击语音入口后，终端先停发并退休群 Peer，等待 RTA 指令通道确认后才开麦；只接受当前代次首次最终用户转写。普通群聊不触发指令。提交前可取消，提交后等待原操作结果，恢复始终未按麦。
+
+```mermaid
+stateDiagram-v2
+    [*] --> GroupReady
+    state "群音频就绪" as GroupReady
+    state "关闭群 Peer · 准备指令" as Preparing
+    state "采集就绪 · 请说群名" as Listening
+    state "结束 RTA" as Cleaning
+    state "理解目标" as Resolving
+    state "核对候选 · 等待明确确认" as Reviewing
+    state "确认切群终态" as Confirming
+    state "核实当前群 · 重建群 Peer" as Recovering
+    GroupReady --> Preparing: 主动点击语音切群 / 取消PTT
+    Preparing --> Listening: session.updated 与采集就绪
+    Listening --> Cleaning: 首次最终用户转写 / 停采集
+    Preparing --> Cleaning: 取消 / 初始化失败
+    Listening --> Cleaning: 取消 / 超时 / 断网
+    Cleaning --> Cleaning: stop未确认 / 重试原会话
+    Cleaning --> Resolving: 清理确认且转写仍有效
+    Cleaning --> Recovering: 清理确认且取消或失败
+    Resolving --> Reviewing: 精确命中或模型候选
+    Reviewing --> Confirming: 用户明确确认 / 固定操作
+    Reviewing --> Recovering: 取消或失效 / 未切群
+    Resolving --> Recovering: 无候选或失败 / 未切群
+    Confirming --> Confirming: 切群结果不明 / 查询重放原操作
+    Confirming --> Recovering: 切群无未决操作
+    Recovering --> GroupReady: 当前群媒体可用 / 未按麦
+```
+
+两端先结束 RTA，再请求语音目标候选，所有结果均待用户点击明确确认按钮。模型只辅助选候选，服务端重验权限、版本、目录与期限；精确路径也不能跳过确认。RTA stop 未确认时不恢复群音频。当前边界见 [010 语音目标核对](specs/010-voice-target-review.md)；独立语音需求入口的职责推荐与确认见 [009](specs/009-model-recommendation.md)。
+
+
+`POST /voice/proposals` 只生成目标候选，确认复用 `PUT /recommendations/confirm`。唯一精确群名先生成待确认目标；未唯一命中且未被否定等门禁拒绝时，才使用独立语音目标提示理解。按职责求助继续走独立的需求推荐入口。
+
+### 首版 006 的解析与执行顺序（历史）
+
+以下说明保留首版实现与资源观察的历史背景，不作为当前客户端的执行顺序，也不替代 v108 的分项验收。当前确认前必须先完成 RTA 清理。
 
 板端路径：退休群 Peer → RTA 首次最终用户转写 → 后台只读解析 → 确认 RTA stop → 复用 NVS 切群日志 → 按权威当前群重建群 Peer。浏览器先持久提交/查询切群，再确认 RTA stop，随后恢复群 RTC；期间门控不会重建群 Peer。最终转写回调只复制并投递带指令代次的事件，由 lifecycle worker 执行 HTTP、stop 和重连，不在接收任务中关闭自身。命令模式关闭自动回复、不发欢迎请求且禁止播放模型音频。
 
 首版只匹配有限句式中的明确已授权群名，未知、歧义、无权限不切。一次指令只提交一个操作；重复、过期或旧 RTA 会话结果无效。提交前可取消，提交后等待操作终态；后台已进入目标但 RTC 失败时显示“目标群连接失败”，不能猜测回到原群。权威 ACK 与目标群媒体可用同时满足，才显示“可以对讲”。所有恢复都回到未按麦状态。
 
-原 RTA 会话创建、回复与最终转写已有真机证据，不能替代 S3 群接入验收。当前 `esp_peer 1.5.1` 组合已有 S3 双向数值与三次 Peer 生命周期无 panic 的证据；资源、耗时与可靠性结论仅限记录的测试范围。本分支生产流程回归与真实链路结果分别按 006 验证。浏览器代理使用显式私有配置，固定 origin 或受限数字节点域/端口二选一，RTC路径绑定原session，拒绝重定向；会话日志记录句柄与清理状态，不保存Key、短期Token、SDP或转写。
+原 RTA 会话创建、回复与最终转写已有真机证据，不能替代 S3 群接入验收。当前 `esp_peer 1.5.1` 组合已有 S3 双向数值与三次 Peer 生命周期无 panic 的证据；资源、耗时与可靠性结论仅限记录的测试范围。该历史轮次的生产流程回归与真实链路结果分别按 006 验证。浏览器代理使用显式私有配置，固定 origin 或受限数字节点域/端口二选一，RTC路径绑定原session，拒绝重定向；会话日志记录句柄与清理状态，不保存Key、短期Token、SDP或转写。
 
 ## 需求推荐增强
 
@@ -131,4 +309,10 @@ Peer 主循环保留 20 KiB 内部工作栈，在 `esp_peer_open` 前创建并�
 
 确认端点在同一控制锁与原持久事务中重新校验并消费推荐，复用原切群终态、版本、麦权和媒体失效语义。操作终态带推荐绑定；相同确认先查持久终态，再判断时效。保存失败不改变当前群或消费结果；进程重启使未消费推荐失效，已保存终态仍可重放。完整容量、时限与接口见 [009](specs/009-model-recommendation.md)。
 
-浏览器建议只保留在当前页面内存。查看期间停发且门控 PTT、入群、手动/语音切群；取消、页面隐藏、身份或目录变化丢弃迟到结果。浏览器完成语音清理和最新状态交接后可先恢复原群收听，仍不能发言；板端在推荐查看期间保持群媒体暂停。明确确认前先保存固定请求；提交后按原操作查询/重放，不能改走手动切群绕过推荐校验。板端通过同一组鉴权推荐 API，使用 PSRAM 中的有界结果与独立“确认进入”入口；NVS 仅保存确认载荷的推荐 ID/epoch 绑定，不保存需求或模型理由。已提交的确认必须等该操作终态、最新权威状态和本地日志清理后才恢复群媒体，恢复始终未按麦。实体触控、真实语音与恢复时延仍需接板验收。
+浏览器建议只保留在当前页面内存。查看期间停发且门控 PTT、入群、手动/语音切群；取消、页面隐藏、身份或目录变化丢弃迟到结果。浏览器完成语音清理和最新状态交接后可先恢复原群收听，仍不能发言；板端在推荐查看期间保持群媒体暂停。明确确认前先保存固定请求；提交后按原操作查询/重放，不能改走手动切群绕过推荐校验。板端通过同一组鉴权推荐 API，使用 PSRAM 中的有界结果与独立“确认进入”入口；NVS 仅保存确认载荷的推荐 ID/epoch 绑定，不保存需求或模型理由。已提交的确认必须等该操作终态、最新权威状态和本地日志清理后才恢复群媒体，恢复始终未按麦。
+
+当前 v108 的浏览器与板端主动需求、实体卡片审阅、取消/过期、明确确认及目标群媒体恢复已完成分项验收，已记录的重试与限制见[验收记录](acceptance.md)和[视频导读](demo-review-guide.md)。精确恢复时延、回声与长期稳定性仍没有专项通过结论，不能由本轮分项用例或影片推断。
+
+## 运行与验证入口
+
+在仓库根目录启动使用 `python3 tools/dev.py`；板端 LAN、私有证书、USB 初始化和可选 RTA 配置见[首次运行指南](first-run.md)。本地主机回归用 `python3 tools/check.py`，范围与依赖见[开发指南](development.md#自动验证)；完整演示和关闭检查见[演示与收尾指南](demo.md)。

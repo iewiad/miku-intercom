@@ -14,7 +14,7 @@
 - [x] 整理本轮修复 PR 与交叉/独立审阅，更新当前候选包、manifest、SHA256SUMS、README 和发布说明；合入状态以 PR 为准。
 - [x] 已发布[候选 Release](https://github.com/iewiad/miku-intercom/releases/tag/v0-rc-20261025)，15 项附件的云端 SHA-256 与本地一致，当前账号下载导读通过；仓库保持私有，接收方仍需仓库读权限，未据此声明匿名或外部评委访问已通过。
 
-本轮修复见 [PR #23](https://github.com/iewiad/miku-intercom/pull/23)，已完成交叉复核和未参与实现的独立审查，均未发现合入阻塞。[Issue #20](https://github.com/iewiad/miku-intercom/issues/20) 所需的两端最终人工卡片审阅已补齐；[Issue #16](https://github.com/iewiad/miku-intercom/issues/16) 的旧超时原因与长期可靠性继续独立跟进。当前[候选包](delivery.md)对应 v108，v91 保留为历史产物。路线图扩展、大规模标注、十次连续语音、物理断电和长期稳定性继续单列；局域网实机视频已成片，具体展示路径以导读时间线为准。出现误开麦、串群、未确认执行或无法恢复时暂停录制并修复。
+本轮修复见 [PR #23](https://github.com/iewiad/miku-intercom/pull/23)，已完成交叉复核和未参与实现的独立审查，均未发现合入阻塞。[Issue #20](https://github.com/iewiad/miku-intercom/issues/20) 所需的两端最终人工卡片审阅已补齐；[Issue #16](https://github.com/iewiad/miku-intercom/issues/16) 已于 2026-10-26 按本轮交付结项，旧超时根因未证实与长期可靠性未验证的边界保留。当前[候选包](delivery.md)对应 v108，v91 保留为历史产物。路线图扩展、大规模标注、十次连续语音、物理断电和长期稳定性继续单列；局域网实机视频已成片，具体展示路径以导读时间线为准。出现误开麦、串群、未确认执行或无法恢复时暂停录制并修复。
 
 ## 最终人工验收（最后执行）
 

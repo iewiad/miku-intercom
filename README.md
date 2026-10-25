@@ -1,235 +1,82 @@
 # 声路同行 · Miku Intercom
 
-[![实机演示封面](docs/images/demo-cover-20261025.png)](https://github.com/iewiad/miku-intercom/releases/tag/v0-rc-20261025)
+**让分散的小组随时沟通，需要协助时，一句话找到对的组。**
 
-[实机视频与候选 Release](https://github.com/iewiad/miku-intercom/releases/tag/v0-rc-20261025) · [视频导读与证据边界](docs/demo-review-guide.md)（合辑 2 分 27.3 秒，另附 S5 补片；私有附件需仓库访问权限）
+声路同行把浏览器与 ESP32 触屏终端接入同一套群对讲：按住说话，松手结束；知道群名就说出目标，不知道该找谁就描述需求。查看候选并明确确认后，再进入目标群继续交流。
 
-面向小组即时协作的智能语音对讲工具。让分散的小组随时沟通，需要协助时，一句话找到对的组。活动执行、户外结伴、车队出行都可使用同一套核心能力。
+[观看实机演示](https://github.com/iewiad/miku-intercom/releases/tag/v0-rc-20261025) · [阅读视频导读](docs/demo-review-guide.md) · [开始体验](docs/first-run.md)
 
-首版目标：快速建群与口令入群、按住说话、按群名语音切换、断线后可信恢复。根据需求推荐协作群为增强项。普通群音频由独立对讲服务转发，RTA 用于主动触发的语音指令与显式启用的文本推荐。
+[![声路同行实机演示：按住对讲、语音切群、按需求找组](docs/images/demo-cover-20261025.png)](https://github.com/iewiad/miku-intercom/releases/tag/v0-rc-20261025)
 
-历史一板两浏览器六方向完整句听测已通过：早期使用浏览器合成源与板端真人，产品界面修订轮次六方向均使用真人麦克风。当前 v108 另补板↔A、板↔B 四方向真人听测、滑出停发与停止重连；音量重启保持仍按原轮次留证，范围见[验收记录](docs/acceptance.md)。
+## 为现场协作少找一步
 
-S1/S2 群控制与浏览器群音频、PR #9 浏览器隐藏恢复、PR #10/#11 板端群音频及多群恢复、PR #12 板端口令键盘与主动语音切群均已合并。触屏入群、两轮口述切群、取消恢复、六方向听测与两份浏览器关闭报告已通过；当前实机视频已成片，包含普通对讲、主动目标核对与 S5；手机中断续拍已明确标出，详见[视频导读](docs/demo-review-guide.md)。回声与精确延迟专项仍待补齐。实际范围见[验收记录](docs/acceptance.md)。
+临时活动中，全员沟通、设备排障、物资协调常在不同小组之间发生。声路同行让成员始终看清当前群和发言状态，在需要协助时找到对应的小组。
 
-建群可选填职责简介，浏览器可按群名或职责筛选已加入群，再手动进入。[009 需求推荐](docs/specs/009-model-recommendation.md)提供浏览器文字/主动语音需求和板端“需求找组”：仅推荐已加入且有权限的群，展示填写的职责和固定核对说明，明确确认后才切换。普通对讲不参与分析。历史 204 次合成文字评估中，最终原集 60/60、新保留集 24/24 选组策略通过，自由理由仍有三处扩写，见[质量结果与限制](docs/evaluation/results-2026-10-25.md)。后续软件修复保留模型选组、丢弃自由理由，以固定说明阻断扩写进入展示；13 条针对性文本复测另行留证。当前候选 `v0-108-g528a352` 已部署，浏览器和板端的主动需求、卡片人工审阅、明确确认及目标媒体恢复已完成本轮分项验收，见[当前候选交付](docs/delivery.md)和[本轮证据](docs/evidence/2026-10-25-v108-closeout.json)。首次空建议、请求计数和重试保留；实机合辑与独立 S5 补片已完成剪辑和技术检查，成片范围与额外验收分别记录。字段、旧数据与设备兼容边界见 [007 群职责切片](docs/specs/007-group-purpose.md)。
+| 想做什么 | 怎样操作 | 接下来会发生什么 |
+| --- | --- | --- |
+| 向当前小组说一句话 | 连接群语音，按住“按住说话” | 获得发言权后发送，松手停发；同一群同一时刻一人讲话 |
+| 已经知道目标群 | 主动点“语音切群”，等允许说话后说“帮我转到设备排障演示群吧” | 核对本次识别文字和候选，点击明确确认按钮，等待目标群就绪 |
+| 需要帮助，但不知道群名 | 进入板端“需求找组”或浏览器“说出需求”，等允许后说“我需要领取和补充活动物资” | 查看建议群的职责，明确确认后再进入对应群对讲 |
 
-产品界面聚焦当前群、连接/发言状态与按住说话，浏览器支持浅深主题和独立的添加群组面板；板端使用大面积 PTT 与同样的状态层级。打开任务面板先停发，关闭后保持未按麦；设计、降级与验证边界见 [008 产品界面](docs/specs/008-product-ui.md)。
+群名和职责由小组自行配置，示例中的设备组与物资组使用同一套功能。候选只来自已加入且有权限的群；浏览器点击卡内确认按钮，板端先选卡再单独确认。仅查看建议或在板端选卡不会切群，推荐也不表示已经有人在线或接听。
 
-## 系统架构
+## 浏览器与触屏一起用
 
-图中表示当前代码的组件与数据路径；各路径的实测范围以验收记录为准。控制面和媒体面在同一个 Go 进程中，通过权威状态配合工作。
-
-```mermaid
-flowchart LR
-    subgraph Clients[浏览器终端]
-        A[浏览器 A]
-        B[浏览器 B]
-    end
-    subgraph Server[Go 对讲服务 · 单进程]
-        C[控制面<br/>身份 / 群 / 当前群版本 / 麦权]
-        M[媒体面 · Pion WebRTC<br/>逐包授权 / 有界队列 / RTP 续接]
-        V[RTA 信令代理<br/>显式启用 / 私有会话日志]
-        N[需求推荐器<br/>已授权候选 / 有界文本 / 显式启用]
-        D[(本机快照<br/>身份 / 群 / 成员 / 切群结果)]
-        C -->|权威状态与租约| M
-        C <-->|原子保存与恢复| D
-        C -->|主动需求与授权候选| N
-        N -->|只返回建议，确认由控制面执行| C
-    end
-    A <-->|同源 HTTP · 控制与信令| C
-    B <-->|同源 HTTP · 控制与信令| C
-    A <-->|WebRTC · Opus| M
-    B <-->|WebRTC · Opus| M
-    subgraph Device[板端与主动语音指令]
-        E[ESP32 终端]
-        R[RTA · 主动语音指令]
-    end
-    E -->|指定 LAN IP · HTTPS 控制 API| C
-    E <-->|WebRTC Opus| M
-    E <-->|主动指令 · RTA RTC| R
-    A <-->|主动指令 · RTA RTC| R
-    B <-->|主动指令 · RTA RTC| R
-    A -->|同源语音信令| V
-    B -->|同源语音信令| V
-    V <-->|HTTPS · 会话 / offer / stop| R
-    N <-->|独立 RTC · 文本请求与结束确认| R
-```
-
-普通群音频经媒体面转发给同群其他成员，控制面是身份、当前群与麦权的唯一授权来源。源包入队与目标写出前都重新校验权限；麦权与 Peer 只保存在内存，服务重启后清空。语音指令先结束转写会话，再生成待确认目标：精确群名省去模型，其余由受限文本模型辅助理解。主动需求使用独立职责推荐规则。所有建议都不改变当前群，明确确认使用原持久切群终态并原子消费建议。默认部署保持 localhost；S3 通过完整显式参数开放指定 LAN IP 的设备 HTTPS 与 UDP 入口，配置见[开发指南](docs/development.md#s3-板端-lan-开发入口)。板端实际证据单独记录，不外推到公网。
-
-## 连接与发言状态
-
-### 浏览器音频连接
-
-用户显式启用后才请求麦克风。Peer 已连接、远端播放已启动且绑定仍有效，才进入媒体就绪；它还不代表已经获权讲话。
-
-```mermaid
-stateDiagram-v2
-    [*] --> Disabled
-    state "未启用音频" as Disabled
-    state "等待有效当前群" as Waiting
-    state "采集与媒体连接中" as Connecting
-    state "播放受阻" as Blocked
-    state "媒体就绪" as Ready
-    state "权限或连接失败" as Failed
-
-    Disabled --> Waiting: 用户显式启用
-    Waiting --> Connecting: 页面可见且身份 / 当前群 / 控制已确认
-    Connecting --> Ready: Peer connected 且播放已启动
-    Connecting --> Blocked: 浏览器阻止播放
-    Blocked --> Connecting: 用户点击开始收听
-    Connecting --> Failed: 权限 / 协商 / 连接失败
-    Ready --> Failed: 采集或连接失败
-    Blocked --> Failed: 连接失败
-    Failed --> Waiting: 用户显式重试
-    Ready --> Waiting: 隐藏 / 离线 / 切群 / 服务重启
-    Connecting --> Waiting: 群或身份代次变化
-```
-
-任意状态点击“关闭音频”都会停止采集、关闭 Peer 并回到未启用。自动恢复只发生在用户已选择启用、页面可见且控制状态重新确认后，始终回到未按麦；权限或连接失败保留显式重试。隐藏、离线或切群会停止采集并关闭旧 Peer；收听静音只控制播放，单纯窗口失焦只取消发言。
-
-### 按住说话（PTT）
-
-抢麦是独立状态机：按下时仍保持源音轨禁用；只有 ACK 匹配当前 Peer、群版本及请求代次，并且用户仍按住，才开始发送。
-
-```mermaid
-stateDiagram-v2
-    [*] --> Idle
-    state "未按麦" as Idle
-    state "申请麦权 · 尚未发声" as Acquiring
-    state "持有麦权 · 发送中" as Sending
-    state "已停发 · 请求收尾中" as Ending
-
-    Idle --> Acquiring: 按下且媒体 / 控制均就绪
-    Acquiring --> Sending: 获权匹配且仍按住 / 启用源音轨
-    Acquiring --> Ending: 松手 / 取消 / 忙或失败
-    Sending --> Sending: 仍按住且续租成功
-    Sending --> Ending: 松手 / 失焦 / 到期 / 续租失败
-    Ending --> Ending: 迟到获权 / 按原请求再次释放
-    Ending --> Idle: 在途申请与释放请求已收尾
-```
-
-结束时先同步禁用源音轨，再异步释放麦权；普通松手保留采集和 Peer，下一次按下重新申请。忙时不排队，迟到授权不恢复发送，重连也不自动按麦。服务端逐包门控继续兜底；已经进入网络或播放缓冲的尾音无法撤回。
-
-## 手动切群交互
-
-已加入群与当前群分开，加入第二个群不会自动打断当前群。主动切换会关闭旧媒体，确认操作终态后再按权威当前群重建连接。
-
-```mermaid
-sequenceDiagram
-    actor U as 用户
-    participant B as 终端（浏览器或板端）
-    participant C as Go 控制面
-    participant M as Go 媒体面
-
-    U->>B: 选择目标群
-    B->>B: 同步停发，暂停旧群接收与播放
-    B->>M: 关闭旧 Peer
-    opt 板端
-        B->>B: NVS 保存固定操作，重启后继续确认
-    end
-    B->>C: PUT /current-group（目标群 / operation_id / expected_version）
-    C->>C: 校验权限与版本，原子保存操作终态
-    Note over C,M: 成功切群使旧绑定与麦权失效
-    alt 收到已完成的操作结果
-        C-->>B: applied / rejected 与权威状态
-    else 响应丢失或超时
-        loop 直到确认同一个操作终态
-            B->>C: GET /operations/{operation_id}
-            alt 未找到操作（404）
-                B->>C: 用原 ID 与原载荷重试 PUT
-            else 找到操作终态
-                C-->>B: applied / rejected
-            end
-        end
-        B->>C: 必要时 GET /state
-        C-->>B: 当前权威状态
-    end
-    opt 板端
-        B->>C: GET /state 获取最新当前群
-        B->>B: 清理待确认操作日志
-    end
-    opt 音频已启用且身份与控制已确认（浏览器还须可见）
-        B->>B: 按权威当前群与版本创建新 Peer
-        B->>M: 完整 ICE 的 offer / answer
-        M-->>B: WebRTC 连接建立
-        B->>B: 媒体就绪，保持未按麦
-    end
-```
-
-结果未知时保持媒体关闭，并查询或重试同一操作；单次当前群快照不能代替操作终态。成功或拒绝后都以最新权威状态恢复，媒体连接失败时显示失败并保留重试入口。接口字段与完整异常语义见 [002](docs/specs/002-control-api.md) / [003](docs/specs/003-browser-media.md)。
-
-板端通过已加入群下拉列表和确认按钮执行切换，权威当前群单独显示。停止和软重启会保留待确认操作，恢复后保持未按麦。详情与状态图见 [005](docs/specs/005-device-multigroup.md)，实际范围见[多群验收](docs/acceptance.md#s3-板端多群切换)；新增口令键盘与语音切群见下节。
-
-## 主动语音切群
-
-点击语音入口后，终端先停发并退休群 Peer，等待 RTA 指令通道确认后才开麦；只接受当前代次首次最终用户转写。普通群聊不触发指令。提交前可取消，提交后等待原操作结果，恢复始终未按麦。
-
-```mermaid
-stateDiagram-v2
-    [*] --> GroupReady
-    state "群音频就绪" as GroupReady
-    state "关闭群 Peer · 准备指令" as Preparing
-    state "采集就绪 · 请说群名" as Listening
-    state "结束 RTA" as Cleaning
-    state "理解目标" as Resolving
-    state "核对候选 · 等待明确确认" as Reviewing
-    state "确认切群终态" as Confirming
-    state "核实当前群 · 重建群 Peer" as Recovering
-    GroupReady --> Preparing: 主动点击语音切群 / 取消PTT
-    Preparing --> Listening: session.updated 与采集就绪
-    Listening --> Cleaning: 首次最终用户转写 / 停采集
-    Preparing --> Cleaning: 取消 / 初始化失败
-    Listening --> Cleaning: 取消 / 超时 / 断网
-    Cleaning --> Cleaning: stop未确认 / 重试原会话
-    Cleaning --> Resolving: 清理确认且转写仍有效
-    Cleaning --> Recovering: 清理确认且取消或失败
-    Resolving --> Reviewing: 精确命中或模型候选
-    Reviewing --> Confirming: 用户明确确认 / 固定操作
-    Reviewing --> Recovering: 取消或失效 / 未切群
-    Resolving --> Recovering: 无候选或失败 / 未切群
-    Confirming --> Confirming: 切群结果不明 / 查询重放原操作
-    Confirming --> Recovering: 切群无未决操作
-    Recovering --> GroupReady: 当前群媒体可用 / 未按麦
-```
-
-两端先结束 RTA，再请求语音目标候选，所有结果均待用户点击“确认进入”。模型只辅助选候选，服务端重验权限、版本、目录与期限；精确路径也不能跳过确认。RTA stop 未确认时不恢复群音频。当前边界见 [010 语音目标核对](docs/specs/010-voice-target-review.md)；独立语音需求入口的职责推荐与确认见 [009](docs/specs/009-model-recommendation.md)。
-
-启动使用 `python3 tools/dev.py`；板端 LAN、私有证书、USB 初始化和可选 RTA 配置见[首次运行指南](docs/first-run.md)。本地主机回归用 `python3 tools/check.py`，范围与依赖见[开发指南](docs/development.md#自动验证)；完整演示和关闭检查见[演示与收尾指南](docs/demo.md)。
-
-## 从这里开始
-
-| 需要了解什么 | 入口 |
+| 终端 | 适合做什么 |
 | --- | --- |
-| 用户、范围、交互与演示 | [产品定义](docs/product.md) |
-| 组件职责、状态与媒体边界 | [架构](docs/architecture.md) |
-| 本机启动、测试与开发顺序 | [开发指南](docs/development.md) |
-| 语音未命中、连接等待与离线日志分析 | [诊断指南](docs/diagnostics.md) |
-| 必交闭环与验收条件 | [MVP 规格](docs/specs/001-intercom-mvp.md) |
-| 控制面 API | [控制面契约 v1](docs/specs/002-control-api.md) |
-| 浏览器群媒体、门控与诊断 | [媒体契约 v1](docs/specs/003-browser-media.md) |
-| 主动需求推荐、板端入口与明确确认 | [需求推荐契约](docs/specs/009-model-recommendation.md) |
-| 真实文本模型质量、冻结用例与剩余问题 | [推荐质量评估](docs/evaluation/results-2026-10-25.md) |
-| 哪些已经通过、哪些仍待验证 | [验收记录](docs/acceptance.md) |
-| 固定候选、产物摘要与最后人工验收 | [首版候选交付](docs/delivery.md) |
+| Chrome 浏览器 | 建群并分享口令、加入多个群、填写和筛选群职责、按住对讲、语音切群、文字或语音需求找组 |
+| ESP32-S31-Korvo-1 触屏终端 | 输入群口令加入，以大面积按钮对讲，手动或语音切群，主动说出需求找组，调整收听音量 |
 
-## 目录
+加入新群与切换当前群分开：第一个群自动进入，再加入其他群不会打断当前沟通。连接、群名和发言状态分别显示；切换或重连后保持未按麦，准备好后再主动发言。
 
-```text
-server/                     独立 Go 对讲服务、群媒体与同源浏览器
-firmware/esp32-s31-rti/      复用板端工程；保留内部工程名与协议标识
-reference/rta-browser/      原 RTA 示例，仅作接口和生命周期参考
-docs/                      产品、架构、规格和实际验收证据
-work/                      本机状态、构建和临时资料，Git 忽略
+## 开始体验
+
+在仓库根目录运行，需 Python 3 和项目要求的 Go（版本见[开发指南](docs/development.md)）：
+
+```sh
+python3 tools/dev.py
 ```
 
-本机开发入口与测试命令见[开发指南](docs/development.md)。群控制流程、浏览器实音频、板端接入、语音切群按切片推进，任何阶段都不以 UI 提示替代实际音频验收。
+1. 等待 `Service ready`，打开 <http://127.0.0.1:18792/>，输入称呼并创建一个群。
+2. 第二个 Chrome 窗口打开 <http://localhost:18792/>，用群口令加入。保持两个窗口可见；这两个地址使用独立身份，同一地址的普通窗口会共用身份。
+3. 两端分别点“连接群语音”，允许麦克风并等到就绪；戴上耳机，按住说话、松手结束。
 
-## 来源与项目边界
+普通群对讲不需要 RTA。语音转写需要另配已有的私有 RTA 配置；自然表达的目标候选和需求推荐还需显式启用服务端文本模型，默认启动不会调用模型。具体开关、板端固件、局域网与 USB 初始化见[首次运行指南](docs/first-run.md)。
 
-戴伟（MIKU-流媒体）参加 Qiniu Builder Day 的项目；开发截止 2026-10-26 09:00（Asia/Shanghai）。当前仓库保持私有，公开前须核验内部源码再分发授权、依赖与字体许可及凭据。
+## AI 参与哪一步
 
-新增对讲功能前的远端 `v0` 指向 `d713a5a9d32039cdeeacca90503ba184f865b6c3`。逐文件来源见 [v0 清单](docs/v0-manifest.json)：板端来源为旧工程 `02b8433` 加选定工作树改动，并非该提交的纯净快照；浏览器参考来源为 `qbox/miku-rti` 的 `f1c3722`，共 37 个原文件。未导入凭据、生成物或日志，也不在参考仓库中开发本项目。
+日常群音频由我们实现的 Go 对讲服务转发。用户主动打开语音或需求入口后，RTA 才提供本次转写与语义理解：唯一精确群名可直接生成待确认目标，自然表达和协作需求由受限模型提出建议。
 
-`reference/rta-browser/` 的旧运行说明依赖原仓库，不能在此直接照搬；其一对一 AI 音频链路不承担群音频转发。
+模型提出建议，用户决定是否进入，对讲服务负责校验与执行。每次确认都会重新检查权限和建议有效性，再恢复目标群音频。我们实现了两端交互、群与成员控制、发言权、媒体转发和切群恢复；复用了 RTA 能力，没有训练新模型。实现细节见[系统架构](docs/architecture.md)。
+
+## 看实机演示与下载
+
+| 材料 | 内容 |
+| --- | --- |
+| [实机合辑 · 2 分 27.3 秒](https://github.com/iewiad/miku-intercom/releases/download/v0-rc-20261025/miku-intercom-demo-20261025.mp4) | 普通对讲 → 群名语音核对与确认 → 目标群对讲 → 按需求找组；主片手机续拍已标注 |
+| [需求找组独立补片 · 1 分 7.9 秒](https://github.com/iewiad/miku-intercom/releases/download/v0-rc-20261025/miku-intercom-demo-s5-20261025.mp4) | 从描述物资需求、查看职责、明确确认，到恢复对讲；内容也包含在合辑中 |
+| [评审导读与时间线](docs/demo-review-guide.md) | 逐段说明操作、实现分工和证据；Release 另附 Markdown、JSON 与可复制简介，方便人和 AI 阅读 |
+| [候选 Release 与交付包](https://github.com/iewiad/miku-intercom/releases/tag/v0-rc-20261025) | 视频、字幕、封面、当前软件包和校验文件；当前软件包为 macOS arm64 服务与 ESP32-S31 固件 |
+
+## 当前版本
+
+当前为 `v0-rc-20261025` 首版候选，实机固件 `v0-108-g528a352`。一块板与同机 Chrome A/B 已完成局域网分项验收，包括板↔A/B 四方向真人听测、按住与松手、滑出停发、候选确认、取消及恢复。视频直接展示的路径另按时间线列出，完整范围见[验收记录](docs/acceptance.md)与[候选交付](docs/delivery.md)。
+
+第二块实体板、公网、物理断电、长时稳定性和精确延迟仍待验证；当前也不提供在线人数或接听保证。历史失败与重试保留在验收记录中。仓库和 Release 保持私有，接收方需要仓库读权限，或另行接收完整交付包。
+
+## 继续了解
+
+| 你想了解什么 | 入口 |
+| --- | --- |
+| 首次启动、设备初始化和可选 AI 配置 | [首次运行](docs/first-run.md) |
+| 用户体验、默认操作和能力边界 | [产品说明](docs/product.md) |
+| 组件、媒体路径、状态机与接口契约 | [系统架构](docs/architecture.md) |
+| 开发、构建与自动检查 | [开发指南](docs/development.md) |
+| 实测结果、模型评估与历史问题 | [验收记录](docs/acceptance.md) · [推荐评估](docs/evaluation/results-2026-10-25.md) · [诊断指南](docs/diagnostics.md) |
+| 演示步骤、视频介绍与交付版本 | [演示指南](docs/demo.md) · [视频导读](docs/demo-review-guide.md) · [候选交付](docs/delivery.md) |
+
+## 项目与来源
+
+戴伟（MIKU-流媒体）的 Qiniu Builder Day 项目。`server/` 是独立 Go 对讲服务与同源浏览器，`firmware/esp32-s31-rti/` 是复用并扩展的板端工程；`reference/rta-browser/` 保留原 RTA 参考接口，不承担群音频转发。
+
+新增对讲代码前的远端 `v0` 保留复用基线，逐文件来源见 [v0 清单](docs/v0-manifest.json)。源码再分发、依赖与字体许可、公开前检查见[交付边界](docs/delivery.md#运行与隐私边界)。

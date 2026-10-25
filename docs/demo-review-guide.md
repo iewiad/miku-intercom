@@ -63,4 +63,4 @@ PTT 段使用实际 Chrome A 接收音轨；主动口述指令与需求段使用
 
 分项验收保留了目标首次零候选、S5 早期未取得正确候选或未进入 ready，以及一次“取消”口述后来被用户更正为实际按了确认的记录。成功重试不将这些轮次回填为通过。相关状态、机器数据与人工反馈见[验收记录](acceptance.md#v108-补验目标确认普通对讲与-s5-实体流程)、[v108 收尾证据](evidence/2026-10-25-v108-closeout.json)和[固定文本回归](evidence/2026-10-25-voice-negation-guard-regression.json)。
 
-本片不覆盖物理断电恢复、长期稳定性、两块实体板互通、公网部署或精确端到端延迟。[Issue #16](https://github.com/iewiad/miku-intercom/issues/16) 的历史故障原因与长期可靠性仍开放。拍摄脚本和拍摄前交付检查点见 [demo.md](demo.md) 与 [delivery.md](delivery.md)；本导读记录的是其后已经完成的成片，不覆写早期验收历史。
+本片不覆盖物理断电恢复、长期稳定性、两块实体板互通、公网部署或精确端到端延迟。[Issue #16](https://github.com/iewiad/miku-intercom/issues/16) 已于 2026-10-26 按首版交付结项，历史超时的底层根因仍未证实，长期可靠性未作通过结论。Release 的原始导读附件与交付 ZIP 保留首次发布快照，后续 Issue 状态以本在线文档和 Issue 顶部结项说明为准。拍摄脚本和拍摄前交付检查点见 [demo.md](demo.md) 与 [delivery.md](delivery.md)；本导读记录的是其后已经完成的成片，不覆写早期验收历史。

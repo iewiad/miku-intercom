@@ -118,7 +118,7 @@ go run ./cmd/recommend-probe -voice-config ../work/private/voice.json \
   -through-control -confirm -state ../work/model-probe/new-synthetic-state.json
 ```
 
-命令仅输出白名单布尔值、字节数和事件类型，不输出 Key、会话标识、群标识、需求或模型理由。`confirmed_and_replay_verified` 表示本次合成控制链路通过；用户交互、语音需求、实际群音频恢复和板端触控仍需分别验收。
+命令仅输出白名单布尔值、字节数和事件类型，不输出 Key、会话标识、群标识、需求或模型理由。`confirmed_and_replay_verified` 只表示本次合成控制链路通过；用户交互、语音需求、实际群音频恢复和板端触控须另看[当前分项验收](../docs/acceptance.md#v108-补验目标确认普通对讲与-s5-实体流程)，不能由该探测命令代证。
 
 批量文字质量评估使用 `cmd/recommend-eval`，协议、冻结数据与命令见[评估指南](../docs/evaluation/README.md)。默认只校验数据，显式 `-live` 才读取原配置并调用模型；每例使用全新内存身份与群，经真实控制 handler/输出解析评分，始终不确认、不切群、不创建群媒体。报告与 cleanup journal 必须是独立私有文件；清理不明立即停止新调用。`-cleanup-only` 只收尾同一评估日志的原会话，不创建模型请求；不得用删除日志或新会话覆盖失败。
 
