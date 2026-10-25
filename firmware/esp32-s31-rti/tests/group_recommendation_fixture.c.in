@@ -198,8 +198,33 @@ static void wire_limits_and_payloads(group_recommendation_t *result) {
  char *oversized=malloc(48*1024+1);assert(oversized);memset(oversized,' ',48*1024);oversized[0]='{';oversized[1]='}';oversized[48*1024]=0;
  assert(!group_json_response_parse(oversized,48*1024));free(oversized);
 }
+static void voice_proposal_bounds(group_recommendation_t *result) {
+ char ascii[258];memset(ascii,'a',256);ascii[256]=0;assert(group_voice_proposal_text_valid(ascii));
+ ascii[256]='a';ascii[257]=0;assert(!group_voice_proposal_text_valid(ascii));
+ assert(!group_voice_proposal_text_valid("bad\ncontrol"));
+ for(unsigned kind=0;kind<2;++kind) {
+  cJSON *d=recommendation_response(),*r=cJSON_GetObjectItemCaseSensitive(d,"recommendation");
+  assert(!group_voice_proposal_parse(d,"request_fixture","epoch_fixture",7,result));
+  cJSON_AddStringToObject(r,"source",kind?"model":"exact");
+  cJSON *item=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(r,"suggestions"),0);
+  cJSON_SetValuestring(cJSON_GetObjectItemCaseSensitive(item,"reason"),"请核对识别出的目标群，确认后才会切换。");
+  assert(group_voice_proposal_parse(d,"request_fixture","epoch_fixture",7,result));
+  assert(result->source==(kind?GROUP_RECOMMENDATION_SOURCE_MODEL:GROUP_RECOMMENDATION_SOURCE_EXACT));
+  assert(!group_voice_proposal_parse(d,"request_fixture","wrong_epoch",7,result));
+  assert(!group_voice_proposal_parse(d,"request_fixture","epoch_fixture",8,result));
+  cJSON_SetValuestring(cJSON_GetObjectItemCaseSensitive(item,"reason"),"arbitrary model reasoning");
+  assert(!group_voice_proposal_parse(d,"request_fixture","epoch_fixture",7,result));
+  cJSON_SetValuestring(cJSON_GetObjectItemCaseSensitive(item,"reason"),"请核对识别出的目标群，确认后才会切换。");
+  cJSON_SetValuestring(cJSON_GetObjectItemCaseSensitive(r,"source"),"other");
+  assert(!group_voice_proposal_parse(d,"request_fixture","epoch_fixture",7,result));
+  cJSON_SetValuestring(cJSON_GetObjectItemCaseSensitive(r,"source"),kind?"model":"exact");
+  cJSON_AddStringToObject(r,"source","model");
+  assert(!group_voice_proposal_parse(d,"request_fixture","epoch_fixture",7,result));cJSON_Delete(d);
+ }
+}
 int main(void) {
- group_recommendation_t *result=calloc(1,sizeof(*result));assert(result);
+ group_recommendation_t *result=calloc(1,sizeof(*result));
+ voice_proposal_bounds(result);assert(result);
  wire_limits_and_payloads(result);
  cJSON *out=recommendation_response();
  assert(group_recommendation_parse(out,"request_fixture","epoch_fixture",7,result)&&result->count==1);

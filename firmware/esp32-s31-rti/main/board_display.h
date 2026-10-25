@@ -113,3 +113,9 @@ esp_err_t board_display_set_group_recommendation_action(group_recommendation_act
  * extend the local expiry, invoke PTT, or execute a selection. */
 esp_err_t board_display_set_group_recommendation(const group_recommendation_view_t *view,
                                                  const group_recommendation_item_t *items);
+
+/** Current visible VOICE intent only. The exact validated first-final is copied
+ * once into GUI-owned PSRAM and never persisted or logged. It is erased on
+ * cancellation, accepted confirmation, leaving the page, STOP or a new start.
+ * This publication never invokes a controller/PTT callback. */
+esp_err_t board_display_set_group_voice_review(uint32_t origin_revision, const char *text);

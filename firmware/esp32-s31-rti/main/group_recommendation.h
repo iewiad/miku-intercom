@@ -10,7 +10,11 @@
 
 typedef enum {
     GROUP_RECOMMENDATION_START, GROUP_RECOMMENDATION_CANCEL, GROUP_RECOMMENDATION_CONFIRM,
+    GROUP_RECOMMENDATION_START_VOICE,
 } group_recommendation_action_t;
+typedef enum {
+    GROUP_RECOMMENDATION_SOURCE_NONE, GROUP_RECOMMENDATION_SOURCE_EXACT, GROUP_RECOMMENDATION_SOURCE_MODEL,
+} group_recommendation_source_t;
 typedef enum {
     GROUP_RECOMMENDATION_IDLE, GROUP_RECOMMENDATION_PREPARING,
     GROUP_RECOMMENDATION_LISTENING, GROUP_RECOMMENDATION_CLEANUP,
@@ -28,6 +32,7 @@ typedef struct {
     uint32_t revision;
     unsigned count;
     bool can_start, can_cancel, can_confirm;
+    bool voice_mode;
     uint32_t expires_remaining_ms;
     char detail[241];
 } group_recommendation_view_t;
@@ -44,11 +49,15 @@ typedef struct {
     uint64_t current_version;
     int64_t expires_at_ms;
     unsigned count;
+    group_recommendation_source_t source;
     char group_ids[GROUP_RECOMMENDATION_MAX][81];
     group_recommendation_item_t items[GROUP_RECOMMENDATION_MAX];
 } group_recommendation_t;
 
 bool group_recommendation_need_valid(const char *text);
+bool group_voice_proposal_text_valid(const char *text);
 struct cJSON;
 bool group_recommendation_parse(const struct cJSON *response, const char *request_id,
+                                const char *epoch, uint64_t version, group_recommendation_t *result);
+bool group_voice_proposal_parse(const struct cJSON *response, const char *request_id,
                                 const char *epoch, uint64_t version, group_recommendation_t *result);

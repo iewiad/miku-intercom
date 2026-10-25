@@ -67,17 +67,18 @@ static struct {
 static int last_http_status;
 static group_voice_api_error_t last_voice_api_error;
 static unsigned voice_error_parses;
+static group_voice_api_error_t parsed_voice_error=GROUP_VOICE_API_UNKNOWN_TARGET;
 static group_voice_api_error_t read_voice_api_error(const char *data, size_t used)
 {
     assert(data && used == 2 && strcmp(data, "{}") == 0);
     ++voice_error_parses;
-    return GROUP_VOICE_API_UNKNOWN_TARGET;
+    return parsed_voice_error;
 }
 static uint64_t http_requests, http_failures, tls_connections;
 static unsigned creations, connections, cleanups, transfers;
 static int observed_timeout;
 static int forced_body_error, forced_clear_error;
-enum response_mode { SUCCESS, INCOMPLETE, HTTP_500, OVERFLOW, INVALID_JSON, SERVER_CLOSE, EARLY_FAILURE };
+enum response_mode { SUCCESS, INCOMPLETE, HTTP_500, OVERFLOW, INVALID_JSON, SERVER_CLOSE, EARLY_FAILURE, HTTP_422 };
 static enum response_mode mode;
 
 static bool trusted_clock(void) { return true; }
@@ -187,7 +188,7 @@ static int esp_http_client_perform(client_t *client)
     assert(http_event(&event)==ESP_OK&&!response->observed);
     /* Like IDF6.2, prepare/connect/send errors can leave last response status. */
     if(mode==EARLY_FAILURE)return ESP_ERR_HTTP_CONNECT;
-    client->status_code=mode==HTTP_500?500:200;
+    client->status_code=mode==HTTP_500?500:mode==HTTP_422?422:200;
     event.event_id=HTTP_EVENT_ON_HEADER;assert(http_event(&event)==ESP_OK&&response->observed);
     event.event_id=HTTP_EVENT_ON_DATA;event.data="{}";event.data_len=2;
     assert(http_event(&event)==ESP_OK&&response->used==2);
@@ -299,9 +300,28 @@ int main(void)
     mode = SUCCESS;
     success("/state", HTTP_METHOD_GET, NULL);
     assert(last_voice_api_error == GROUP_VOICE_API_NONE && voice_error_parses == 1);
+    /* The new proposal guard is endpoint/status scoped. Unknown or malformed
+     * codes cannot become an intent-negated result. */
+    mode=HTTP_422;parsed_voice_error=GROUP_VOICE_API_INTENT_NEGATED;
+    assert(request("/voice/proposals",HTTP_METHOD_POST,&body,&out)!=ESP_OK);
+    assert(last_voice_api_error==GROUP_VOICE_API_INTENT_NEGATED&&voice_error_parses==2);
+    assert(request("/voice/resolve",HTTP_METHOD_POST,&body,&out)!=ESP_OK);
+    assert(last_voice_api_error==GROUP_VOICE_API_OTHER&&voice_error_parses==3);
+    mode=HTTP_500;
+    assert(request("/voice/proposals",HTTP_METHOD_POST,&body,&out)!=ESP_OK);
+    assert(last_voice_api_error==GROUP_VOICE_API_NONE&&voice_error_parses==3);
+    mode=HTTP_422;parsed_voice_error=GROUP_VOICE_API_UNKNOWN_TARGET;
+    assert(request("/voice/proposals",HTTP_METHOD_POST,&body,&out)!=ESP_OK);
+    assert(last_voice_api_error==GROUP_VOICE_API_OTHER&&voice_error_parses==4);
+    parsed_voice_error=GROUP_VOICE_API_OTHER;
+    assert(request("/voice/proposals",HTTP_METHOD_POST,&body,&out)!=ESP_OK);
+    assert(last_voice_api_error==GROUP_VOICE_API_OTHER&&voice_error_parses==5);
+    mode=INCOMPLETE;
+    assert(request("/voice/proposals",HTTP_METHOD_POST,&body,&out)!=ESP_OK);
+    assert(last_voice_api_error==GROUP_VOICE_API_NONE&&voice_error_parses==5);
     mode = INCOMPLETE;
     assert(request("/voice/resolve", HTTP_METHOD_POST, &body, &out) != ESP_OK);
-    assert(last_voice_api_error == GROUP_VOICE_API_NONE && voice_error_parses == 1);
+    assert(last_voice_api_error == GROUP_VOICE_API_NONE && voice_error_parses == 5);
     drop_http_client();
     assert(cleanups == creations);
     for(unsigned i=0;i<3;++i) {

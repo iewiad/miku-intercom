@@ -1,0 +1,72 @@
+{
+  "schema": "miku-intercom.voice-target-physical-diagnosis.v1",
+  "date": "2026-10-25",
+  "implementation_commit": "49f9c0910ccbd20baf17102aa04627994446b200",
+  "firmware_version": "v0-106-g49f9c09",
+  "human_initial_report": "三项都正常",
+  "human_followup": {
+    "negative_utterance": "reported candidate then cancelled or returned",
+    "ordering": "cannot recall"
+  },
+  "physical_verdict": {
+    "positive_candidate_explicit_confirmation_and_recovery": "passed",
+    "negative_empty_suggestions": "not_accepted",
+    "negative_root_cause": "unresolved_without_original_ASR_and_clear_order"
+  },
+  "rounds": [
+    {
+      "ordinal": 1,
+      "input_bytes": 33,
+      "source": "model",
+      "candidates": 1,
+      "proposal_http": 200,
+      "version_before": 33,
+      "version_after": 33,
+      "submitted_observed": false,
+      "ready_recovered": true,
+      "control_http_failure_observed": true
+    },
+    {
+      "ordinal": 2,
+      "input_bytes": 24,
+      "source": "model",
+      "candidates": 1,
+      "proposal_http": 200,
+      "version_before": 33,
+      "version_after": 34,
+      "choosing_before_submit_version_unchanged": true,
+      "choosing_to_submit_seconds": 7.342,
+      "recommendation_bound_applied_operation_added": 1,
+      "target": "新版验收群",
+      "ready_recovered": true,
+      "idle_unpressed": true,
+      "control_http_failure_observed": true
+    }
+  ],
+  "control_http_failures": 2,
+  "fatal_events_observed": 0,
+  "raw_ASR_retained": false,
+  "raw_audio_retained": false,
+  "controlled_catalog_clone_negatives": {
+    "cases": 8,
+    "model_calls": 8,
+    "semantic_passed": 8,
+    "protocol_valid": 8,
+    "cleanup_all_confirmed": true,
+    "unconfirmed_state_unchanged": true,
+    "no_operations": true,
+    "dataset_sha256": "67117b555e220173ea65a51019a7975473945d6ccb48f67aef55fa183d5f0c78",
+    "report_sha256": "8280d1b52e46a257bc42691e3d0e77ad337fb7cbc3699c6ac1ec80c191582124",
+    "limit": "These supplied negative texts were not the unavailable real ASR transcripts. Passing them does not identify the acoustic failure cause."
+  },
+  "closeout": {
+    "board_stopped": true,
+    "rtc_stop_complete": true,
+    "serial_observer_closed": true,
+    "serial_port_free": true,
+    "A_B_audio_off": true,
+    "last_authoritative_group": "新版验收群",
+    "last_authoritative_version": 34,
+    "volume": 38
+  }
+}

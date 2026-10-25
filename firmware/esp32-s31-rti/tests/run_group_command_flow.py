@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Exercise production group boot/volume and command lifecycle with SDK doubles.
+"""Exercise production group boot/config status and command flow with SDK doubles.
 
 No real RTA, networking, tasks, audio, UI rendering, or NVS writes occur. The
 journal save is an asserted boundary; its durability is covered separately.
+Config checks/load/store are counted boundaries: the real status function must
+not call them or allocate. Real init/save notification/load/STOP functions cover
+stored-config presence, failed saves and out-of-order validation publication.
 Boot uses real app/controller functions, a board_audio_init double returning an
 already loaded volume, and a faithful same-value nonpersist UI callback. Real
 LVGL slider initialization/drag/release is covered by run_group_keyboard_layout.
@@ -31,10 +34,12 @@ def main():
     intent = re.search(r'typedef struct \{[^}]+\} group_intent_t;', production)
     if not intent:
         raise RuntimeError('production intent type missing')
-    names = ('intent_cancel', 'intent_queue_switch', 'string_field', 'command_event', 'finish_command',
-             'join_command', 'recommendation_recover', 'request_recommendation', 'prepare_recommended_switch',
+    names = ('intent_cancel', 'intent_action', 'advance_view_locked',
+             'group_controller_refresh_config_status', 'load_config', 'group_controller_action',
+             'command_event', 'finish_command',
+             'join_command', 'command_uses_proposals', 'recommendation_recover', 'request_recommendation', 'prepare_recommended_switch',
              'process_command', 'group_controller_join_group', 'group_controller_voice_action', 'group_controller_recommendation_action',
-             'prepare_selected_switch', 'volume', 'group_controller_init', 'group_controller_print_status')
+             'volume', 'group_controller_init', 'group_controller_print_status')
     fixture = Path(__file__).with_name('group_command_flow_fixture.c.in').read_text()
     fixture = fixture.replace('/* @production-intent */', intent.group())
     for header, name in [('board_audio.h', 'board_audio_t'), ('webrtc_peer.h', 'webrtc_group_stats_t')]:
@@ -45,7 +50,8 @@ def main():
     audio_source = (project / 'main/board_audio.c').read_text()
     fixture = fixture.replace('/* @production-audio-default */', re.search(r'^#define RTI_AUDIO_DEFAULT_VOLUME \d+$', audio_source, re.M).group())
     fixture = fixture.replace('/* @production-functions */', extract_function(audio_source, 'board_audio_get_output_volume') + '\n\n' +
-                              '\n\n'.join(extract_function(production,n) for n in names))
+                              '\n\n'.join(extract_function(production,n) for n in names) + '\n\n' +
+                              extract_function((project / 'main/wifi_serial_cli.c').read_text(), 'handle_intercom_config'))
     app_source = (project / 'main/app_main.c').read_text()
     fixture = fixture.replace('/* @production-app-boot */', '\n\n'.join(extract_function(app_source, name)
                               for name in ('enter_voice_after_wifi', 'app_main')))

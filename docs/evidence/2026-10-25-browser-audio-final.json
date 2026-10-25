@@ -1,0 +1,29 @@
+{
+  "date": "2026-10-25",
+  "source_commit": "fad870cddf47bd4b7820e8e2c9c603ec1fd24be0",
+  "service_binary_sha256": "023e109591c38c42dbab4bb698632750468a7b438f9b2166ad7d013365323a3e",
+  "scope": "Original product A/B human group-audio plus separate diagnostic synthetic/real-microphone lifecycle checks; no board operations",
+  "human_product_results": {
+    "A_to_B": "clear complete electronic headphone return and stop-on-release confirmed by user",
+    "B_to_A": "clear complete electronic headphone return and stop-on-release confirmed by user",
+    "disconnect_reconnect_B_to_A": "no return before PTT, clear complete return while PTT, stopped on release confirmed by user",
+    "first_disconnect": "user confirmed microphone-use indication gone and no electronic return"
+  },
+  "matrix_passed": 10,
+  "matrix_total": 10,
+  "trusted_diagnostic_blur_hidden_restore": true,
+  "real_microphone_idle_and_held_lifecycle_verified": true,
+  "diagnostic_final_open_peers_all_zero": true,
+  "original_product_exact_capture_and_peer_counts_verified": false,
+  "original_AB_final_ui_unconnected_unpressed_and_mic_markers_absent": true,
+  "evidence_file": "work/final-manual-20261025/browser-audio-acceptance-final.json",
+  "evidence_sha256": "769c39316dc07c73c8b8c3cc72be587089b857a46d58644152ca1da816cbd09c",
+  "limits": [
+    "Original product A/B do not expose a capture/Peer count export; their exact counts remain unmeasured. UI and native microphone-use marker closeout are saved.",
+    "Diagnostic human_listening remains not_performed; original user listening confirmations are separately recorded.",
+    "Native hiding first triggers blur cancellation and then hidden cleanup. Source-gate milliseconds are page measurements, not acoustic latency.",
+    "Receiver data supports nonzero PCM and later silence, not zero tail audio or precise stop latency.",
+    "No board, model voice-switch/voice-recommendation acceptance, cross-device echo test, long-run stability or precise latency claim."
+  ],
+  "full_product_acceptance_complete": false
+}

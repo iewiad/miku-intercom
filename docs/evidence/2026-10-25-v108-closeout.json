@@ -1,0 +1,432 @@
+{
+  "schema": "miku-intercom.v108-closeout.v1",
+  "date": "2026-10-25",
+  "timezone": "Asia/Shanghai",
+  "result": "pre_video_acceptance_complete_with_recorded_limits",
+  "scope": "Current v108 physical target confirmation, board A/B audio, S5 board/browser flows and final shutdown. Video has not been recorded.",
+  "implementation": {
+    "source_commit": "528a35238f4d1cb7a2afcafd2db556cd632c6930",
+    "firmware_version": "v0-108-g528a352",
+    "firmware_bytes": 3501344,
+    "firmware_sha256": "5fbcedb271492a65c7cd2cb9ad9740e3a5f2b5026a5d4b7bd070cddc9e9ed7f6",
+    "application_only_deployment_and_independent_verify": "completed in prior v108 deployment; not repeated in this run",
+    "service_source_commit": "528a35238f4d1cb7a2afcafd2db556cd632c6930"
+  },
+  "catalog_preparation": {
+    "joined_groups_before": 7,
+    "joined_groups_after": 9,
+    "changes_completed_before_recommendation_cases": true,
+    "demo_groups": [
+      {
+        "name": "设备排障演示群",
+        "purpose": "协助检查音响无声时的电源、音量、播放输入和设备连接设置。"
+      },
+      {
+        "name": "物资协调演示群",
+        "purpose": "协调活动物资的领取、补充和现场分发安排。"
+      }
+    ],
+    "output_volume_percent": 38,
+    "count_scope": "joined_groups_before/after refer to board catalog",
+    "all_three_endpoints_joined_demo_groups": true,
+    "frozen_group_counts": {
+      "board": 9,
+      "browser_a": 6,
+      "browser_b": 3
+    }
+  },
+  "target_voice": {
+    "attempts": [
+      {
+        "order": 1,
+        "http": 200,
+        "source": "model",
+        "candidates": 0,
+        "intent_negated": false,
+        "result": "no_candidate_not_counted_as_positive_pass",
+        "input_bytes": 39
+      },
+      {
+        "order": 2,
+        "http": 200,
+        "source": "model",
+        "candidates": 1,
+        "intent_negated": false,
+        "input_bytes": 39,
+        "human_checked_text_and_target": true,
+        "card_selection_did_not_switch": true,
+        "explicit_confirm": true,
+        "recommendation_bound_applied_operation_added": 1,
+        "from_group": "新版验收群",
+        "from_version": 34,
+        "to_group": "设备排障演示群",
+        "to_version": 35,
+        "media_ready": true,
+        "restored_unpressed": true
+      }
+    ]
+  },
+  "ordinary_audio_human": {
+    "firmware_version": "v0-108-g528a352",
+    "board_to_a": {
+      "clear_complete": true,
+      "release_stops": true
+    },
+    "a_to_board": {
+      "clear_complete": true,
+      "release_stops": true
+    },
+    "board_to_b": {
+      "clear_complete": true,
+      "release_stops": true
+    },
+    "b_to_board": {
+      "clear_complete": true,
+      "release_stops": true
+    },
+    "board_slide_out": {
+      "stops": true,
+      "sliding_back_does_not_resume": true
+    },
+    "basis": "human confirmation of electronic return, with separate numeric observations; not a latency measurement"
+  },
+  "midrun_stop_reconnect": {
+    "passed": true,
+    "stop_complete_observed": true,
+    "stopped": {
+      "configured": true,
+      "desired": false,
+      "connected": false,
+      "pressed": false,
+      "held": false,
+      "busy": false,
+      "switch_pending": false,
+      "current_version": 0,
+      "group_count": 0,
+      "output_volume": 38,
+      "command_kind": 0,
+      "command_phase": 0,
+      "http_failures": 1
+    },
+    "reconnected": {
+      "configured": true,
+      "desired": true,
+      "connected": true,
+      "pressed": false,
+      "held": false,
+      "busy": false,
+      "switch_pending": false,
+      "current_version": 35,
+      "group_count": 9,
+      "output_volume": 38,
+      "command_kind": 0,
+      "command_phase": 0,
+      "http_failures": 1
+    },
+    "restored_group": "设备排障演示群",
+    "restored_version": 35
+  },
+  "s5_board": {
+    "prepare_return": {
+      "passed": true
+    },
+    "capture_cancel": {
+      "passed": true
+    },
+    "early_review_attempts": [
+      {
+        "order": 1,
+        "passed": false,
+        "observed_phase_sequence": [
+          3,
+          5,
+          7,
+          6,
+          0
+        ],
+        "reached_text_recommendation_stage": true,
+        "observed_choosing": false,
+        "http_failure_count_increased": false,
+        "cause": "unresolved: empty suggestions or local result validation failure; actual need text not saved"
+      },
+      {
+        "order": 2,
+        "passed": false,
+        "ready_observed": false,
+        "stage": "channel_wait",
+        "wait_result": "cancelled",
+        "wait_elapsed_ms": 14192,
+        "startup_error": "ESP_ERR_INVALID_STATE",
+        "cause": "unresolved: this result does not identify human cancellation or prove timeout"
+      }
+    ],
+    "controlled_retry": {
+      "initial_report_claimed_cancel": true,
+      "human_later_confirmed_pressing_confirm_enter": true,
+      "counted_as_review_cancel_pass": false,
+      "counted_as_positive_confirmation": true,
+      "from_version": 35,
+      "to_version": 36,
+      "to_group": "物资协调演示群",
+      "recommendation_bound_applied": true,
+      "media_ready": true,
+      "restored_unpressed": true,
+      "snapshot_label_note": "s5-review-cancel-passed is the historical private snapshot label before human corrected the action to explicit confirmation; it is not cancellation evidence."
+    },
+    "later_review_cancel": {
+      "passed": true,
+      "request_intent": "equipment assistance while current group is materials demo",
+      "card_selection_did_not_execute": true,
+      "remained_group": "物资协调演示群",
+      "remained_version": 36,
+      "operation_count_before": 35,
+      "operation_count_after": 35,
+      "restored_unpressed": true
+    },
+    "later_expiry": {
+      "passed": true,
+      "request_intent": "equipment assistance while current group is materials demo",
+      "natural_expiry": true,
+      "remained_group": "物资协调演示群",
+      "remained_version": 36,
+      "operation_count_before": 35,
+      "operation_count_after": 35,
+      "restored_unpressed": true
+    }
+  },
+  "s5_browser": {
+    "text_request": {
+      "passed": true,
+      "suggested_group": "物资协调演示群",
+      "purpose_matches_directory": true,
+      "fixed_reason": "模型建议联系该组，请核对群职责后确认。",
+      "current_group_remained": "设备排障演示群",
+      "entered_need_text": "活动物资不够，需要协调领取和补充。"
+    },
+    "natural_expiry": {
+      "passed": true,
+      "confirm_absent": true,
+      "current_group_remained": "设备排障演示群"
+    },
+    "pending_request_hidden_return": {
+      "passed": true,
+      "request_pending_observed": true,
+      "native_tab_hidden_verified": true,
+      "dom_visibility": "hidden",
+      "return_ui": "页面已隐藏，请重新获取建议。",
+      "current_group_remained": "设备排障演示群",
+      "test_control": "debug focus emulation temporarily disabled to obtain native visibility; restored afterward",
+      "only_last_native_hidden_attempt_counted": true,
+      "earlier_attempts_reason": "Earlier pending-request trials did not establish actual hidden state; an expired case was used only to diagnose focus emulation, not counted as a pending-request pass.",
+      "focus_emulation_restored_to": true,
+      "earlier_pending_request_trials_not_counted": 2,
+      "expired_case_used_only_to_identify_focus_override": true
+    },
+    "voice_request": {
+      "passed": true,
+      "human_card_review_correct": true,
+      "explicit_confirm": true,
+      "browser": "A",
+      "from_version": 9,
+      "to_version": 10,
+      "target_group": "物资协调演示群",
+      "new_applied_operation_count": 1,
+      "recommendation_bound": true,
+      "restored": true,
+      "board_group_unchanged": "物资协调演示群",
+      "board_version_unchanged": 36
+    }
+  },
+  "post_s5_bidirectional_human_audio": {
+    "passed": true,
+    "group": "物资协调演示群",
+    "directions": [
+      "browser A to board",
+      "board to browser A"
+    ],
+    "clear_complete": true,
+    "release_stops": true,
+    "human_report": "全部正常，卡片正确，双向完整且松手停发",
+    "board_numeric_snapshot": {
+      "configured": true,
+      "desired": true,
+      "connected": true,
+      "pressed": false,
+      "held": false,
+      "busy": false,
+      "switch_pending": false,
+      "current_version": 36,
+      "group_count": 9,
+      "output_volume": 38,
+      "command_kind": 0,
+      "command_phase": 0,
+      "http_failures": 2,
+      "sent_packets": 537,
+      "received_packets": 18939,
+      "decoded_samples": 6059840,
+      "remote_rms_peak": 0.499614,
+      "ptt_window_seq": 60,
+      "ptt_raw_n": 539,
+      "ptt_enc_n": 537
+    },
+    "numeric_boundary": "packet counts and RMS corroborate media; human clarity and stopping are separately reported, not a measured acoustic latency"
+  },
+  "final_three_endpoint_shutdown": {
+    "passed": true,
+    "board_stopped": true,
+    "board_stop_complete_observed": true,
+    "board_stop_cycle": 21,
+    "board_stopped_snapshot": {
+      "configured": true,
+      "desired": false,
+      "connected": false,
+      "pressed": false,
+      "held": false,
+      "busy": false,
+      "switch_pending": false,
+      "current_version": 0,
+      "group_count": 0,
+      "output_volume": 38,
+      "command_kind": 0,
+      "command_phase": 0,
+      "http_failures": 2
+    },
+    "board_last_authoritative_group_before_stop": "物资协调演示群",
+    "board_last_authoritative_version_before_stop": 36,
+    "browser_a_audio_off_ui": true,
+    "browser_b_audio_off_ui": true,
+    "browser_ptt_disabled_and_unpressed": true,
+    "serial_owner_terminated": true,
+    "serial_port_free": true,
+    "known_voice_session_records": 40,
+    "known_voice_session_records_stopped": 40,
+    "known_session_boundary": "Only currently known records; not a claim that historical sessions with lost identifiers were all reconciled.",
+    "system_mic_indicators_gone_human_confirmed": true,
+    "headphone_and_board_no_return_human_confirmed": true,
+    "human_report": "麦克风提示已消失，耳机和板子无回传",
+    "human_confirmed_at_unix": 1792939480.620358,
+    "root_reconciliation_complete": true,
+    "stopped_cache_note": "The stopped board status clears its local published catalog/version cache; last active authoritative board group/version remain separately recorded as materials demo / 36."
+  },
+  "bounded_observation": {
+    "from": "2026-10-25T22:12:17.678+08:00",
+    "through": "2026-10-25T22:43:55.212+08:00",
+    "from_unix": 1792937537.678,
+    "through_unix": 1792939435.212,
+    "status_samples": 1821,
+    "fatal_detected": 0,
+    "allocation_failure": 0,
+    "cleanup_deferred": 0,
+    "command_start_failure": 1,
+    "control_http_failures": 2,
+    "http_failure_classification": "Both occurred before their corresponding confirmation terminal was observed. HTTP status/path were not directly localized. Expected GET of a new operation returning 404 is possible, not proved. Do not label as lost-response retry or TLS failure.",
+    "event_buffer_truncated": false
+  },
+  "software_verification": {
+    "source_head": "b15106e03e85c4b300c3adf6c1f2bf0d525e66a1",
+    "standard_check_passed": 25,
+    "standard_check_total": 25,
+    "node_passed": 149,
+    "node_total": 149,
+    "python_tests": 34,
+    "independent_review": "no_blocking_findings",
+    "review_is_offline_only": true,
+    "focused_s5_lvgl_review": {
+      "production_function_bodies_verified": true,
+      "cases": 5,
+      "card_and_label_selection": true,
+      "cancel_center_edges_and_label": true,
+      "card_to_confirm_drag_did_not_confirm": true,
+      "conclusion": "no_unintended_confirmation_reproduced; host events do not identify the actual physical touch target"
+    }
+  },
+  "privacy": {
+    "raw_asr_saved": false,
+    "raw_audio_saved": false,
+    "credentials_exported": false,
+    "private_control_identifiers_exported": false,
+    "join_codes_exported": false,
+    "public_evidence_uses_only_aggregates_versions_names_and_fixed_classifications": true,
+    "scope": "public evidence and delivery artifacts"
+  },
+  "limitations": [
+    "Earlier no-candidate, startup-cancellation and report-correction cases remain recorded; later successful retries do not turn them into passes.",
+    "Model candidate and human hearing results apply to these cases, not overall accuracy or long-term reliability.",
+    "S5 actual recognized need text was not retained, so its first failures cannot be assigned to ASR or the model.",
+    "Two earlier browser-hide attempts did not trigger actual native hidden state and are not counted as passes; only the last pending-request native hidden case is counted.",
+    "Known 40/40 stopped voice records and three-endpoint cleanup do not prove all historical sessions with lost identifiers were reconciled.",
+    "Video is not recorded. Historical Issue 16 and long-term reliability remain open.",
+    "Source fingerprints refer to private local records; identity, operation, session identifiers, credentials and join codes are not exported."
+  ],
+  "sources": [
+    {
+      "path": "work/final-acceptance-v108-20261025/human-results.json",
+      "sha256": "29c274ebb30bc0e8eb7085254bb0691bc33945ab274611332c7e2158343bc295",
+      "public": false,
+      "final_reconciliation_complete": true
+    },
+    {
+      "path": "work/final-acceptance-v108-20261025/software-check-summary.json",
+      "sha256": "463fdd64e3adf37b4387256b0bc6600f6f518c877a9db3678a62200235ab9e0a",
+      "public": false,
+      "final_reconciliation_complete": true
+    },
+    {
+      "path": "work/final-acceptance-v108-20261025/independent-review.json",
+      "sha256": "b23378ec1984d3f3c6d944c47045eda1aab668ca27d61700146eb8c7841226a3",
+      "public": false,
+      "final_reconciliation_complete": true
+    },
+    {
+      "path": "work/final-acceptance-v108-20261025/runtime-1/events.json",
+      "sha256": "e4cc4df3ce2b397b69d5b25d82ec59acdeb15dd408ee2c4a29bc63a43ae9f3a5",
+      "public": false,
+      "final_reconciliation_complete": true
+    },
+    {
+      "path": "work/final-acceptance-v108-20261025/ui-review/s5-cancel-review.json",
+      "sha256": "57a5a74ac9aaaa4217c70c6753faaea33bcc8c0e5ebbc59b7a2c841db909faf5",
+      "public": false,
+      "final_reconciliation_complete": true
+    },
+    {
+      "path": "work/final-acceptance-v108-20261025/browser-voice-authority-safe.json",
+      "sha256": "7eeae6480c89a16be3ca9f045d83a1eb01226b875f051c2de21685b9eaaf08b3",
+      "public": false,
+      "final_reconciliation_complete": true
+    },
+    {
+      "path": "work/final-acceptance-v108-20261025/final-shutdown.json",
+      "sha256": "9952c6ef56fecb460a46d306880504c2e4141b6af7b1fedbbeeee88485bd9589",
+      "public": false,
+      "final_reconciliation_complete": true
+    }
+  ],
+  "snapshot_sources": [
+    "work/final-acceptance-v108-20261025/runtime-1/snapshots/original-start.json",
+    "work/final-acceptance-v108-20261025/runtime-1/snapshots/frozen-catalog.json",
+    "work/final-acceptance-v108-20261025/runtime-1/snapshots/positive-board-to-a-complete.json",
+    "work/final-acceptance-v108-20261025/runtime-1/snapshots/a-to-board-complete.json",
+    "work/final-acceptance-v108-20261025/runtime-1/snapshots/board-b-bidirectional-complete.json",
+    "work/final-acceptance-v108-20261025/runtime-1/snapshots/midrun-stopped.json",
+    "work/final-acceptance-v108-20261025/runtime-1/snapshots/midrun-reconnected.json",
+    "work/final-acceptance-v108-20261025/runtime-1/snapshots/s5-prepare-and-capture-cancel.json",
+    "work/final-acceptance-v108-20261025/runtime-1/snapshots/s5-review-cancel-passed.json",
+    "work/final-acceptance-v108-20261025/runtime-1/snapshots/s5-cancel-expiry-complete.json",
+    "work/final-acceptance-v108-20261025/runtime-1/snapshots/post-s5-bidirectional-complete.json",
+    "work/final-acceptance-v108-20261025/runtime-1/snapshots/final-stopped.json"
+  ],
+  "required_current_round_acceptance": "passed_with_recorded_failed_attempts_retries_and_limits",
+  "video": {
+    "status": "not_recorded",
+    "acceptance_does_not_imply_video_or_publication_complete": true
+  },
+  "open_followups": [
+    {
+      "issue": 16,
+      "url": "https://github.com/iewiad/miku-intercom/issues/16",
+      "status": "open",
+      "scope": "historical voice/media failure causes and long-term reliability; successful current cases do not close these investigations"
+    }
+  ]
+}

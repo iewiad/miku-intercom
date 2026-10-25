@@ -49,6 +49,7 @@ bool group_command_begin(group_command_state_t *s, group_command_kind_t kind, co
     const uint32_t revision = s->revision, ticket = s->ticket;
     memset(s, 0, sizeof(*s));
     s->revision = revision; advance(&s->revision);
+    s->origin_revision = revision;
     s->ticket = ticket; advance(&s->ticket);
     s->kind = kind; s->phase = GROUP_COMMAND_QUEUED;
     memcpy(s->code, normalized, sizeof(normalized));

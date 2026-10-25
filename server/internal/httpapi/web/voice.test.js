@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {VoiceCommandClient} from './voice.js';
-import {RecommendationClient} from './recommendation.js';
+import {RecommendationClient, voiceTargetReason} from './recommendation.js';
 import {ControlClient} from './app.js';
 const tick=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};};
-function fixture({respond,source,closeThrows=false,realControl=false,recommendation=false,isVisible}={}){
+function fixture({respond,source,closeThrows=false,realControl=true,recommendation=true,isVisible}={}){
  const calls=[],timers=new Map();let timerID=0,peer;
  const track={enabled:false,stopped:false,stop(){this.stopped=true;}};
  const stream={getTracks:()=>[track],getAudioTracks:()=>[track]};
@@ -20,17 +20,16 @@ function fixture({respond,source,closeThrows=false,realControl=false,recommendat
   if(path==='/voice/sessions')return{command_id:body.command_id};
   if(path.endsWith('/offer'))return{type:'answer',sdp:'v=0'};
   if(path.endsWith('/stop'))return{stopped:true,command_id:path.split('/')[3]};
-  if(path==='/voice/resolve')return{group_id:'group_b',name:'后勤组'};
   if(path==='/state')return currentState;
-  if(path==='/recommendations'){
+  if(path==='/recommendations'||path==='/voice/proposals'){
    if(method==='GET')return{available:true};
    const group=currentState.groups.find(group=>group.id==='group_b');
    return{recommendation:{recommendation_id:'recommendation_test',request_id:body.request_id,server_epoch:currentState.server_epoch,current_version:currentState.current_version,
-    candidate_digest:'a'.repeat(64),expires_at:new Date(Date.now()+60000).toISOString(),suggestions:group?[{group_id:group.id,name:group.name,purpose:group.purpose||'',reason:'职责适合本次需求'}]:[]}};
+    candidate_digest:'a'.repeat(64),expires_at:new Date(Date.now()+60000).toISOString(),...(path==='/voice/proposals'?{source:'exact'}:{}),suggestions:group?[{group_id:group.id,name:group.name,purpose:group.purpose||'',reason:path==='/voice/proposals'?voiceTargetReason:'职责适合本次需求'}]:[]}};
   }
-  if(path==='/current-group'){
+  if(path==='/recommendations/confirm'){
    currentState={...currentState,current_group_id:body.group_id,current_version:2};
-   return{operation:{...body,status:'applied',current_group_id:body.group_id,current_version:2},state:currentState};
+   return{operation:{...body,recommendation_epoch:body.server_epoch,status:'applied',current_group_id:body.group_id,current_version:2},state:currentState};
   }
   return{closed:true};
  };
@@ -54,7 +53,7 @@ function fixture({respond,source,closeThrows=false,realControl=false,recommendat
  return{voice,control,audio,calls,timers,track,get peer(){return peer;},message,ready,setServerState:next=>{currentState=next;}};
 }
 
-test('explicit action closes group Peer before RTA; mic starts only after session updated; final executes once through durable switch',async()=>{
+test('explicit target capture cleans RTA before one proposal; exact target waits for separate durable confirmation',async()=>{
  const f=fixture({realControl:true});await f.voice.initialize();assert.equal(f.peer,undefined);await f.voice.start();
  assert.equal(f.track.enabled,false);assert.equal(f.audio.suspends>0,true);
  const deletion=f.calls.findIndex(c=>c.method==='DELETE');const creation=f.calls.findIndex(c=>c.path==='/voice/sessions');assert.ok(deletion>=0&&deletion<creation);
@@ -64,18 +63,22 @@ test('explicit action closes group Peer before RTA; mic starts only after sessio
  f.message({type:'conversation.item.input_audio_transcription.completed',transcript:'切到后勤组'});
  f.message({type:'conversation.item.input_audio_transcription.done',transcript:'切到全员群'});
  assert.equal(f.track.enabled,false);await tick();await tick();
- assert.equal(f.calls.filter(c=>c.path==='/voice/resolve').length,1);assert.equal(f.calls.filter(c=>c.path==='/current-group').length,1);
+ assert.equal(f.calls.filter(c=>c.path==='/voice/proposals').length,1);assert.equal(f.calls.some(c=>c.path==='/voice/resolve'||c.path==='/current-group'||c.path==='/recommendations/confirm'),false);
+ assert.equal(f.control.state.current_group_id,'group_a');assert.equal(f.control.pendingSwitch,null);assert.equal(f.control.recommendation.phase,'review');
+ assert.ok(f.calls.findIndex(c=>c.path?.endsWith('/stop'))<f.calls.findIndex(c=>c.path==='/voice/proposals'));
+ await f.control.recommendation.confirm('group_b');
+ assert.equal(f.calls.filter(c=>c.path==='/recommendations/confirm').length,1);
  assert.ok(f.calls.find(c=>c.pending?.operation_id));assert.equal(f.control.state.current_group_id,'group_b');
  assert.equal(f.track.stopped,true);assert.equal(f.peer.connectionState,'closed');assert.equal(f.voice.blocking,false);
  assert.equal(f.calls.filter(c=>c.path?.endsWith('/stop')).length,1);
 });
 
-test('cancel during resolution ignores late target and never submits switch',async()=>{
- const target=deferred();const f=fixture({respond:path=>path==='/voice/resolve'?target.promise:undefined});await f.ready();
+test('cancel during proposal lookup ignores late target and never submits switch',async()=>{
+ const target=deferred();const f=fixture({respond:path=>path==='/voice/proposals'?target.promise:undefined});await f.ready();
  const late=f.peer.channel.onmessage;
- f.message({type:'conversation.item.input_audio_transcription.completed',transcript:'切到后勤组'});f.voice.interrupt();await tick();target.resolve({group_id:'group_b',name:'后勤组'});await tick();
+ f.message({type:'conversation.item.input_audio_transcription.completed',transcript:'切到后勤组'});await tick();f.control.recommendation.interrupt('取消核对');target.resolve({recommendation:{}});await tick();
  late({data:JSON.stringify({type:'conversation.item.input_audio_transcription.done',transcript:'切到后勤组'})});await tick();
- assert.equal(f.calls.some(c=>c.switch),false);assert.equal(f.voice.blocking,false);assert.equal(f.track.stopped,true);
+ assert.equal(f.calls.some(c=>c.path==='/recommendations/confirm'||c.path==='/current-group'),false);assert.equal(f.voice.blocking,false);assert.equal(f.track.stopped,true);assert.equal(f.control.recommendation.result,null);
 });
 
 test('cleanup failure keeps group audio and new commands blocked until same stop is acknowledged',async()=>{
@@ -107,11 +110,12 @@ test('local close failure never resumes group audio even when stop could succeed
  const f=fixture({closeThrows:true});await f.ready();const before=f.audio.syncs;f.voice.interrupt();await tick();assert.equal(f.voice.phase,'cleanup_pending');assert.equal(f.voice.blocking,true);assert.equal(f.audio.syncs,before);assert.equal(f.calls.some(c=>c.path?.endsWith('/stop')),true);
 });
 
-test('hidden after submitted switch stops RTA without undoing durable control operation',async()=>{
- const result=deferred();const f=fixture({realControl:true,respond:path=>path==='/current-group'?result.promise:undefined});await f.ready();
- f.message({type:'conversation.item.input_audio_transcription.completed',transcript:'切到后勤组'});await tick();assert.equal(f.control.pendingSwitch.group_id,'group_b');assert.equal(f.voice.canCancel,false);
- f.voice.interrupt('hidden');await tick();assert.equal(f.track.stopped,true);assert.equal(f.control.pendingSwitch.group_id,'group_b');assert.equal(f.control.canPress(),false);
- const op=f.control.pendingSwitch;result.resolve({operation:{...op,status:'applied',current_group_id:'group_b',current_version:2},state:{...f.control.state,current_group_id:'group_b',current_version:2}});await tick();await tick();assert.equal(f.control.pendingSwitch,null);
+test('RTA is already closed before confirmation; interruption cannot undo a submitted durable operation',async()=>{
+ const result=deferred();const f=fixture({realControl:true,respond:path=>path==='/recommendations/confirm'?result.promise:undefined});await f.ready();
+ f.message({type:'conversation.item.input_audio_transcription.completed',transcript:'切到后勤组'});await tick();await tick();assert.equal(f.peer.connectionState,'closed');
+ const confirmation=f.control.recommendation.confirm('group_b');await tick();assert.equal(f.control.pendingSwitch.group_id,'group_b');
+ f.control.recommendation.interrupt('hidden');assert.equal(f.track.stopped,true);assert.equal(f.control.pendingSwitch.group_id,'group_b');assert.equal(f.control.canPress(),false);
+ const op=f.control.pendingSwitch;result.resolve({operation:{...op,recommendation_epoch:op.server_epoch,status:'applied',current_group_id:'group_b',current_version:2},state:{...f.control.state,current_group_id:'group_b',current_version:2}});await confirmation;assert.equal(f.control.pendingSwitch,null);
 });
 
 test('unavailable server has visible state and never asks for microphone',async()=>{
@@ -128,17 +132,20 @@ test('local close can fail repeatedly and later recover without losing scheduled
  assert.equal(closes,3);assert.equal(f.voice.blocking,false);assert.equal(f.peer.connectionState,'closed');assert.equal(f.calls.filter(c=>c.path?.endsWith('/stop')).length,1);
 });
 
-test('storage failure in actual ControlClient leaves voice command unsubmitted and resumes only after RTA stop',async()=>{
+test('storage failure leaves a reviewed voice target unsubmitted after RTA cleanup',async()=>{
  const f=fixture({realControl:true});f.control.onPending=()=>{throw new Error('QuotaExceededError');};await f.ready();
  f.message({type:'conversation.item.input_audio_transcription.completed',transcript:'切到后勤组'});await tick();await tick();
- assert.equal(f.calls.some(c=>c.path==='/current-group'),false);assert.equal(f.control.pendingSwitch,null);assert.equal(f.voice.blocking,false);
- assert.match(f.voice.message,/未提交/);assert.equal(f.calls.filter(c=>c.path?.endsWith('/stop')).length,1);
+ await f.control.recommendation.confirm('group_b');
+ assert.equal(f.calls.some(c=>c.path==='/current-group'||c.path==='/recommendations/confirm'),false);assert.equal(f.control.pendingSwitch,null);assert.equal(f.voice.blocking,false);
+ assert.equal(f.control.recommendation.phase,'review');assert.equal(f.calls.filter(c=>c.path?.endsWith('/stop')).length,1);
 });
 
-test('stop failure after submission clearly labels submitted state and keeps cancel unavailable',async()=>{
+test('stop failure blocks target proposals and confirmation until cleanup is verified',async()=>{
  const f=fixture({realControl:true,respond:path=>path.endsWith('/stop')?Promise.reject(new Error('timeout')):undefined});await f.ready();
  f.message({type:'conversation.item.input_audio_transcription.completed',transcript:'切到后勤组'});await tick();await tick();
- assert.equal(f.control.state.current_group_id,'group_b');assert.equal(f.voice.phase,'cleanup_pending');assert.equal(f.voice.canCancel,false);assert.match(f.voice.message,/请求已提交/);
+ assert.equal(f.control.state.current_group_id,'group_a');assert.equal(f.voice.phase,'cleanup_pending');assert.equal(f.voice.canCancel,false);
+ assert.equal(f.control.recommendation.phase,'awaiting_cleanup');assert.equal(await f.control.recommendation.confirm('group_b'),false);
+ assert.equal(f.calls.some(c=>c.path==='/voice/proposals'||c.path==='/recommendations/confirm'),false);
 });
 
 test('legacy DataChannel open initializes once without waiting for session created and opens mic only on acknowledgement',async()=>{
@@ -234,5 +241,41 @@ test('failed fresh authorization and malformed need never send recommendation re
   const f=fixture({realControl:true,recommendation:true,respond:path=>path==='/state'?Promise.reject(new Error('offline')):undefined});await f.ready('need');
   f.message({type:'conversation.item.input_audio_transcription.done',transcript:need});await tick();await tick();
   assert.equal(f.calls.some(c=>c.path==='/recommendations'),false);assert.equal(f.track.stopped,true);assert.equal(f.control.recommendation.result,null);
+ }
+});
+
+test('target cleanup and authorized state refresh precede proposals even when S5 model recommendation is unavailable',async()=>{
+ const stop=deferred(),state=deferred();let final=false;
+ const f=fixture({respond:path=>path.endsWith('/stop')?stop.promise:path==='/state'&&final?state.promise:undefined});
+ f.control.recommendation.available=false;f.control.recommendation.phase='unavailable';
+ await f.ready();assert.equal(f.track.enabled,true);final=true;
+ f.message({type:'conversation.item.input_audio_transcription.done',transcript:'切到后勤组'});await tick();
+ assert.equal(f.track.stopped,true);assert.equal(f.peer.connectionState,'closed');assert.equal(f.control.recommendation.phase,'awaiting_cleanup');
+ assert.equal(f.calls.some(c=>c.path==='/voice/proposals'),false);
+ stop.resolve({stopped:true,command_id:'command_123'});await tick();
+ assert.equal(f.voice.phase,'refreshing_target');assert.equal(f.calls.some(c=>c.path==='/voice/proposals'),false);
+ state.resolve(f.control.state);await tick();await tick();
+ assert.equal(f.calls.filter(c=>c.path==='/voice/proposals').length,1);
+ assert.equal(f.control.recommendation.phase,'review');assert.equal(f.control.pendingSwitch,null);
+ assert.equal(f.control.state.current_group_id,'group_a');assert.equal(f.control.canPress(),false);
+});
+
+test('target cancellation, hidden page, owner, identity, version and catalog changes prevent a late cleanup handoff',async()=>{
+ for(const change of ['cancel','hidden','owner','identity','version','catalog']){
+  const stop=deferred();let visible=true;
+  const f=fixture({isVisible:()=>visible,respond:path=>path.endsWith('/stop')?stop.promise:undefined});await f.ready();
+  const late=f.peer.channel.onmessage;
+  f.message({type:'conversation.item.input_audio_transcription.done',transcript:'切到后勤组'});await tick();
+  if(change==='cancel')f.control.recommendation.interrupt('取消核对');
+  if(change==='hidden')visible=false;
+  if(change==='owner')f.control.authorize=()=>false;
+  if(change==='identity')f.control.load({...f.control.identity,token:'new_identity'});
+  if(change==='version')f.control.state.current_version++;
+  if(change==='catalog')f.control.state.groups[1].name='新群名';
+  stop.resolve({stopped:true,command_id:'command_123'});await tick();await tick();
+  late({data:JSON.stringify({type:'conversation.item.input_audio_transcription.done',transcript:'迟到文本'})});await tick();
+  assert.equal(f.calls.some(c=>c.path==='/voice/proposals'||c.path==='/recommendations/confirm'||c.path==='/current-group'),false,change);
+  assert.equal(f.control.recommendation.result,null,change);assert.equal(f.voice.current,null,change);
+  assert.equal(f.track.stopped,true,change);
  }
 });

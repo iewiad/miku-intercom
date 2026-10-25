@@ -14,8 +14,9 @@
 #include "rta_command_events.h"
 #include "group_config.h"
 #include "group_recommendation.h"
-#define portENTER_CRITICAL(p) ((void)(p))
-#define portEXIT_CRITICAL(p) ((void)(p))
+static unsigned guard_depth;
+#define portENTER_CRITICAL(p) ((void)(p), ++guard_depth)
+#define portEXIT_CRITICAL(p) ((void)(p), assert(guard_depth), --guard_depth)
 #define HTTP_METHOD_POST 1
 #define HTTP_METHOD_GET 2
 #define MALLOC_CAP_SPIRAM 2
@@ -32,6 +33,8 @@ static board_audio_t audio;
 static group_intent_t intent;
 static group_command_state_t command;
 static group_config_t config;
+static bool stored_configured;
+static uint32_t config_status_generation;
 static rti_session_t command_session;
 static bool command_session_live,command_peer_live;
 static int64_t command_deadline_us,command_cleanup_retry_us,now_us;
@@ -44,8 +47,8 @@ static uint32_t recommendation_catalog_view;
 static char recommendation_request_id[81],recommendation_epoch[81],server_epoch[81];
 static bool catalog_known,selection_queued,pending_saved,journal_blocked;
 static uint32_t view_generation;
-static char published_group_id[81],selected_group_id[81],group_id[81],peer_id[81];
-static uint64_t published_version,selected_expected_version,version;
+static char published_group_id[81],group_id[81],peer_id[81];
+static uint64_t published_version,version;
 static struct { char id[81],name[129]; } items[2];
 static typeof(items[0]) *catalog_items=items;
 static size_t catalog_count;
@@ -60,7 +63,13 @@ static char last_resolve_log[600];
 static cJSON *floor_request;
 static unsigned notifications,disconnects,release_calls,create_calls,start_calls,peer_stops,stop_calls,gate_calls,requests,join_posts,resolve_posts,journal_saves;
 static unsigned stop_failures;
-static unsigned retained_stops,recommend_posts;
+static unsigned retained_stops,recommend_posts,proposal_posts;
+static const char *proposal_source="exact";
+static bool proposal_empty;
+static unsigned review_calls;
+static char reviewed_text[513];
+static uint32_t reviewed_origin;
+static esp_err_t review_result;
 static bool cancel_in_recommend,cancel_before_recommend_post,change_candidates_on_poll,fail_recommend_alloc,capability_available;
 static unsigned capability_gets;
 static bool confirm_during_poll,expire_during_poll;
@@ -117,6 +126,25 @@ static esp_err_t request(const char *path,int method,const cJSON *body,cJSON **o
   if(stop_after_submit)intent.desired=false;
   last_http_status=request_result==ESP_OK?200:429;
   if(request_result==ESP_OK&&out)*out=cJSON_Parse("{\"state\":{}}");
+ } else if(!strcmp(path,"/voice/proposals")) {
+  assert(!command_peer_live&&!command_session_live);++proposal_posts;
+  last_http_status=request_result==ESP_OK?200:injected_voice_http_status;
+  last_voice_api_error=request_result==ESP_OK?GROUP_VOICE_API_NONE:injected_voice_api_error;
+  const cJSON *text=cJSON_GetObjectItemCaseSensitive(body,"transcript");assert(cJSON_IsString(text));
+  assert(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(body,"request_id")));
+  assert(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(body,"server_epoch")));
+  assert(cJSON_GetObjectItemCaseSensitive(body,"expected_version")->valuedouble==7);
+  strlcpy(seen_transcript,text->valuestring,sizeof(seen_transcript));
+  assert(review_calls==1&&reviewed_origin==command.origin_revision);
+  if(review_result==ESP_OK)assert(!strcmp(reviewed_text,seen_transcript));
+  if(cancel_in_resolve)assert(group_controller_voice_action(true,NULL)==ESP_OK);
+  if(request_result==ESP_OK&&out) {
+   *out=cJSON_Parse("{\"recommendation\":{\"recommendation_id\":\"voice_fixture\",\"request_id\":\"fixture_operation\",\"server_epoch\":\"epoch_fixture\",\"current_version\":7,\"candidate_digest\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"expires_at\":\"test-clock-expiry\",\"suggestions\":[{\"group_id\":\"grp_bbbb\",\"name\":\"fixture beta\",\"purpose\":\"fixture purpose\",\"reason\":\"请核对识别出的目标群，确认后才会切换。\"}]}}");
+   cJSON *record=cJSON_GetObjectItemCaseSensitive(*out,"recommendation");
+   if(proposal_source)cJSON_AddStringToObject(record,"source",proposal_source);
+   cJSON_SetValuestring(cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(record,"suggestions"),0),"group_id"),resolved_target);
+   if(proposal_empty)cJSON_DeleteItemFromArray(cJSON_GetObjectItemCaseSensitive(record,"suggestions"),0);
+  }
  } else if(!strcmp(path,"/voice/resolve")) {
   last_http_status=request_result==ESP_OK?200:injected_voice_http_status;
   last_voice_api_error=request_result==ESP_OK?GROUP_VOICE_API_NONE:injected_voice_api_error;
@@ -153,7 +181,6 @@ static esp_err_t group_switch_journal_save(const group_switch_journal_t *record)
  assert(!command_peer_live&&!command_session_live);++journal_saves;saved_record=*record;return ESP_OK;
 }
 static void reload_switch_journal(void) {assert(!"unexpected journal failure");}
-static void finish_unsent_switch(const char *detail) {(void)detail;selection_queued=false;intent.switch_pending=false;}
 // SDK/UI boundaries for the real controller initialization. board_audio_init has
 // already applied the saved codec volume; initialization must not override it.
 typedef void *TaskHandle_t;
@@ -178,7 +205,8 @@ static esp_err_t esp_event_handler_register(int base,int32_t event,void (*callba
 static esp_err_t esp_event_handler_unregister(int base,int32_t event,void (*callback)(void *,int,int32_t,void *)) {
  assert(base==WIFI_EVENT&&event==WIFI_EVENT_STA_DISCONNECTED&&callback==wifi_event);return ESP_OK;
 }
-static void group_controller_action(bool stop,void *context) {(void)stop;(void)context;}
+void group_controller_action(bool stop,void *context);
+void group_controller_refresh_config_status(void);
 static void group_controller_ptt(bool pressed,void *context) {(void)pressed;(void)context;}
 static esp_err_t group_controller_switch_group(const char *target,uint32_t view,void *context) {(void)target;(void)view;(void)context;return ESP_OK;}
 static esp_err_t board_audio_set_output_volume(board_audio_t *board,uint8_t value,bool persist) {
@@ -195,7 +223,51 @@ static esp_err_t board_display_set_group_commands(esp_err_t (*join)(const char *
 static esp_err_t board_display_set_group_recommendation_action(group_recommendation_action_cb_t callback,void *context) {
  assert(callback==group_controller_recommendation_action&&!context);return ESP_OK;
 }
-bool group_config_ready(void) {return true;}
+static esp_err_t board_display_set_group_voice_review(uint32_t origin,const char *text) {
+ assert(!guard_depth&&group_voice_proposal_text_valid(text));
+ ++review_calls;reviewed_origin=origin;
+ if(review_result==ESP_OK)strlcpy(reviewed_text,text,sizeof(reviewed_text));
+ return review_result;
+}
+static bool saved_config_present=true, refresh_during_load, refresh_during_check;
+static unsigned config_checks,config_loads,config_writes,status_allocations;
+static bool status_sampling, remove_config_on_failed_write;
+static esp_err_t config_load_result,config_write_result;
+bool group_config_ready(void) {
+ assert(!guard_depth&&!status_sampling);++config_checks;
+ const bool result=saved_config_present;
+ if(refresh_during_check) {
+  refresh_during_check=false;saved_config_present=false;group_controller_refresh_config_status();
+ }
+ return result;
+}
+esp_err_t group_config_load(group_config_t *out) {
+ assert(!guard_depth&&!status_sampling&&out==&config);++config_loads;
+ strlcpy(out->device_id,"loaded_identity",sizeof(out->device_id));
+ if(refresh_during_load) {
+  refresh_during_load=false;saved_config_present=false;group_controller_refresh_config_status();
+ }
+ return config_load_result;
+}
+esp_err_t group_config_store_json(const char *json,size_t size) {
+ assert(!guard_depth&&!status_sampling&&size==2&&!memcmp(json,"{}",2));++config_writes;
+ if(config_write_result==ESP_OK)saved_config_present=true;
+ else if(remove_config_on_failed_write)saved_config_present=false;
+ return config_write_result;
+}
+static bool hex_decode(const char *hex,uint8_t *out,size_t capacity,size_t *size) {
+ if(strcmp(hex,"fixture_encoded_config"))return false;
+ assert(capacity>=3);memcpy(out,"{}",3);*size=2;return true;
+}
+static void *tracked_calloc(size_t count,size_t size) {
+ if(status_sampling)++status_allocations;return calloc(count,size);
+}
+static __attribute__((unused)) void *tracked_malloc(size_t size) {
+ if(status_sampling)++status_allocations;return malloc(size);
+}
+static void tracked_free(void *pointer) {
+ if(status_sampling)++status_allocations;free(pointer);
+}
 static void run(void *context) {(void)context;assert(!"task must not run in this fixture");}
 static int xTaskCreate(void (*task)(void *),const char *name,unsigned stack,void *context,unsigned priority,TaskHandle_t *handle) {
  assert(task==run&&!strcmp(name,"group_lifecycle")&&stack==20*1024&&context==NULL&&priority==10);*handle=&task_object;return pdPASS;
@@ -209,7 +281,7 @@ static int status_printf(const char *format,...) {
 static const char *TAG="fixture";
 static void quiet_log(const char *tag,const char *format,...) {
  (void)tag;
- if(!strncmp(format,"GROUP_VOICE_RESOLVE ",20)) {
+ if(!strncmp(format,"GROUP_VOICE_PROPOSAL ",21)) {
   va_list args;va_start(args,format);vsnprintf(last_resolve_log,sizeof(last_resolve_log),format,args);va_end(args);
  }
 }
@@ -217,7 +289,13 @@ static void quiet_log(const char *tag,const char *format,...) {
 #define ESP_LOGW(...) quiet_log(__VA_ARGS__)
 #define ESP_LOGE(...) quiet_log(__VA_ARGS__)
 #define printf status_printf
+#define calloc tracked_calloc
+#define malloc tracked_malloc
+#define free tracked_free
 /* @production-functions */
+#undef free
+#undef malloc
+#undef calloc
 #undef printf
 // Execute the group-mode boot path too, with the board_audio_init boundary
 // returning a codec volume already loaded/applied from NVS. Both saved Wi-Fi
@@ -276,7 +354,56 @@ static void verify_initial_volume(void) {
  }
  worker=NULL;
 }
+static void expect_configured(bool expected) {
+ const unsigned checks=config_checks,loads=config_loads,allocations=status_allocations;
+ status_sampling=true;
+ for(unsigned i=0;i<100;++i)group_controller_print_status();
+ status_sampling=false;
+ assert(config_checks==checks&&config_loads==loads&&status_allocations==allocations&&!guard_depth);
+ assert(!strstr(status_output,"active_identity")&&!strstr(status_output,"loaded_identity"));
+ cJSON *status=cJSON_Parse(status_output+16);assert(status);
+ const cJSON *configured=cJSON_GetObjectItemCaseSensitive(status,"configured");
+ assert(cJSON_IsBool(configured)&&cJSON_IsTrue(configured)==expected);cJSON_Delete(status);
+}
+static void verify_config_status(void) {
+ worker=NULL;stored_configured=false;saved_config_present=false;
+ config_checks=config_loads=config_writes=status_allocations=0;
+ expect_configured(false);assert(!config_checks&&!config_loads);
+ board_audio_t board={.microphone=&task_object,.speaker=&mutex_object,.output_volume=30};
+ assert(group_controller_init(&board)==ESP_OK);assert(config_checks==1);
+ assert(strstr(last_detail,"USB"));expect_configured(false);
+ strlcpy(config.device_id,"active_identity",sizeof(config.device_id));
+ handle_intercom_config("fixture_encoded_config");
+ assert(config_writes==1&&config_checks==2&&!strcmp(config.device_id,"active_identity"));
+ expect_configured(true);
+ // Rejected/failed saves revalidate the old durable config. An ambiguous
+ // failure whose readable result is absent must not retain a previous true.
+ config_write_result=ESP_FAIL;handle_intercom_config("fixture_encoded_config");
+ assert(config_writes==2&&config_checks==3);expect_configured(true);
+ remove_config_on_failed_write=true;handle_intercom_config("fixture_encoded_config");
+ assert(config_writes==3&&config_checks==4);expect_configured(false);
+ handle_intercom_config("invalid_encoding");
+ assert(config_writes==3&&config_checks==4);expect_configured(false);
+ config_write_result=ESP_OK;remove_config_on_failed_write=false;
+ handle_intercom_config("fixture_encoded_config");expect_configured(true);
+ intent.desired=intent.ready=intent.pressed=intent.held=true;
+ group_controller_action(true,NULL);
+ assert(!intent.desired&&!intent.ready&&!intent.pressed&&!intent.held);expect_configured(true);
+ // Exercise the same worker load helper used by run(), including a newer
+ // explicit refresh interrupting an old successful verification.
+ config_load_result=ESP_FAIL;assert(load_config()==ESP_FAIL);expect_configured(false);
+ config_load_result=ESP_OK;assert(load_config()==ESP_OK);expect_configured(true);
+ refresh_during_load=true;assert(load_config()==ESP_OK);expect_configured(false);
+ saved_config_present=true;refresh_during_check=true;
+ group_controller_refresh_config_status();expect_configured(false);
+ saved_config_present=true;worker=NULL;
+ const unsigned before=config_checks;
+ assert(group_controller_init(&board)==ESP_OK&&config_checks==before+1);expect_configured(true);
+ worker=NULL;
+}
 static void reset(void) {
+ proposal_posts=0;proposal_source="exact";proposal_empty=false;
+ review_calls=0;reviewed_text[0]=0;reviewed_origin=0;review_result=ESP_OK;
  memset(&intent,0,sizeof(intent));memset(&command,0,sizeof(command));memset(&config,0,sizeof(config));
  memset(&command_session,0,sizeof(command_session));command_session_live=command_peer_live=false;
  command_deadline_us=command_cleanup_retry_us=0;now_us=1000000;command_target[0]=command_result[0]=0;
@@ -324,91 +451,137 @@ static void choose_recommendation(void) {
 }
 static void *no_cjson_memory(size_t size) {(void)size;return NULL;}
 int main(void) {
+ verify_config_status();
  verify_initial_volume();
- reset();begin_voice();const uint32_t first_ticket=command.ticket;
+ // UI admission revision can cancel before any worker publication, including
+ // after the worker has advanced phases; an earlier command's origin cannot.
+ reset();uint32_t origin=command.revision;
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_START_VOICE,0,origin,NULL)==ESP_OK);
+ assert(command.origin_revision==origin);
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CANCEL,0,origin,NULL)==ESP_OK);
+ assert(!process_command()&&!create_calls&&!proposal_posts);
+ intent.ready=true;assert(!process_command());uint32_t newer=command.revision;
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_START_VOICE,0,newer,NULL)==ESP_OK);
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CANCEL,0,origin,NULL)==ESP_ERR_INVALID_STATE);
+ assert(process_command()&&command.phase==GROUP_COMMAND_LISTENING);
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CANCEL,0,newer,NULL)==ESP_OK);
+ assert(!process_command()&&!proposal_posts&&!journal_saves);
+ reset();capability_available=false;begin_voice();const uint32_t first_ticket=command.ticket;
  final_event(first_ticket,"切到乙群");final_event(first_ticket,"切到甲群");
- assert(command.phase==GROUP_COMMAND_RESOLVING&&strcmp(command.transcript,"切到乙群")==0);
- assert(process_command());assert(resolve_posts==1&&strcmp(seen_transcript,"切到乙群")==0);
- assert(strstr(last_resolve_log,"outcome=matched") && strstr(last_resolve_log,"selected=1"));
- assert(!strstr(last_resolve_log,"乙群") && !strstr(last_resolve_log,"grp_bbbb"));
- assert(command.phase==GROUP_COMMAND_CLEANUP&&strcmp(command_target,"grp_bbbb")==0);
- // Local capture stops once. The owner waits for a successful remote stop ACK.
- stop_failures=2;assert(process_command());assert(peer_stops==1&&stop_calls==1&&!selection_queued);
- assert(process_command());assert(stop_calls==1);now_us+=2000000;
- assert(process_command());assert(stop_calls==2&&!selection_queued);now_us+=2000000;
- assert(!process_command());assert(stop_calls==3&&command.phase==GROUP_COMMAND_RECOVERING);
- assert(selection_queued&&intent.switch_pending&&command.submitted&&!intent.command_busy);
- assert(selected_expected_version==7&&strcmp(selected_group_id,"grp_bbbb")==0);
- // Production journal handoff keeps the original version and retires media.
- prepare_selected_switch();assert(journal_saves==1&&pending_saved&&!selection_queued);
- assert(saved_record.expected_version==7&&strcmp(saved_record.group_id,"grp_bbbb")==0);
- assert(!process_command()&&command.kind==GROUP_COMMAND_VOICE);
- // Existing journal resolver/connect lifecycle is a separate tested boundary.
+ assert(command.phase==GROUP_COMMAND_RESOLVING&&!strcmp(command.transcript,"切到乙群"));
+ assert(process_command()&&command.phase==GROUP_COMMAND_CLEANUP&&!proposal_posts&&!resolve_posts);
+ assert(!command_target[0]&&!selection_queued&&!journal_saves&&!capability_gets);
+ // No proposal request until local retirement and remote terminal confirmation.
+ retained_stops=1;stop_failures=2;
+ assert(process_command()&&command_peer_live&&!stop_calls&&!proposal_posts);
+ assert(process_command()&&!command_peer_live&&stop_calls==1&&!proposal_posts);
+ assert(process_command()&&stop_calls==1);now_us+=2000000;
+ assert(process_command()&&stop_calls==2&&!proposal_posts);now_us+=2000000;
+ assert(process_command()&&stop_calls==3&&command.phase==GROUP_COMMAND_REQUESTING&&!proposal_posts);
+ assert(process_command()&&command.phase==GROUP_COMMAND_CHOOSING&&proposal_posts==1);
+ assert(!strcmp(seen_transcript,"切到乙群")&&!command.transcript[0]&&!command_target[0]);
+ assert(review_calls==1&&!strcmp(reviewed_text,seen_transcript)&&reviewed_origin==command.origin_revision);
+ assert(recommendation->source==GROUP_RECOMMENDATION_SOURCE_EXACT&&!command.submitted&&!journal_saves&&!selection_queued);
+ assert(strstr(last_resolve_log,"accepted=1 source=exact candidates=1"));
+ assert(!strstr(last_resolve_log,"乙群")&&!strstr(last_resolve_log,"grp_bbbb"));
+ uint32_t voice_review=command.revision;
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CONFIRM,0,voice_review-1,NULL)==ESP_ERR_INVALID_STATE);
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CONFIRM,1,voice_review,NULL)==ESP_ERR_INVALID_STATE);
+ assert(process_command()&&!journal_saves&&!command.submitted); // viewing does not execute exact targets
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CONFIRM,0,voice_review,NULL)==ESP_OK);
+ assert(command.submitted&&command.phase==GROUP_COMMAND_CONFIRMING&&!journal_saves);
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CANCEL,0,command.revision,NULL)==ESP_ERR_INVALID_STATE);
+ assert(!process_command()&&pending_saved&&journal_saves==1&&!selection_queued);
+ assert(!strcmp(saved_record.group_id,"grp_bbbb")&&!strcmp(saved_record.recommendation_id,"voice_fixture"));
+ assert(saved_record.expected_version==7&&!strcmp(saved_record.recommendation_epoch,"epoch_fixture"));
  pending_saved=false;intent.switch_pending=false;intent.ready=true;
  assert(!process_command()&&command.kind==GROUP_COMMAND_NONE&&!intent.command_busy);
  uint32_t terminal_revision=command.revision;final_event(first_ticket,"late final");assert(command.revision==terminal_revision);
- reset();assert(group_controller_voice_action(false,NULL)==ESP_OK);
- assert(group_controller_voice_action(true,NULL)==ESP_OK);
- assert(process_command()==false);assert(create_calls==0&&start_calls==0&&resolve_posts==0&&!selection_queued);
- assert(disconnects==1&&peer_id[0]==0); // Cancellation before QUEUED must retire old Peer.
- intent.ready=true;assert(!process_command()&&command.kind==GROUP_COMMAND_NONE);
- reset();cancel_in_create=true;assert(group_controller_voice_action(false,NULL)==ESP_OK);
- assert(process_command());assert(create_calls==1&&start_calls==0);
- assert(!process_command());assert(stop_calls==1&&!selection_queued);
- reset();begin_voice();cancel_in_resolve=true;final_event(command.ticket,"切到乙群");
- assert(process_command());assert(command.cancelled&&command_target[0]==0);
- assert(strstr(last_resolve_log,"outcome=cancelled") && strstr(last_resolve_log,"selected=0"));
- assert(!process_command());assert(!selection_queued&&stop_calls==1);
- // Actual resolve failures must have distinct fixed metadata/reasons and never
- // select a target. No transcript, returned identity or raw API string is logged.
- const struct {int status;group_voice_api_error_t api;const char *outcome;} failures[]={
-  {400,GROUP_VOICE_API_INVALID_COMMAND,"invalid_command"},
-  {422,GROUP_VOICE_API_UNKNOWN_TARGET,"unknown_target"},
-  {422,GROUP_VOICE_API_AMBIGUOUS_TARGET,"ambiguous_target"},
-  {401,GROUP_VOICE_API_OTHER,"permission_error"},
-  {503,GROUP_VOICE_API_OTHER,"service_error"},
-  {0,GROUP_VOICE_API_NONE,"transport_error"}
- };
- for(size_t i=0;i<sizeof(failures)/sizeof(failures[0]);++i) {
-  reset();begin_voice();request_result=ESP_FAIL;
-  injected_voice_http_status=failures[i].status;injected_voice_api_error=failures[i].api;
-  final_event(command.ticket,"private utterance with newline\ncredential");assert(process_command());
-  char expected[80];snprintf(expected,sizeof(expected),"outcome=%s",failures[i].outcome);
-  assert(strstr(last_resolve_log,expected)&&strstr(last_resolve_log,"selected=0"));
-  assert(!strstr(last_resolve_log,"private")&&!strstr(last_resolve_log,"credential")&&!strstr(last_resolve_log,"grp_"));
-  assert(command_target[0]==0&&command.failed&&command_result[0]&&!strstr(command_result,"已恢复"));
-  assert(!process_command()&&!selection_queued);
+ // Model proposals use the same explicit confirmation and cancellation gates.
+ reset();proposal_source="model";begin_voice();final_event(command.ticket,"去适合的乙群");
+ assert(process_command()&&process_command()&&process_command());
+ assert(command.phase==GROUP_COMMAND_CHOOSING&&recommendation->source==GROUP_RECOMMENDATION_SOURCE_MODEL);
+ assert(!journal_saves&&!command.submitted&&!command_target[0]);
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CANCEL,0,command.revision,NULL)==ESP_OK);
+ assert(!process_command()&&!journal_saves&&!selection_queued);
+ // Empty and explicit-negation results preserve the exact submitted first
+ // final for the visible result page without creating any operation/token.
+ reset();proposal_source="model";proposal_empty=true;begin_voice();
+ final_event(command.ticket,"先看看后勤组，但是不要切群");
+ assert(process_command()&&process_command()&&process_command());
+ assert(command.phase==GROUP_COMMAND_RECOVERING&&!command.submitted&&!journal_saves&&!command_target[0]);
+ assert(!strcmp(reviewed_text,seen_transcript)&&!command.transcript[0]);
+ assert(strstr(last_resolve_log,"candidates=0 intent_negated=0")&&!strstr(last_resolve_log,"不要"));
+ for(unsigned guard_case=0;guard_case<3;++guard_case) {
+  reset();begin_voice();final_event(command.ticket,"不要切到后勤组");
+  assert(process_command()&&process_command());request_result=ESP_FAIL;
+  injected_voice_api_error=GROUP_VOICE_API_INTENT_NEGATED;
+  if(guard_case==1)injected_voice_http_status=503;
+  if(guard_case==2)cancel_in_resolve=true;
+  assert(process_command()&&command.phase==GROUP_COMMAND_RECOVERING&&!command.submitted&&!journal_saves);
+  assert(!strcmp(reviewed_text,seen_transcript)&&!command.transcript[0]);
+  if(guard_case==0) {
+   assert(!strcmp(command_result,"已识别为不切群，当前群保持不变。"));
+   assert(strstr(last_resolve_log,"intent_negated=1"));
+  } else {
+   assert(strcmp(command_result,"已识别为不切群，当前群保持不变。"));
+   assert(strstr(last_resolve_log,"intent_negated=0"));
+  }
  }
- // If local JSON allocation fails before request(), HTTP metadata must remain
- // zero/none rather than reusing a previous request's error or HTTP 200.
- reset();begin_voice();last_http_status=200;last_voice_api_error=GROUP_VOICE_API_UNKNOWN_TARGET;
- final_event(command.ticket,"切到乙群");cJSON_Hooks hooks={.malloc_fn=no_cjson_memory,.free_fn=free};
- cJSON_InitHooks(&hooks);assert(process_command());cJSON_InitHooks(NULL);
- assert(resolve_posts==0&&strstr(last_resolve_log,"requested=0 http=0")&&strstr(last_resolve_log,"api=none outcome=local_error"));
- assert(!process_command()&&!selection_queued);
- reset();begin_voice();final_event(command.ticket,"切到乙群");assert(process_command());
- intent.desired=false;assert(!process_command());assert(!selection_queued&&!command_session_live);
- assert(!process_command()&&command.kind==GROUP_COMMAND_NONE);
- // A failed create with a known remote handle must retain strict cleanup.
+ // A GUI PSRAM allocation failure cannot prevent normal resource cleanup or
+ // turn a proposal into an executed switch.
+ reset();review_result=ESP_ERR_NO_MEM;begin_voice();final_event(command.ticket,"切到乙群");
+ assert(process_command()&&process_command()&&process_command());
+ assert(command.phase==GROUP_COMMAND_CHOOSING&&review_calls==1&&!reviewed_text[0]&&!journal_saves);
+ // Cancel during model HTTP or immediately before admission discards late candidates.
+ reset();begin_voice();final_event(command.ticket,"切到乙群");assert(process_command()&&process_command());cancel_in_resolve=true;
+ assert(process_command()&&command.phase==GROUP_COMMAND_RECOVERING&&command.cancelled&&!journal_saves);
+ assert(!command_target[0]&&!command.transcript[0]);
+ reset();begin_voice();final_event(command.ticket,"切到乙群");assert(process_command()&&process_command());cancel_before_recommend_post=true;
+ assert(process_command()&&!proposal_posts&&command.phase==GROUP_COMMAND_RECOVERING&&!journal_saves);
+ // The same freshness/expiry/member guards apply to voice proposals.
+ for(unsigned guard_case=0;guard_case<3;++guard_case) {
+  reset();begin_voice();final_event(command.ticket,"切到乙群");assert(process_command()&&process_command()&&process_command());
+  if(guard_case==0)++published_version;
+  if(guard_case==1)++view_generation;
+  if(guard_case==2)now_us+=61000000;
+  assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CONFIRM,0,command.revision,NULL)==ESP_ERR_INVALID_STATE);
+  assert(!journal_saves&&!command.submitted);
+ }
+ reset();proposal_source="model";begin_voice();final_event(command.ticket,"请找乙群");
+ assert(process_command()&&process_command()&&process_command()&&command.phase==GROUP_COMMAND_CHOOSING);
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CONFIRM,0,command.revision,NULL)==ESP_OK);
+ intent.desired=false;assert(!process_command()&&pending_saved&&journal_saves==1);
+ assert(!strcmp(saved_record.group_id,"grp_bbbb")&&!strcmp(saved_record.recommendation_id,"voice_fixture"));
+ // Invalid source, outside-membership response and transport/API failures never execute.
+ for(unsigned failure=0;failure<6;++failure) {
+  reset();begin_voice();final_event(command.ticket,"private utterance");assert(process_command()&&process_command());
+  if(failure==0)proposal_source="unknown";
+  if(failure==1)proposal_source=NULL;
+  if(failure==2)strlcpy(resolved_target,"grp_unknown",81);
+  if(failure>=3){request_result=ESP_FAIL;injected_voice_http_status=failure==3?400:failure==4?503:0;}
+  assert(process_command()&&command.phase==GROUP_COMMAND_RECOVERING&&!journal_saves&&!command_target[0]);
+  assert(!command.transcript[0]&&!strstr(last_resolve_log,"private")&&!strstr(last_resolve_log,"grp_"));
+ }
+ // JSON allocation failure must not reuse stale HTTP metadata or send any body.
+ reset();begin_voice();final_event(command.ticket,"切到乙群");assert(process_command()&&process_command());last_http_status=200;
+ cJSON_Hooks hooks={.malloc_fn=no_cjson_memory,.free_fn=free};cJSON_InitHooks(&hooks);assert(process_command());cJSON_InitHooks(NULL);
+ assert(!proposal_posts&&strstr(last_resolve_log,"requested=0 http=0")&&!journal_saves);
+ reset();assert(group_controller_voice_action(false,NULL)==ESP_OK);assert(group_controller_voice_action(true,NULL)==ESP_OK);
+ assert(!process_command()&&!create_calls&&!proposal_posts&&!selection_queued&&peer_id[0]==0);
+ intent.ready=true;assert(!process_command()&&command.kind==GROUP_COMMAND_NONE);
+ reset();cancel_in_create=true;assert(group_controller_voice_action(false,NULL)==ESP_OK);assert(process_command());
+ assert(create_calls==1&&!start_calls);assert(!process_command()&&stop_calls==1&&!proposal_posts);
+ // Failed create with known handle still requires remote cleanup; no handle cannot fabricate it.
  reset();create_result=ESP_FAIL;create_error_with_id=true;stop_failures=1;
  assert(group_controller_voice_action(false,NULL)==ESP_OK);assert(process_command());
- assert(command.failed&&command_session_live&&start_calls==0);
- assert(process_command());assert(stop_calls==1&&command_session_live&&command.phase==GROUP_COMMAND_CLEANUP);
- now_us+=2000000;assert(!process_command());assert(stop_calls==2&&!command_session_live&&!selection_queued);
- // Without any returned handle, no remote cleanup is possible or fabricated.
- reset();create_result=ESP_FAIL;assert(group_controller_voice_action(false,NULL)==ESP_OK);
- assert(process_command());assert(!command_session_live&&start_calls==0);
- assert(!process_command());assert(stop_calls==0&&!selection_queued);
- // Errors and timeout close both local and remote command resources without a switch.
- reset();start_result=ESP_FAIL;assert(group_controller_voice_action(false,NULL)==ESP_OK);
- assert(process_command());assert(command.failed&&command.phase==GROUP_COMMAND_CLEANUP);
- assert(!process_command());assert(peer_stops==1&&stop_calls==1&&!selection_queued);
- reset();begin_voice();now_us+=46000000;assert(!process_command());
- assert(command.cancelled&&!selection_queued&&peer_stops==1&&stop_calls==1);
- reset();begin_voice();strlcpy(resolved_target,"grp_unknown",81);final_event(command.ticket,"切到未知群");
- assert(process_command());assert(command.failed&&command_target[0]==0);
- assert(strstr(last_resolve_log,"outcome=outside_catalog") && strstr(last_resolve_log,"selected=0"));
- assert(!process_command());assert(!selection_queued&&stop_calls==1);
+ assert(command.failed&&command_session_live&&!start_calls);assert(process_command()&&stop_calls==1&&command_session_live);
+ now_us+=2000000;assert(!process_command()&&stop_calls==2&&!command_session_live&&!proposal_posts);
+ reset();create_result=ESP_FAIL;assert(group_controller_voice_action(false,NULL)==ESP_OK);assert(process_command());
+ assert(!command_session_live&&!start_calls);assert(!process_command()&&!stop_calls&&!proposal_posts);
+ reset();start_result=ESP_FAIL;assert(group_controller_voice_action(false,NULL)==ESP_OK);assert(process_command());
+ assert(command.failed&&command.phase==GROUP_COMMAND_CLEANUP);assert(!process_command()&&peer_stops==1&&stop_calls==1&&!proposal_posts);
+ reset();begin_voice();now_us+=46000000;assert(!process_command()&&command.cancelled&&!proposal_posts);
  // A previous command's final cannot satisfy a later command's listener.
  reset();begin_voice();uint32_t old_ticket=command.ticket;
  assert(group_controller_voice_action(true,NULL)==ESP_OK);assert(!process_command());
@@ -477,6 +650,6 @@ int main(void) {
   assert(!strcmp(saved_record.recommendation_epoch,"epoch_fixture")&&saved_record.expected_version==7);
  }
  free(recommendation);recommendation=NULL;free(recommendation_need);recommendation_need=NULL;
- puts("controller command flow: passed (saved volume/UI/status, first final, stop ACK retry, late event, early/in-flight cancel, journal handoff, join STOP)");
+ puts("controller command flow: passed (RAM-only status, config init/save/load/STOP and stale validation, saved volume, first final, stop ACK retry, late event, cancel, journal handoff)");
  return 0;
 }

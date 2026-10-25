@@ -284,6 +284,7 @@ noscript p { margin: 24px; padding: 20px; background: var(--surface); }
 
 .recommendation-panel { padding: 24px; }
 .recommendation-results { margin: 0; padding: 0; list-style: none; }
+.voice-transcript { max-height: 10em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; padding: 12px; border: 1px solid var(--border); border-radius: 12px; }
 .recommendation-row { border-top: 1px solid var(--border); padding-block: 16px; overflow-wrap: anywhere; }
 .recommendation-row p { margin-block: 8px; }
 .recommendation-reason { font-size: 14px; line-height: 1.6; }

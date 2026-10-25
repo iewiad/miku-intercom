@@ -4,11 +4,11 @@
 
 首版目标：快速建群与口令入群、按住说话、按群名语音切换、断线后可信恢复。根据需求推荐协作群为增强项。普通群音频由独立对讲服务转发，RTA 用于主动触发的语音指令与显式启用的文本推荐。
 
-一板两浏览器六个方向的完整语句听测已通过：历史轮次使用浏览器合成源与板端真人，产品界面修订轮次六方向均使用真人麦克风。音量重启保持单独留证；范围与已知限制见[验收记录](docs/acceptance.md)。
+历史一板两浏览器六方向完整句听测已通过：早期使用浏览器合成源与板端真人，产品界面修订轮次六方向均使用真人麦克风。当前 v108 另补板↔A、板↔B 四方向真人听测、滑出停发与停止重连；音量重启保持仍按原轮次留证，范围见[验收记录](docs/acceptance.md)。
 
 S1/S2 群控制与浏览器群音频、PR #9 浏览器隐藏恢复、PR #10/#11 板端群音频及多群恢复、PR #12 板端口令键盘与主动语音切群均已合并。触屏入群、两轮口述切群、取消恢复、六方向听测与两份浏览器关闭报告已通过；完整演示串联、回声与延迟专项观察仍待补齐。实际范围见[验收记录](docs/acceptance.md)。
 
-建群可选填职责简介，浏览器可按群名或职责筛选已加入群，再手动进入。[009 需求推荐](docs/specs/009-model-recommendation.md)提供浏览器文字/主动语音需求和板端“需求找组”：仅推荐已加入且有权限的群，展示填写的职责和固定核对说明，明确确认后才切换。普通对讲不参与分析。历史 204 次合成文字评估中，最终原集 60/60、新保留集 24/24 选组策略通过，自由理由仍有三处扩写，见[质量结果与限制](docs/evaluation/results-2026-10-25.md)。后续软件修复保留模型选组、丢弃自由理由，以固定说明阻断扩写进入展示；13 条针对性复测及无板交付已完成，见[候选交付](docs/delivery.md)。当前服务未替换、板子未刷写，新增语音入口、板端触控及实际媒体恢复仍须分项验收。字段、旧数据与设备兼容边界见 [007 群职责切片](docs/specs/007-group-purpose.md)。
+建群可选填职责简介，浏览器可按群名或职责筛选已加入群，再手动进入。[009 需求推荐](docs/specs/009-model-recommendation.md)提供浏览器文字/主动语音需求和板端“需求找组”：仅推荐已加入且有权限的群，展示填写的职责和固定核对说明，明确确认后才切换。普通对讲不参与分析。历史 204 次合成文字评估中，最终原集 60/60、新保留集 24/24 选组策略通过，自由理由仍有三处扩写，见[质量结果与限制](docs/evaluation/results-2026-10-25.md)。后续软件修复保留模型选组、丢弃自由理由，以固定说明阻断扩写进入展示；13 条针对性文本复测另行留证。当前候选 `v0-108-g528a352` 已部署，浏览器和板端的主动需求、卡片人工审阅、明确确认及目标媒体恢复已完成本轮分项验收，见[当前候选交付](docs/delivery.md)和[本轮证据](docs/evidence/2026-10-25-v108-closeout.json)。首次空建议、请求计数和重试保留；整场连续彩排及视频待拍摄阶段完成。字段、旧数据与设备兼容边界见 [007 群职责切片](docs/specs/007-group-purpose.md)。
 
 产品界面聚焦当前群、连接/发言状态与按住说话，浏览器支持浅深主题和独立的添加群组面板；板端使用大面积 PTT 与同样的状态层级。打开任务面板先停发，关闭后保持未按麦；设计、降级与验证边界见 [008 产品界面](docs/specs/008-product-ui.md)。
 
@@ -52,7 +52,7 @@ flowchart LR
     N <-->|独立 RTC · 文本请求与结束确认| R
 ```
 
-普通群音频经媒体面转发给同群其他成员，控制面是身份、当前群与麦权的唯一授权来源。源包入队与目标写出前都重新校验权限；麦权与 Peer 只保存在内存，服务重启后清空。明确群名指令使用有限解析；主动需求先结束转写会话，再交给受限文本推荐器。推荐结果不改变当前群，明确确认使用原持久切群终态并原子消费建议。默认部署保持 localhost；S3 通过完整显式参数开放指定 LAN IP 的设备 HTTPS 与 UDP 入口，配置见[开发指南](docs/development.md#s3-板端-lan-开发入口)。板端实际证据单独记录，不外推到公网。
+普通群音频经媒体面转发给同群其他成员，控制面是身份、当前群与麦权的唯一授权来源。源包入队与目标写出前都重新校验权限；麦权与 Peer 只保存在内存，服务重启后清空。语音指令先结束转写会话，再生成待确认目标：精确群名省去模型，其余由受限文本模型辅助理解。主动需求使用独立职责推荐规则。所有建议都不改变当前群，明确确认使用原持久切群终态并原子消费建议。默认部署保持 localhost；S3 通过完整显式参数开放指定 LAN IP 的设备 HTTPS 与 UDP 入口，配置见[开发指南](docs/development.md#s3-板端-lan-开发入口)。板端实际证据单独记录，不外推到公网。
 
 ## 连接与发言状态
 
@@ -168,21 +168,29 @@ stateDiagram-v2
     state "群音频就绪" as GroupReady
     state "关闭群 Peer · 准备指令" as Preparing
     state "采集就绪 · 请说群名" as Listening
-    state "核对已加入群" as Resolving
-    state "结束 RTA 与确认切群终态" as Confirming
+    state "结束 RTA" as Cleaning
+    state "理解目标" as Resolving
+    state "核对候选 · 等待明确确认" as Reviewing
+    state "确认切群终态" as Confirming
     state "核实当前群 · 重建群 Peer" as Recovering
     GroupReady --> Preparing: 主动点击语音切群 / 取消PTT
     Preparing --> Listening: session.updated 与采集就绪
-    Listening --> Resolving: 首次最终用户转写 / 停采集
-    Preparing --> Confirming: 取消 / 初始化失败
-    Listening --> Confirming: 取消 / 超时 / 断网
-    Resolving --> Confirming: 有限群名命令 / 或明确拒绝
-    Confirming --> Confirming: stop或切群结果不明 / 重试原操作
-    Confirming --> Recovering: RTA结束确认且切群无未决操作
+    Listening --> Cleaning: 首次最终用户转写 / 停采集
+    Preparing --> Cleaning: 取消 / 初始化失败
+    Listening --> Cleaning: 取消 / 超时 / 断网
+    Cleaning --> Cleaning: stop未确认 / 重试原会话
+    Cleaning --> Resolving: 清理确认且转写仍有效
+    Cleaning --> Recovering: 清理确认且取消或失败
+    Resolving --> Reviewing: 精确命中或模型候选
+    Reviewing --> Confirming: 用户明确确认 / 固定操作
+    Reviewing --> Recovering: 取消或失效 / 未切群
+    Resolving --> Recovering: 无候选或失败 / 未切群
+    Confirming --> Confirming: 切群结果不明 / 查询重放原操作
+    Confirming --> Recovering: 切群无未决操作
     Recovering --> GroupReady: 当前群媒体可用 / 未按麦
 ```
 
-明确群名切换时，板端先结束 RTA 再持久提交切群；浏览器先持久提交并确认控制操作，再结束 RTA。两者始终串行使用一个本地 Peer，RTA stop 未确认时不恢复群音频。详细边界见 [006 首版规格](docs/specs/006-first-version.md)。独立语音需求入口在两端都先完成转写清理，再请求推荐；确认与恢复见 [009](docs/specs/009-model-recommendation.md)。
+两端先结束 RTA，再请求语音目标候选，所有结果均待用户点击“确认进入”。模型只辅助选候选，服务端重验权限、版本、目录与期限；精确路径也不能跳过确认。RTA stop 未确认时不恢复群音频。当前边界见 [010 语音目标核对](docs/specs/010-voice-target-review.md)；独立语音需求入口的职责推荐与确认见 [009](docs/specs/009-model-recommendation.md)。
 
 启动使用 `python3 tools/dev.py`；板端 LAN、私有证书、USB 初始化和可选 RTA 配置见[首次运行指南](docs/first-run.md)。本地主机回归用 `python3 tools/check.py`，范围与依赖见[开发指南](docs/development.md#自动验证)；完整演示和关闭检查见[演示与收尾指南](docs/demo.md)。
 

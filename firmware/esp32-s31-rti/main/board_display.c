@@ -12,6 +12,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
+#include "mbedtls/platform_util.h"
 #include "nvs.h"
 #include "rti_session.h"
 #include "wifi_manager.h"
@@ -1711,6 +1712,13 @@ static void *group_recommendation_context;
 static group_recommendation_view_t group_recommendation_view;
 static group_recommendation_item_t *group_recommendation_items;
 static bool group_recommendation_active, group_recommendation_pending;
+static bool group_recommendation_voice;
+static uint32_t group_voice_origin_revision, group_recommendation_origin_revision;
+static bool group_voice_cancelled, group_recommendation_cancelled;
+static char *group_voice_review_text;
+static uint32_t group_voice_review_origin_revision;
+static bool group_voice_review_attempted;
+static lv_obj_t *group_voice_review_label, *group_voice_review_card;
 static uint32_t group_recommendation_pending_revision, group_recommendation_deadline;
 static bool group_recommendation_expiry_set;
 static int group_recommendation_selected = -1;
@@ -1757,6 +1765,7 @@ static void group_render_controls(void);
 static void group_render_command(void);
 static void group_close_command(void);
 static void group_render_recommendation(void);
+static void group_clear_voice_review(void);
 static lv_obj_t *group_label(lv_obj_t *parent, const char *text, int x, int y, int width, uint32_t color);
 
 static bool group_command_busy(void)
@@ -1975,6 +1984,17 @@ static void group_screen_event_cb(lv_event_t *event)
 {
     if (lv_event_get_code(event) == LV_EVENT_SCREEN_UNLOAD_START) {
         group_force_release();
+        if (group_modal == GROUP_MODAL_VOICE && (group_voice_submitted || group_command_pending || group_voice_active)) {
+            if (group_recommendation_callback) {
+                if (group_recommendation_callback(GROUP_RECOMMENDATION_CANCEL, 0,
+                    group_voice_origin_revision, group_recommendation_context) == ESP_OK) group_voice_cancelled = true;
+            }
+            else if (group_voice_callback) (void)group_voice_callback(true, group_command_context);
+        } else if ((group_recommendation_pending || (group_recommendation_active && group_recommendation_view.can_cancel)) && group_recommendation_callback) {
+            (void)group_recommendation_callback(GROUP_RECOMMENDATION_CANCEL, 0,
+                group_recommendation_origin_revision,
+                group_recommendation_context);
+        }
         group_close_command();
         group_transport_ready = false;
         if (group_dropdown) {
@@ -1994,6 +2014,7 @@ static void group_action_event_cb(lv_event_t *event)
     group_stop_action = !stop;
     group_transport_ready = false;
     if (stop) {
+        group_clear_voice_review();
         group_switch_pending = false;
     }
     lv_dropdown_close(group_dropdown);
@@ -2110,11 +2131,28 @@ static bool group_command_ready(void)
            !group_is_switching() && !group_command_busy();
 }
 
+static void group_clear_voice_review(void)
+{
+    /* LVGL must no longer reference the GUI-owned static text when it is
+     * erased. The card itself remains owned by its ordinary modal subtree. */
+    if (group_voice_review_label) lv_label_set_text_static(group_voice_review_label, "");
+    if (group_voice_review_card) lv_obj_add_flag(group_voice_review_card, LV_OBJ_FLAG_HIDDEN);
+    group_voice_review_label = group_voice_review_card = NULL;
+    if (group_voice_review_text) {
+        mbedtls_platform_zeroize(group_voice_review_text, 513);
+        free(group_voice_review_text);
+        group_voice_review_text = NULL;
+    }
+    group_voice_review_attempted = false;
+    group_voice_review_origin_revision = 0;
+}
+
 static void group_modal_delete_event_cb(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_DELETE) {
         return;
     }
+    group_clear_voice_review();
     /* No code copy survives the overlay. This also covers screen teardown. */
     if (group_join_textarea) {
         lv_textarea_set_text(group_join_textarea, "");
@@ -2130,6 +2168,9 @@ static void group_modal_delete_event_cb(lv_event_t *event)
     group_command_cancel_label = NULL;
     group_modal = GROUP_MODAL_NONE;
     group_voice_submitted = false;
+    group_recommendation_voice = false;
+    group_voice_origin_revision = group_recommendation_origin_revision = 0;
+    group_voice_cancelled = group_recommendation_cancelled = false;
     if (group_recommendation_timer) {
         lv_timer_delete(group_recommendation_timer);
         group_recommendation_timer = NULL;
@@ -2150,6 +2191,7 @@ static void group_close_command(void)
         }
         lv_obj_delete(group_command_overlay);
     }
+    group_clear_voice_review();
     group_modal = GROUP_MODAL_NONE;
     group_render_controls();
 }
@@ -2163,13 +2205,14 @@ static void group_render_command(void)
     const int current = group_current_index();
     const bool restored = group_voice_submitted && !waiting && group_transport_ready && current >= 0;
     lv_label_set_text(group_command_title,
-                      !group_voice_submitted ? "准备语音切群" :
+                      group_voice_cancelled && waiting ? "正在取消语音" : !group_voice_submitted ? "准备语音切群" :
                       group_command_pending ? "正在准备" :
                       group_voice_active ? "语音切群" :
                       restored ? "当前群音频已就绪" : "语音切群已结束");
     lv_label_set_text(group_command_detail,
+                      group_voice_cancelled && waiting ? "正在取消，请等待恢复群音频" :
                       group_voice_submitted && group_command_detail_text[0] ? group_command_detail_text :
-                      "点击开始后，说出目标群的完整名称。\n只会切换到你已加入的群组。");
+                      "点击开始后，说出目标群的名称。\n确认后切换到已加入群组。");
     if (current >= 0) {
         /* Keep the authoritative name separate from bounded command details.
          * LVGL owns the formatted string, including long UTF-8 group names. */
@@ -2211,8 +2254,12 @@ static void group_command_cancel_event_cb(lv_event_t *event)
     if (!group_voice_active || !group_voice_can_cancel || group_command_pending || !group_voice_callback) {
         return;
     }
-    const esp_err_t err = group_voice_callback(true, group_command_context);
+    const esp_err_t err = group_recommendation_callback ?
+        group_recommendation_callback(GROUP_RECOMMENDATION_CANCEL, 0, group_voice_origin_revision, group_recommendation_context) :
+        group_voice_callback(true, group_command_context);
     if (err == ESP_OK) {
+        group_voice_cancelled = true;
+        group_clear_voice_review();
         group_command_pending = true;
         group_command_pending_revision = group_command_revision;
         strlcpy(group_command_detail_text, "正在取消并恢复群音频", sizeof(group_command_detail_text));
@@ -2231,8 +2278,13 @@ static void group_voice_submit_event_cb(lv_event_t *event)
         return;
     }
     group_force_release();
-    const esp_err_t err = group_voice_callback(false, group_command_context);
+    const esp_err_t err = group_recommendation_callback ?
+        group_recommendation_callback(GROUP_RECOMMENDATION_START_VOICE, 0, group_command_revision, group_recommendation_context) :
+        group_voice_callback(false, group_command_context);
     if (err == ESP_OK) {
+        group_clear_voice_review();
+        group_voice_cancelled = false;
+        group_voice_origin_revision = group_command_revision;
         group_voice_submitted = true;
         group_command_pending = true;
         group_command_pending_revision = group_command_revision;
@@ -2316,9 +2368,10 @@ static lv_obj_t *group_command_button(lv_obj_t *parent, const char *text,
     return button;
 }
 
-static lv_obj_t *group_create_command_overlay(group_modal_t modal)
+static lv_obj_t *group_create_command_overlay(group_modal_t modal, bool user_intent)
 {
-    group_force_release();
+    if (user_intent) group_force_release();
+    else group_pressed = group_speaking = false;
     lv_dropdown_close(group_dropdown);
     group_modal = modal;
     group_voice_submitted = false;
@@ -2341,7 +2394,7 @@ static void group_join_open_event_cb(lv_event_t *event)
         !group_command_ready() || !group_join_callback) {
         return;
     }
-    lv_obj_t *overlay = group_create_command_overlay(GROUP_MODAL_JOIN);
+    lv_obj_t *overlay = group_create_command_overlay(GROUP_MODAL_JOIN, true);
     group_command_title = group_control_label(overlay, "口令加入群组", 28, 12, 550, 0xECFBFA);
     group_command_detail = group_label(overlay, "输入群主分享的 8 位字母数字口令", 28, 54, 540, 0xAABCC7);
     group_command_cancel = group_command_button(overlay, "取消", 624, 12, 148,
@@ -2389,7 +2442,7 @@ static void group_voice_open_event_cb(lv_event_t *event)
         !group_command_ready() || !group_transport_ready || group_current_index() < 0 || !group_voice_callback) {
         return;
     }
-    lv_obj_t *overlay = group_create_command_overlay(GROUP_MODAL_VOICE);
+    lv_obj_t *overlay = group_create_command_overlay(GROUP_MODAL_VOICE, true);
     group_command_title = group_control_label(overlay, "准备语音切群", 48, 48, 704, 0xECFBFA);
     group_command_detail = group_label(overlay, "", 48, 122, 704, 0xAABCC7);
     lv_obj_set_height(group_command_detail, 154);
@@ -2401,11 +2454,11 @@ static void group_voice_open_event_cb(lv_event_t *event)
                                                 group_voice_submit_event_cb, &group_command_submit_label);
     group_command_cancel = group_command_button(overlay, "取消", 440, 336, 280,
                                                 group_command_cancel_event_cb, &group_command_cancel_label);
-    group_label(overlay, "语音指令期间暂时听不到群音频；完成后自动恢复", 48, 430, 704, 0x6F8998);
+    group_label(overlay, "语音期间暂停群音频；确认后切换", 48, 430, 704, 0x6F8998);
     group_render_command();
 }
 
-/* Recommendation UI begin: independent of the explicit-name voice grammar.
+/* Recommendation UI begin: shared target confirmation for voice and needs.
  * Every new label uses the existing full Chinese 20px font. Model-provided
  * strings are bounded display data; no label contains a control identifier. */
 #define GROUP_RECOMMENDATION_ENTRY "需求找组"
@@ -2447,7 +2500,7 @@ static void group_recommendation_submit_event_cb(lv_event_t *event)
         if (!group_recommendation_view.can_confirm || group_recommendation_expired() ||
             group_recommendation_selected < 0 ||
             (unsigned)group_recommendation_selected >= group_recommendation_view.count) return;
-    } else if (!group_recommendation_view.can_start || !group_command_ready() ||
+    } else if (group_recommendation_voice || !group_recommendation_view.can_start || !group_command_ready() ||
                !group_transport_ready || group_current_index() < 0) return;
     group_force_release();
     const esp_err_t error = group_recommendation_callback(
@@ -2455,6 +2508,11 @@ static void group_recommendation_submit_event_cb(lv_event_t *event)
         choosing ? (unsigned)group_recommendation_selected : 0,
         group_recommendation_view.revision, group_recommendation_context);
     if (error == ESP_OK) {
+        group_clear_voice_review();
+        if (!choosing) {
+            group_recommendation_origin_revision = group_recommendation_view.revision;
+            group_recommendation_cancelled = false;
+        }
         group_recommendation_pending = true;
         group_recommendation_pending_revision = group_recommendation_view.revision;
         group_pressed = group_speaking = false;
@@ -2475,7 +2533,10 @@ static void group_recommendation_cancel_event_cb(lv_event_t *event)
     }
     if (!group_recommendation_view.can_cancel || !group_recommendation_callback) return;
     if (group_recommendation_callback(GROUP_RECOMMENDATION_CANCEL, 0,
-        group_recommendation_view.revision, group_recommendation_context) == ESP_OK) {
+        group_recommendation_origin_revision, group_recommendation_context) == ESP_OK) {
+        group_recommendation_cancelled = true;
+        group_clear_voice_review();
+        if (group_recommendation_voice) group_voice_cancelled = true;
         group_recommendation_pending = true;
         group_recommendation_pending_revision = group_recommendation_view.revision;
         group_render_recommendation();
@@ -2491,21 +2552,24 @@ static void group_render_recommendation(void)
     const group_recommendation_phase_t phase = group_recommendation_view.phase;
     const bool choosing = phase == GROUP_RECOMMENDATION_CHOOSING;
     const bool expired = group_recommendation_expired();
-    const bool start = !group_recommendation_active && group_recommendation_view.can_start &&
+    const bool voice = group_recommendation_voice;
+    const bool start = !voice && !group_recommendation_active && group_recommendation_view.can_start &&
                        group_command_ready() && group_transport_ready && group_current_index() >= 0;
     const char *title = group_recommendation_pending ? "正在提交操作" :
-        expired ? "推荐已过期" : phase == GROUP_RECOMMENDATION_PREPARING ? "正在准备需求采集" :
+        expired ? "候选已过期" : phase == GROUP_RECOMMENDATION_PREPARING ? "正在准备需求采集" :
         phase == GROUP_RECOMMENDATION_LISTENING ? "请主动说出你的需求" :
         phase == GROUP_RECOMMENDATION_CLEANUP ? "正在结束需求采集" :
         phase == GROUP_RECOMMENDATION_REQUESTING ? "正在查找已加入群" :
-        choosing ? "选择适合的群，再确认进入" :
+        choosing ? (voice ? "请核对目标群，再确认进入" : "选择适合的群，再确认进入") :
         phase == GROUP_RECOMMENDATION_CONFIRMING ? "正在确认进入目标群" :
         phase == GROUP_RECOMMENDATION_RECOVERING ? "正在恢复群音频" :
-        phase == GROUP_RECOMMENDATION_FAILED ? "需求找组未完成" : "准备需求找组";
+        phase == GROUP_RECOMMENDATION_FAILED ? (voice ? "语音切群未完成" : "需求找组未完成") :
+        voice ? "本次语音切群已结束" : "准备需求找组";
     lv_label_set_text(group_recommendation_title, title);
     const char *detail = group_recommendation_pending ? "正在等待确认，请勿重复操作" :
         expired ? "本次建议已失效，不能确认进入。返回后可重新提出需求。" :
         group_recommendation_view.detail[0] ? group_recommendation_view.detail :
+        voice ? group_command_detail_text :
         "点击开始后，说出需要的协助。只推荐已加入群。\n建议不代表有人在线或已经接听。";
     lv_label_set_text(group_recommendation_detail, detail);
     for (unsigned i = 0; i < group_recommendation_view.count; ++i) {
@@ -2517,12 +2581,16 @@ static void group_render_recommendation(void)
     if (choosing && !expired) {
         const uint32_t remaining = group_recommendation_deadline - lv_tick_get();
         if (!group_recommendation_pending) lv_label_set_text_fmt(group_recommendation_title,
-            "选择适合的群，再确认进入（剩余 %u 秒）", (unsigned)((remaining + 999) / 1000));
+            voice ? "请核对目标群，再确认进入（剩余 %u 秒）" : "选择适合的群，再确认进入（剩余 %u 秒）",
+            (unsigned)((remaining + 999) / 1000));
         if (group_recommendation_selected >= 0 && group_recommendation_items) {
             lv_label_set_text_fmt(group_recommendation_footer, "将进入：%s",
                 group_recommendation_items[group_recommendation_selected].name);
         } else lv_label_set_text_fmt(group_recommendation_footer,
             "先点击一张卡片选择，还有 %u 秒可确认", (unsigned)((remaining + 999) / 1000));
+    } else if (voice && phase == GROUP_RECOMMENDATION_IDLE && group_current_index() >= 0) {
+        lv_label_set_text_fmt(group_recommendation_footer, "当前群：%s",
+            group_choices->items[group_current_index()].name);
     } else {
         lv_label_set_text(group_recommendation_footer,
             phase == GROUP_RECOMMENDATION_LISTENING ? "只采集这次主动需求，不分析普通群对讲" :
@@ -2555,11 +2623,30 @@ static void group_recommendation_tick(lv_timer_t *timer)
 static void group_recommendation_build_cards(void)
 {
     if (!group_recommendation_list) return;
+    group_voice_review_label = group_voice_review_card = NULL;
     lv_obj_clean(group_recommendation_list);
     memset(group_recommendation_cards, 0, sizeof(group_recommendation_cards));
+    if (group_recommendation_voice && group_voice_review_attempted &&
+        group_voice_review_origin_revision == group_recommendation_origin_revision) {
+        group_voice_review_card = lv_obj_create(group_recommendation_list);
+        lv_obj_t *card = group_voice_review_card;
+        lv_obj_set_width(card, 704);
+        lv_obj_set_height(card, LV_SIZE_CONTENT);
+        group_glass_style(card, 0x12313C, 14);
+        lv_obj_set_style_pad_all(card, 14, 0);
+        lv_obj_set_style_pad_row(card, 8, 0);
+        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+        lv_obj_remove_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        group_recommendation_label(card, "识别文本（仅本次）", 0, 0, 672, 0xADC9D2);
+        group_voice_review_label = group_recommendation_label(card, "", 0, 0, 672, 0xF1FAFC);
+        /* No LVGL-owned copy, truncation or ellipsis may hide a final negation. */
+        lv_label_set_text_static(group_voice_review_label, group_voice_review_text ? group_voice_review_text :
+                                 "本次识别文本暂不可显示");
+    }
     if (group_recommendation_view.phase != GROUP_RECOMMENDATION_CHOOSING ||
         !group_recommendation_view.count || !group_recommendation_items) {
         group_recommendation_label(group_recommendation_list,
+            group_recommendation_voice && group_voice_review_attempted ? "本次没有可确认的目标群。" :
             group_recommendation_view.phase == GROUP_RECOMMENDATION_CHOOSING ?
             "这次没有合适的已加入群。\n返回后可换一种方式说明需求。" :
             "这次只处理你主动说出的需求。\n不会分析普通群对讲，也不会自动切群。", 14, 18, 680, 0xADC9D2);
@@ -2580,16 +2667,13 @@ static void group_recommendation_build_cards(void)
         lv_obj_t *purpose = group_recommendation_label(card, "", 0, 0, 672, 0xBBD8DD);
         lv_label_set_text_fmt(purpose, "群职责（填写内容）：%s", item->purpose[0] ? item->purpose : "尚未填写职责");
         lv_obj_t *reason = group_recommendation_label(card, "", 0, 0, 672, 0x91EEE0);
-        lv_label_set_text_fmt(reason, "推荐说明：%s", item->reason);
+        lv_label_set_text_fmt(reason, group_recommendation_voice ? "目标说明：%s" : "推荐说明：%s", item->reason);
     }
 }
 
-static void group_recommendation_open_event_cb(lv_event_t *event)
+static void group_open_recommendation_panel(bool user_intent)
 {
-    if (lv_event_get_code(event) != LV_EVENT_CLICKED || group_modal != GROUP_MODAL_NONE ||
-        !group_command_ready() || !group_transport_ready || group_current_index() < 0 ||
-        !group_recommendation_callback || !group_recommendation_view.can_start) return;
-    lv_obj_t *overlay = group_create_command_overlay(GROUP_MODAL_RECOMMENDATION);
+    lv_obj_t *overlay = group_create_command_overlay(GROUP_MODAL_RECOMMENDATION, user_intent);
     group_recommendation_selected = -1;
     group_recommendation_title = group_recommendation_label(overlay, "", 28, 18, 744, 0xECFBFA);
     lv_obj_set_height(group_recommendation_title, 30);
@@ -2616,6 +2700,15 @@ static void group_recommendation_open_event_cb(lv_event_t *event)
     group_recommendation_build_cards();
     group_render_recommendation();
     group_recommendation_timer = lv_timer_create(group_recommendation_tick, 250, NULL);
+}
+
+static void group_recommendation_open_event_cb(lv_event_t *event)
+{
+    if (lv_event_get_code(event) != LV_EVENT_CLICKED || group_modal != GROUP_MODAL_NONE ||
+        !group_command_ready() || !group_transport_ready || group_current_index() < 0 ||
+        !group_recommendation_callback || !group_recommendation_view.can_start) return;
+    group_recommendation_voice = false;
+    group_open_recommendation_panel(true);
 }
 /* Recommendation UI end. */
 
@@ -2653,6 +2746,7 @@ esp_err_t board_display_show_group(board_conversation_action_cb_t startstop,
     group_command_revision = 0;
     group_command_detail_text[0] = 0;
     group_recommendation_active = group_recommendation_pending = false;
+    group_recommendation_voice = false;
     group_recommendation_selected = -1;
     group_recommendation_expiry_set = false;
     memset(&group_recommendation_view, 0, sizeof(group_recommendation_view));
@@ -3061,6 +3155,32 @@ esp_err_t board_display_set_group_recommendation_action(group_recommendation_act
     return ESP_OK;
 }
 
+esp_err_t board_display_set_group_voice_review(uint32_t origin_revision, const char *text)
+{
+    if (!group_voice_proposal_text_valid(text)) return ESP_ERR_INVALID_ARG;
+    char *copy = heap_caps_malloc(513, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (copy) {
+        memset(copy, 0, 513);
+        memcpy(copy, text, strlen(text));
+    }
+    if (!bsp_display_lock(1000)) {
+        if (copy) { mbedtls_platform_zeroize(copy, 513); free(copy); }
+        return ESP_ERR_TIMEOUT;
+    }
+    if (group_modal != GROUP_MODAL_VOICE || !group_voice_submitted || !group_stop_action ||
+        group_voice_cancelled || origin_revision != group_voice_origin_revision) {
+        if (copy) { mbedtls_platform_zeroize(copy, 513); free(copy); }
+        bsp_display_unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
+    group_clear_voice_review();
+    group_voice_review_attempted = true;
+    group_voice_review_origin_revision = origin_revision;
+    group_voice_review_text = copy;
+    bsp_display_unlock();
+    return copy ? ESP_OK : ESP_ERR_NO_MEM;
+}
+
 esp_err_t board_display_set_group_recommendation(const group_recommendation_view_t *view,
                                                  const group_recommendation_item_t *items)
 {
@@ -3080,6 +3200,18 @@ esp_err_t board_display_set_group_recommendation(const group_recommendation_view
     }
     if (!bsp_display_lock(1000)) { free(copy); return ESP_ERR_TIMEOUT; }
     if (!group_ptt_button) { free(copy); bsp_display_unlock(); return ESP_ERR_INVALID_STATE; }
+    group_recommendation_view_t cancelled_view;
+    if ((group_recommendation_cancelled || (view->voice_mode && group_voice_cancelled)) &&
+        view->phase != GROUP_RECOMMENDATION_IDLE && view->phase != GROUP_RECOMMENDATION_RECOVERING &&
+        view->phase != GROUP_RECOMMENDATION_FAILED && view->phase != GROUP_RECOMMENDATION_EXPIRED) {
+        cancelled_view = *view;
+        cancelled_view.phase = GROUP_RECOMMENDATION_CLEANUP;
+        cancelled_view.count = 0;
+        cancelled_view.can_start = cancelled_view.can_confirm = cancelled_view.can_cancel = false;
+        strlcpy(cancelled_view.detail, "正在取消，请等待恢复群音频", sizeof(cancelled_view.detail));
+        view = &cancelled_view;
+        free(copy); copy = NULL;
+    }
     const uint32_t revision = group_recommendation_view.revision;
     if ((int32_t)(view->revision - revision) < 0 ||
         (group_recommendation_pending &&
@@ -3091,7 +3223,7 @@ esp_err_t board_display_set_group_recommendation(const group_recommendation_view
     const bool same_choice = view->phase == GROUP_RECOMMENDATION_CHOOSING &&
         group_recommendation_view.phase == GROUP_RECOMMENDATION_CHOOSING && view->revision == revision;
     const bool unchanged = view->revision == revision && view->phase == group_recommendation_view.phase &&
-        view->count == group_recommendation_view.count &&
+        view->count == group_recommendation_view.count && view->voice_mode == group_recommendation_view.voice_mode &&
         (!view->count || (group_recommendation_items &&
          !memcmp(copy, group_recommendation_items, view->count * sizeof(*copy))));
     if (!unchanged) group_recommendation_selected = -1;
@@ -3112,6 +3244,26 @@ esp_err_t board_display_set_group_recommendation(const group_recommendation_view
          * controller again and invalidate its fresh connection generation. */
         group_pressed = group_speaking = false;
         lv_dropdown_close(group_dropdown);
+    }
+    if (view->voice_mode && !group_voice_cancelled &&
+        ((view->phase == GROUP_RECOMMENDATION_CHOOSING && view->count) ||
+         (view->phase == GROUP_RECOMMENDATION_RECOVERING && group_voice_review_attempted &&
+          group_voice_review_origin_revision == group_voice_origin_revision)) &&
+        group_modal == GROUP_MODAL_VOICE && group_voice_submitted) {
+        /* A one-way continuation of the visible voice intent. Closing or
+         * leaving that view never causes a late proposal to reopen it. */
+        const uint32_t origin = group_voice_origin_revision;
+        char *review = group_voice_review_text;
+        const bool attempted = group_voice_review_attempted;
+        const uint32_t review_origin = group_voice_review_origin_revision;
+        group_voice_review_text = NULL;
+        group_close_command();
+        group_recommendation_voice = true;
+        group_recommendation_origin_revision = origin;
+        group_voice_review_text = review;
+        group_voice_review_attempted = attempted;
+        group_voice_review_origin_revision = review_origin;
+        group_open_recommendation_panel(false);
     }
     if (!unchanged) group_recommendation_build_cards();
     group_render_recommendation();

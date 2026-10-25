@@ -36,6 +36,11 @@ bool group_recommendation_need_valid(const char *text)
     return group_command_need_valid(text);
 }
 
+bool group_voice_proposal_text_valid(const char *text)
+{
+    return bounded_text(text, 512, 256, false);
+}
+
 static bool copy_text(const cJSON *object, const char *key, char *out, size_t capacity,
                        unsigned maximum, bool optional)
 {
@@ -58,8 +63,9 @@ static bool unique_field(const cJSON *object, const char *key)
     return count == 1;
 }
 
-bool group_recommendation_parse(const cJSON *response, const char *request_id,
-                                const char *epoch, uint64_t version, group_recommendation_t *result)
+static bool parse_recommendation(const cJSON *response, const char *request_id,
+                                const char *epoch, uint64_t version, bool voice,
+                                group_recommendation_t *result)
 {
     if (!result || !request_id || !epoch || !group_json_tree_unambiguous(response)) return false;
     memset(result, 0, sizeof(*result));
@@ -77,8 +83,14 @@ bool group_recommendation_parse(const cJSON *response, const char *request_id,
         strlen(result->candidate_digest) != 64 ||
         !copy_text(record, "expires_at", result->expires_at, 48, 47, false) || !cJSON_IsArray(items)) return false;
     for (unsigned i = 0; i < 64; ++i) if (!strchr("0123456789abcdef", result->candidate_digest[i])) return false;
+    char source[6];
+    if (!copy_text(record, "source", source, sizeof(source), 5, !voice)) return false;
+    if (!strcmp(source, "exact")) result->source = GROUP_RECOMMENDATION_SOURCE_EXACT;
+    else if (!strcmp(source, "model")) result->source = GROUP_RECOMMENDATION_SOURCE_MODEL;
+    else if (voice || source[0]) return false;
     const int count = cJSON_GetArraySize(items);
     if (count < 0 || count > GROUP_RECOMMENDATION_MAX) return false;
+    if (voice && result->source == GROUP_RECOMMENDATION_SOURCE_EXACT && count != 1) return false;
     result->current_version = version;
     for (int i = 0; i < count; ++i) {
         const cJSON *item = cJSON_GetArrayItem(items, i);
@@ -87,9 +99,22 @@ bool group_recommendation_parse(const cJSON *response, const char *request_id,
             !group_switch_identifier(result->group_ids[i]) ||
             !copy_text(item, "name", view->name, sizeof(view->name), 32, false) ||
             !copy_text(item, "purpose", view->purpose, sizeof(view->purpose), 256, true) ||
-            !copy_text(item, "reason", view->reason, sizeof(view->reason), 160, false)) return false;
+            !copy_text(item, "reason", view->reason, sizeof(view->reason), 160, false) ||
+            (voice && strcmp(view->reason, "请核对识别出的目标群，确认后才会切换。"))) return false;
         for (int j = 0; j < i; ++j) if (!strcmp(result->group_ids[i], result->group_ids[j])) return false;
     }
     result->count = (unsigned)count;
     return true;
+}
+
+bool group_recommendation_parse(const cJSON *response, const char *request_id,
+                                const char *epoch, uint64_t version, group_recommendation_t *result)
+{
+    return parse_recommendation(response, request_id, epoch, version, false, result);
+}
+
+bool group_voice_proposal_parse(const cJSON *response, const char *request_id,
+                                const char *epoch, uint64_t version, group_recommendation_t *result)
+{
+    return parse_recommendation(response, request_id, epoch, version, true, result);
 }

@@ -23,6 +23,10 @@ static group_voice_api_error_t parse(const char *value) {
 int main(void) {
  const char *unknown="{\"error\":{\"code\":\"voice_target_unknown\",\"message\":\"private utterance and token\"}}";
  assert(parse(unknown)==GROUP_VOICE_API_UNKNOWN_TARGET);
+ assert(parse("{\"error\":{\"code\":\"voice_intent_negated\"}}")==GROUP_VOICE_API_INTENT_NEGATED);
+ assert(!strcmp(group_voice_api_error_name(GROUP_VOICE_API_INTENT_NEGATED),"voice_intent_negated"));
+ assert(parse("{\"error\":{\"code\":\"voice_intent_negated\",\"code\":\"voice_target_unknown\"}}")==GROUP_VOICE_API_OTHER);
+ assert(parse("{\"error\":{\"code\":\"voice_intent_negated\\u0000private\"}}")==GROUP_VOICE_API_OTHER);
  assert(parse("{\"error\":{\"code\":\"invalid_voice_command\"}}")==GROUP_VOICE_API_INVALID_COMMAND);
  assert(parse("{\"error\":{\"code\":\"voice_target_ambiguous\"}}")==GROUP_VOICE_API_AMBIGUOUS_TARGET);
  assert(parse("{\"error\":{\"code\":\"unauthorized\"}}")==GROUP_VOICE_API_UNAUTHORIZED);

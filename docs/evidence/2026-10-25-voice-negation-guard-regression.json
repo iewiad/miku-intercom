@@ -1,0 +1,310 @@
+{
+  "schema": "miku-intercom.voice-negation-guard-regression.v1",
+  "date": "2026-10-25",
+  "implementation_commit": "528a35238f4d1cb7a2afcafd2db556cd632c6930",
+  "dataset_frozen_commit": "b90d4f5",
+  "dataset_sha256": "95133ef8a21f70efcedbcba0bd1dfdee67b36fa276ad172de6d3f44545fbdecd",
+  "prompt_version": "voice-target-v2",
+  "prompt_unchanged": true,
+  "guard_policy": "explicit-negation-v1",
+  "metrics": {
+    "cases": 22,
+    "guard_abstentions": 3,
+    "protocol_valid": 22,
+    "protocol_errors": 0,
+    "transport_errors": 0,
+    "transport_timeouts": 0,
+    "transport_cancelled": 0,
+    "cleanup_unconfirmed": 0,
+    "semantic_scored": 22,
+    "semantic_passed": 22,
+    "semantic_missed": 0
+  },
+  "model_calls": 17,
+  "exact_zero_model": 2,
+  "guard_zero_model": 3,
+  "all_model_cleanup_confirmed": true,
+  "cleanup_pending_after_close": false,
+  "all_unconfirmed_state_unchanged": true,
+  "all_no_control_operations": true,
+  "microphone_paths": 0,
+  "playback_paths": 0,
+  "raw_report_sha256": "7f47c13719a679ca91470113ee8bff3942b694ade7424427fb7523ea26cba081",
+  "cases": [
+    {
+      "case_id": "V01",
+      "source": "exact",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 0,
+      "cleanup": "not_started",
+      "target_keys": [
+        "logistics"
+      ]
+    },
+    {
+      "case_id": "V02",
+      "source": "exact",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 0,
+      "cleanup": "not_started",
+      "target_keys": [
+        "acceptance"
+      ]
+    },
+    {
+      "case_id": "V03",
+      "source": "model",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 1,
+      "cleanup": "confirmed",
+      "target_keys": [
+        "logistics"
+      ]
+    },
+    {
+      "case_id": "V04",
+      "source": "model",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 1,
+      "cleanup": "confirmed",
+      "target_keys": [
+        "acceptance"
+      ]
+    },
+    {
+      "case_id": "V05",
+      "source": "model",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 1,
+      "cleanup": "confirmed",
+      "target_keys": [
+        "all"
+      ]
+    },
+    {
+      "case_id": "V06",
+      "source": "model",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 1,
+      "cleanup": "confirmed",
+      "target_keys": [
+        "logistics_one"
+      ]
+    },
+    {
+      "case_id": "V07",
+      "source": null,
+      "guard": "explicit-negation-v1",
+      "http_status": 422,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 0,
+      "cleanup": "not_started",
+      "target_keys": []
+    },
+    {
+      "case_id": "V08",
+      "source": null,
+      "guard": "explicit-negation-v1",
+      "http_status": 422,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 0,
+      "cleanup": "not_started",
+      "target_keys": []
+    },
+    {
+      "case_id": "V09",
+      "source": null,
+      "guard": "explicit-negation-v1",
+      "http_status": 422,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 0,
+      "cleanup": "not_started",
+      "target_keys": []
+    },
+    {
+      "case_id": "V10",
+      "source": "model",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 1,
+      "cleanup": "confirmed",
+      "target_keys": [
+        "all"
+      ]
+    },
+    {
+      "case_id": "V11",
+      "source": "model",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 1,
+      "cleanup": "confirmed",
+      "target_keys": [
+        "acceptance"
+      ]
+    },
+    {
+      "case_id": "V12",
+      "source": "model",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 1,
+      "cleanup": "confirmed",
+      "target_keys": [
+        "logistics_one"
+      ]
+    },
+    {
+      "case_id": "V13",
+      "source": "model",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 1,
+      "cleanup": "confirmed",
+      "target_keys": [
+        "logistics",
+        "similar"
+      ]
+    },
+    {
+      "case_id": "V14",
+      "source": "model",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 1,
+      "cleanup": "confirmed",
+      "target_keys": [
+        "logistics",
+        "logistics_one"
+      ]
+    },
+    {
+      "case_id": "V15",
+      "source": "model",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 1,
+      "cleanup": "confirmed",
+      "target_keys": []
+    },
+    {
+      "case_id": "V16",
+      "source": "model",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 1,
+      "cleanup": "confirmed",
+      "target_keys": []
+    },
+    {
+      "case_id": "V17",
+      "source": "model",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 1,
+      "cleanup": "confirmed",
+      "target_keys": []
+    },
+    {
+      "case_id": "V18",
+      "source": "model",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 1,
+      "cleanup": "confirmed",
+      "target_keys": []
+    },
+    {
+      "case_id": "V19",
+      "source": "model",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 1,
+      "cleanup": "confirmed",
+      "target_keys": []
+    },
+    {
+      "case_id": "V20",
+      "source": "model",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 1,
+      "cleanup": "confirmed",
+      "target_keys": [
+        "all"
+      ]
+    },
+    {
+      "case_id": "V21",
+      "source": "model",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 1,
+      "cleanup": "confirmed",
+      "target_keys": [
+        "all"
+      ]
+    },
+    {
+      "case_id": "V22",
+      "source": "model",
+      "guard": null,
+      "http_status": 200,
+      "protocol": "valid",
+      "semantic": "pass",
+      "model_calls": 1,
+      "cleanup": "confirmed",
+      "target_keys": []
+    }
+  ],
+  "limits": [
+    "Same fixed set after inspecting previous results; not an independent holdout.",
+    "Guard refusals are HTTP422 with no model, token, suggestions or cleanup session.",
+    "Text regression cannot establish actual ASR retained the negation word."
+  ]
+}

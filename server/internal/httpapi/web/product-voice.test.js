@@ -33,7 +33,7 @@ test('actual boot/render and audio-off button replace READY status after termina
    else if(path.startsWith('/media/peers/')&&options.method==='DELETE'){media=null;result={closed:true};}
    else if(path==='/voice/sessions'){commandID=body.command_id;result={command_id:commandID};}
    else if(path.endsWith('/offer'))result={type:'answer',sdp:'v=0'};
-   else if(path.endsWith('/stop'))result={stopped:true,command_id:commandID};else if(path==='/voice/resolve')return{ok:false,status:400,json:async()=>({error:{code:'invalid_voice_command'}})};else throw new Error('unexpected product request');
+   else if(path.endsWith('/stop'))result={stopped:true,command_id:commandID};else if(path==='/voice/proposals')return{ok:false,status:400,json:async()=>({error:{code:'invalid_voice_command'}})};else throw new Error('unexpected product request');
    return{ok:true,status:200,json:async()=>result};
   });
   await import(`./app.js?product-render-review=${Date.now()}`);await flush();
@@ -44,9 +44,9 @@ test('actual boot/render and audio-off button replace READY status after termina
   await flush();assert.equal($('voice-start').disabled,false);assert.equal($('audio-enable').hidden,false);assert.match($('voice-status').textContent,/已关闭/);assert.doesNotMatch($('voice-status').textContent,/请说/);
   // Ambient speech can finish a real ASR turn without being a command. Its
   // rejected final must not leave the same invitation as a live READY session.
-  $('voice-start').dispatch('click');await flush();assert.equal($('voice-status').textContent,'请说“切到”加完整群名。');
+  $('voice-start').dispatch('click');await flush();assert.equal($('voice-status').textContent,'请说“切到”加完整群名，识别后核对确认。');
   peers.at(-1).channel.onmessage({data:JSON.stringify({type:'conversation.item.input_audio_transcription.completed',transcript:'背景输入'})});await flush();
-  assert.equal($('voice-start').disabled,false);assert.match($('voice-status').textContent,/未识别.*已结束/);assert.notEqual($('voice-status').textContent,'请说“切到”加完整群名。');assert.equal(streams.at(-1).getAudioTracks()[0].enabled,false);
+  assert.equal($('voice-start').disabled,false);assert.match($('voice-status').textContent,/未取得可验证的语音目标/);assert.doesNotMatch($('voice-status').textContent,/请说/);assert.equal(streams.at(-1).getAudioTracks()[0].enabled,false);
 
  }finally{for(const [key,descriptor]of originals){if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key];}}
 });

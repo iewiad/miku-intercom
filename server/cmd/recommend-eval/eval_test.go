@@ -54,6 +54,52 @@ func runFixture(c evalCase, model reportingModel) caseReport {
 	return runCase(context.Background(), c, data.Profiles[c.Profile], model, time.Now, func() bool { return false })
 }
 
+func TestVoiceTargetEvaluationTraversesProposalAndScoresExactWithoutModel(t *testing.T) {
+	for _, tc := range []struct {
+		text, source string
+		calls        int
+	}{
+		{"切到维修组", "exact", 0},
+		{"帮我转到维修组", "model", 1},
+	} {
+		c := fixtureDataset().Cases[0]
+		c.Intent, c.Need = "voice_target", tc.text
+		model := &fakeModel{}
+		result := runFixture(c, model)
+		if result.Protocol != "valid" || result.Semantic != "pass" || result.Source != tc.source || model.calls != tc.calls ||
+			!result.Unchanged || !result.NoOperations || !result.AuthorizationOK || result.PromptVersion != recommendmodel.VoiceTargetPromptVersion ||
+			result.PromptSHA256 != recommendmodel.VoiceTargetPromptSHA256() || result.ReasonPolicy != "voice-target-review-v1" {
+			t.Fatalf("voice proposal was not scored through the read-only production path: %+v", result)
+		}
+		if tc.calls > 0 && model.input.Intent != "voice_target" {
+			t.Fatal("voice target used the duty-recommendation prompt")
+		}
+		if len(result.Suggestions) != 1 || result.Suggestions[0].Reason != "请核对识别出的目标群，确认后才会切换。" {
+			t.Fatal("voice evaluation published raw model reason or wrong target")
+		}
+		if tc.calls == 0 && (result.Transport != "not_called" || result.Cleanup != "not_started") {
+			t.Fatal("exact fast path invented provider or cleanup evidence")
+		}
+	}
+}
+
+func TestVoiceTargetIntentGuardIsScoredWithoutInventingModelOrToken(t *testing.T) {
+	c := fixtureDataset().Cases[0]
+	c.Intent, c.Need, c.Expected, c.AcceptableKeys, c.RequireAll = "voice_target", "不要切到维修组", "abstain", nil, false
+	model := &fakeModel{}
+	result := runFixture(c, model)
+	if result.HTTPStatus != 422 || result.Guard != "explicit-negation-v1" || result.Source != "" ||
+		result.Semantic != "pass" || result.Protocol != "valid" || model.calls != 0 || result.Transport != "not_called" ||
+		result.Cleanup != "not_started" || !result.Unchanged || !result.NoOperations || len(result.Suggestions) != 0 {
+		t.Fatalf("intent guard was misreported: %+v", result)
+	}
+	c.Expected, c.AcceptableKeys = "recommend", []string{"repair"}
+	result = runFixture(c, &fakeModel{})
+	if result.Semantic != "miss" || result.Protocol != "valid" {
+		t.Fatal("unexpected guard rejection must remain a semantic miss for a positive label")
+	}
+}
+
 func TestRealHTTPControlPathMapsAuthorizedCandidatesWithoutConfirmation(t *testing.T) {
 	data, model := fixtureDataset(), &fakeModel{}
 	result := runFixture(data.Cases[0], model)
