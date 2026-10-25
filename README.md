@@ -182,7 +182,7 @@ stateDiagram-v2
     Recovering --> GroupReady: 当前群媒体可用 / 未按麦
 ```
 
-板端先结束 RTA 再持久提交切群；浏览器先持久提交并确认控制操作，再结束 RTA。两者始终串行使用一个本地 Peer，RTA stop 未确认时不恢复群音频。详细边界见 [006 首版规格](docs/specs/006-first-version.md)。
+明确群名切换时，板端先结束 RTA 再持久提交切群；浏览器先持久提交并确认控制操作，再结束 RTA。两者始终串行使用一个本地 Peer，RTA stop 未确认时不恢复群音频。详细边界见 [006 首版规格](docs/specs/006-first-version.md)。独立语音需求入口在两端都先完成转写清理，再请求推荐；确认与恢复见 [009](docs/specs/009-model-recommendation.md)。
 
 启动使用 `python3 tools/dev.py`；板端 LAN、私有证书、USB 初始化和可选 RTA 配置见[首次运行指南](docs/first-run.md)。本地主机回归用 `python3 tools/check.py`，范围与依赖见[开发指南](docs/development.md#自动验证)；完整演示和关闭检查见[演示与收尾指南](docs/demo.md)。
 
@@ -197,6 +197,7 @@ stateDiagram-v2
 | 必交闭环与验收条件 | [MVP 规格](docs/specs/001-intercom-mvp.md) |
 | 控制面 API | [控制面契约 v1](docs/specs/002-control-api.md) |
 | 浏览器群媒体、门控与诊断 | [媒体契约 v1](docs/specs/003-browser-media.md) |
+| 主动需求推荐、板端入口与明确确认 | [需求推荐契约](docs/specs/009-model-recommendation.md) |
 | 哪些已经通过、哪些仍待验证 | [验收记录](docs/acceptance.md) |
 
 ## 目录

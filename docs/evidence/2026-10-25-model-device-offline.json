@@ -1,0 +1,93 @@
+{
+  "date": "2026-10-25",
+  "timezone": "Asia/Shanghai",
+  "status": "offline_contract_and_target_build_passed_live_acceptance_pending",
+  "base_main": "9b3f5f4b4d75645c9db905c2eb5b49c91d6fdf58",
+  "source_commit": "c92d8d90866843f3adbd52d572d55ba7f1b596f9",
+  "scope": "Explicit spoken needs in the browser and board recommendation entry, native authenticated API, durable confirmation recovery and bounded response guards. No physical device or live speech test.",
+  "merged_prs": {
+    "17": "9b3f5f4b4d75645c9db905c2eb5b49c91d6fdf58",
+    "18": "4425587b4ab9befe017e921ba6b7677e5021e0e7"
+  },
+  "host_checks": {
+    "passed": 25,
+    "go_packages_race_tested": 8,
+    "go_vet": "passed",
+    "go_build": "passed",
+    "node_tests": 130,
+    "python_tests": 34,
+    "firmware_host_suites": 20,
+    "injected_models_only": true,
+    "no_system_audio_io": true,
+    "covered": [
+      "explicit need versus exact group-name command",
+      "first current final result only; cleanup before recommendation",
+      "late permission/transcription/model results, hidden page, audio-off and identity ownership invalidation",
+      "native TLS-context/Host/Origin/fetch-site/auth gates with the real HTTP handler and synthetic model",
+      "lost confirmation reply and service restart preserve the original operation and recommendation binding",
+      "retained local workers and unconfirmed known remote cleanup block recommendation",
+      "capability unavailable creates no RTA session or recommendation POST",
+      "before-POST and in-flight cancellation, accepted confirmation during failing/changing/expiring state refresh",
+      "same-current-group confirmation still consumes the recommendation through its original endpoint",
+      "format-1 NVS read compatibility and format-2 full payload conflict/terminal matching with transactional NVS doubles",
+      "raw and decoded NUL, invalid UTF-8, duplicate escaped binding keys, conflicting terminal epoch and bounded response tree",
+      "legal maximum three-card response and 128-group state remain accepted",
+      "real LVGL 800x480 layout and pointer hit tests; scrolling versus selection; separate confirmation; expiry/revision guards; both old keyboard positioning mutations rejected"
+    ]
+  },
+  "candidate": {
+    "source_commit": "c92d8d90866843f3adbd52d572d55ba7f1b596f9",
+    "manifest_sha256": "1dd8d07bd717122160b45b3363456a2e5739fd629bd5aaa8928865fdb8a33e13",
+    "source_file_count": 51,
+    "version": "v0-76-gc92d8d9",
+    "target": "esp32s31",
+    "flashed": false,
+    "bytes": 3501664,
+    "sha256": "7b19b00302559653d016149c416232e1749dbae651f4d2731578e1bf28bb079c",
+    "app_partition_bytes": 4194304,
+    "app_offset": "0x10000",
+    "dram_bss_bytes": 59544,
+    "dram_data_bytes": 31664,
+    "app_partition_free_bytes": 692640
+  },
+  "memory_interpretation": {
+    "static_dram_increase_bytes_vs_pr18_candidate": 736,
+    "need_and_result_buffers": "explicit PSRAM",
+    "prior_voice_buffer_bytes_preserved": 513,
+    "dynamic_board_heap_measured": false,
+    "rtc_allocation_failure_causality_established": false
+  },
+  "limits": {
+    "need_codepoints": 512,
+    "need_utf8_bytes": 2048,
+    "suggestions": 3,
+    "response_buffer_bytes": 49152,
+    "wire_container_depth": 8,
+    "wire_structural_tokens": 4096,
+    "parsed_nodes": 4096,
+    "keys_per_object": 64,
+    "wire_guard_is_complete_json_syntax_validator": false
+  },
+  "runtime_actions": {
+    "serial_opened": false,
+    "board_commands_sent": false,
+    "microphone_opened": false,
+    "sound_played": false,
+    "firmware_flashed": false,
+    "live_gateway_called": false,
+    "existing_product_service_restarted": false,
+    "blocked_browser_automation_attempted": false,
+    "user_audio_recorded": false,
+    "need_text_persisted": false,
+    "model_reasons_persisted": false
+  },
+  "pending_acceptance": [
+    "real browser speech and user gesture/microphone permissions",
+    "physical board touch, ASR final result and recommendation review",
+    "real model semantic quality across a labeled need set",
+    "confirmed target-group media recovery, PTT and listening with this candidate",
+    "physical NVS/power-loss and sustained memory/recovery behavior"
+  ],
+  "reliability_tracker": "https://github.com/iewiad/miku-intercom/issues/16",
+  "interpretation": "Host doubles validate software boundaries and fault handling. Target compilation and static memory size do not prove hardware reliability, ASR accuracy, model recommendation quality or real media recovery. Older listening evidence is not reused as this candidate acceptance."
+}
