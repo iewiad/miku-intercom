@@ -35,13 +35,15 @@ type State struct {
 	MediaReady     bool      `json:"media_ready"`
 }
 type Operation struct {
-	OperationID     string `json:"operation_id"`
-	GroupID         string `json:"group_id"`
-	ExpectedVersion uint64 `json:"expected_version"`
-	Status          string `json:"status"`
-	ErrorCode       string `json:"error_code"`
-	CurrentGroupID  string `json:"current_group_id"`
-	CurrentVersion  uint64 `json:"current_version"`
+	OperationID         string `json:"operation_id"`
+	GroupID             string `json:"group_id"`
+	ExpectedVersion     uint64 `json:"expected_version"`
+	Status              string `json:"status"`
+	ErrorCode           string `json:"error_code"`
+	CurrentGroupID      string `json:"current_group_id"`
+	CurrentVersion      uint64 `json:"current_version"`
+	RecommendationID    string `json:"recommendation_id,omitempty"`
+	RecommendationEpoch string `json:"recommendation_epoch,omitempty"`
 }
 type SwitchRequest struct {
 	OperationID     string `json:"operation_id"`
@@ -65,8 +67,9 @@ type RenewRequest struct {
 }
 type Saver interface{ Save([]byte) error }
 type Options struct {
-	Now    func() time.Time
-	Random io.Reader
+	Now         func() time.Time
+	Random      io.Reader
+	Recommender RecommendationModel
 }
 
 func (o *Options) defaults() {

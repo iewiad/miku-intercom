@@ -17,7 +17,7 @@ type runningServer struct {
 
 func httpServer(address string, handler http.Handler) *http.Server {
 	return &http.Server{Addr: address, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second,
-		WriteTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
+		WriteTimeout: 40 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
 }
 
 // Prepare every listener before serving any request. A failed device bind also closes HTTP.

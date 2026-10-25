@@ -1,0 +1,106 @@
+{
+  "date": "2026-10-25",
+  "timezone": "Asia/Shanghai",
+  "scope": "Approved original RTA text capability and one synthetic HTTP/control fixture; no browser, microphone, player, serial, firmware or board operations.",
+  "model": {
+    "profile": "qwen3.5-omni-plus-realtime",
+    "route": "existing approved platform_rtc",
+    "config_read_in_place": true,
+    "new_provider": false,
+    "credentials_copied": false,
+    "search_enabled": false,
+    "requested_modalities": [
+      "text"
+    ],
+    "structured_output_api": false,
+    "tools_api": false,
+    "confidence_used": false
+  },
+  "bounds": {
+    "model_deadline_seconds": 20,
+    "independent_cleanup_total_seconds": 7,
+    "prompt_bytes": 32768,
+    "event_bytes": 32768,
+    "event_count": 256,
+    "final_text_bytes": 4096,
+    "requested_output_tokens": 512,
+    "http_write_deadline_seconds": 40
+  },
+  "final_text_probe": {
+    "report": {
+      "stage": "text_completed",
+      "data_channel_open": true,
+      "session_updated": true,
+      "response_done": true,
+      "text_bytes": 109,
+      "audio_events": 0,
+      "playback_paths": 0,
+      "microphone_paths": 0,
+      "stop_confirmed": true,
+      "event_types": [
+        "session.created",
+        "session.updated",
+        "response.created",
+        "response.text.delta",
+        "response.text.delta",
+        "response.text.delta",
+        "response.text.delta",
+        "response.text.delta",
+        "response.text.delta",
+        "response.text.delta",
+        "response.text.done",
+        "response.done"
+      ]
+    },
+    "exact_candidate_json": true
+  },
+  "integrated_real_model_http_control": {
+    "stage": "confirmed_and_replay_verified",
+    "original_model_configured": true,
+    "recommendation_http_status": 200,
+    "suggestions": 1,
+    "exact_fixture_target": true,
+    "unconfirmed_current_group_unchanged": true,
+    "explicit_synthetic_confirmation": true,
+    "confirmed_operation_applied": true,
+    "replay_did_not_switch_again": true,
+    "restart_replay_returned_saved_terminal": true,
+    "known_rta_session_stop_confirmed": true,
+    "microphone_paths": 0,
+    "playback_paths": 0
+  },
+  "observed_failure": {
+    "stage": "cleanup_unconfirmed",
+    "completed_text_bytes": 119,
+    "result_withheld": true,
+    "first_stop_query_nonterminal": true,
+    "later_stop_confirmed": true,
+    "fix": "Bound retries of same session stop/query by one independent 7s cleanup deadline; never publish output on uncertain cleanup."
+  },
+  "cleanup": {
+    "known_sessions": 4,
+    "stop_confirmed": 4,
+    "pending": 0,
+    "ordinary_group_audio_sent_to_model": false,
+    "bootstrap_input": "fixed Opus silence only",
+    "remote_audio_handling": "discard RTP; no decoder or playback sink"
+  },
+  "offline_verification": {
+    "command": "go test -race ./internal/recommendmodel ./internal/rta ./cmd/intercom",
+    "result": "passed",
+    "real_tcp_delayed_response_seconds": 10.25,
+    "gateway_and_provider_in_tests": "synthetic TLS HTTP and real local Pion peers; does not prove provider quality"
+  },
+  "source_report_sha256": {
+    "result-final.json": "6a9f413e60986868643ec44cfb9b758a65fb061f31deef05797970af1ab9a362",
+    "control-result.json": "035defe1918983f1a080d147a5def0d71deedff65040647d0195f55a5616c839"
+  },
+  "not_verified": [
+    "Recommendation accuracy, latency distribution or task success rate across real users",
+    "Actual browser input/confirmation and explicit spoken need flow against real model",
+    "Target group media recovery after recommendation confirmation",
+    "Board UI, speech, firmware build, flashing or touch",
+    "Presence, member availability or someone having accepted a call",
+    "Stable cross-instance terminal consistency of the external RTA platform"
+  ]
+}

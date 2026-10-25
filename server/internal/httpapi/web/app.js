@@ -1,5 +1,6 @@
 import {AudioClient} from './audio.js';
 import {VoiceCommandClient} from './voice.js';
+import {RecommendationClient} from './recommendation.js';
 const API = '/api/v1';
 export const IDENTITY_KEY = 'shenglu.control.identity.v1';
 export const pendingKey = id => `shenglu.control.pending.v1.${id}`;
@@ -66,6 +67,14 @@ const messages = {
   not_member: '尚未加入这个群，无法切换。',
   invalid_code: '口令不正确，请检查后再试。',
   rate_limited: '尝试次数较多，请稍后再试。',
+  recommendation_expired: '建议已过期，请重新获取。',
+  recommendation_stale: '群组或职责已变化，请重新获取建议。',
+  recommendation_consumed: '这条建议已经确认，请重新获取建议。',
+  recommendation_unavailable: '需求推荐暂不可用，请从群列表选择。',
+  recommendation_unknown: '建议已失效，请重新获取。',
+  recommendation_candidates_changed: '已加入群或职责已变化，请重新获取建议。',
+  recommendation_target_invalid: '目标不属于本次建议，请重新获取建议。',
+  server_restarted: '服务已重新启动，请重新获取建议。',
 };
 export const errorText = error => error.status === 401 ? '本机身份已失效，请重新建立身份并重新入群。' : messages[error.code] || (error instanceof APIError ? error.message : '网络请求未确认，请检查本机服务后重试。');
 
@@ -92,13 +101,13 @@ export class ControlClient {
     if (this.uiBlocked) this.cancelFloor();
     else this.emit();
   }
-  load(identity, pending = null) { if (this.identity?.token !== identity?.token) { this.cancelFloor(); this.audio?.suspend(); } this.identity = identity; this.pendingSwitch = pending; this.emit(); }
-  async request(path, method = 'GET', body, {token = this.identity?.token, keepalive = false} = {}) {
+  load(identity, pending = null) { if (this.identity?.token !== identity?.token) { this.cancelFloor(); this.audio?.suspend(); this.recommendation?.interrupt(); } this.identity = identity; this.pendingSwitch = pending; this.emit(); }
+  async request(path, method = 'GET', body, {token = this.identity?.token, keepalive = false, timeoutMs = 8000} = {}) {
     const headers = {'Accept': 'application/json'};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (token) headers.Authorization = `Bearer ${token}`;
     const abort = new AbortController();
-    const timeout = setTimeout(() => abort.abort(), 8000);
+    const timeout = setTimeout(() => abort.abort(), timeoutMs);
     try {
       const response = await this.fetchImpl(`${API}${path}`, {method, headers, cache: 'no-store',
         credentials: 'same-origin', signal: abort.signal, keepalive,
@@ -119,7 +128,7 @@ export class ControlClient {
       const result = await this.request('/devices', 'POST', {name}, {token: null});
       this.voice?.interrupt(); this.audio?.disable(); this.identity = {device: result.device, token: result.token};
       this.active = true; this.authInvalid = false; this.epoch++; this.onIdentity(this.identity); this.emit();
-      this.mutationBusy = false; await this.voice?.initialize(); await this.refresh();
+      this.mutationBusy = false; await this.voice?.initialize(); await this.recommendation?.initialize(); await this.refresh();
       this.inform('准备好了。创建一个群，或用伙伴的口令加入。', 'success');
     } catch (error) { this.inform(errorText(error), 'error'); }
     finally { this.mutationBusy = false; this.emit(); }
@@ -134,7 +143,7 @@ export class ControlClient {
       this.cancelFloor(); this.audio?.suspend('群状态已变化，正在恢复音频。');
       if (restarted) { this.notice = '连接已恢复，需要发言时请重新按住说话。'; this.noticeTone = 'success'; }
     }
-    this.state = next; this.stateAt = this.now(); this.connected = true; this.emit(); void this.audio?.sync(); return true;
+    this.state = next; this.stateAt = this.now(); this.connected = true; this.recommendation?.observeState(); this.emit(); void this.audio?.sync(); return true;
   }
   async refresh() {
     if (!this.allowed() || this.polling || this.pendingSwitch || this.mutationBusy) return;
@@ -150,7 +159,7 @@ export class ControlClient {
     finally { this.polling = false; this.emit(); }
   }
   async mutate(path, body) {
-    if (!this.allowed() || this.mutationBusy || this.pendingSwitch || this.voice?.blocking) return;
+    if (!this.allowed() || this.mutationBusy || this.pendingSwitch || this.voice?.blocking || this.recommendation?.blocking) return;
     this.cancelFloor(); const epoch = ++this.epoch;
     this.mutationBusy = true; this.emit();
     try {
@@ -171,12 +180,24 @@ export class ControlClient {
   }
   joinGroup(code) { return this.mutate('/memberships', {code}); }
   async switchGroup(groupID) {
-    if (!this.allowed() || this.uiBlocked || this.mutationBusy || this.pendingSwitch || !this.state) return false;
+    if (!this.allowed() || this.uiBlocked || this.mutationBusy || this.pendingSwitch || this.recommendation?.blocking || !this.state) return false;
     this.cancelFloor(); this.audio?.suspend('正在确认切群结果。'); ++this.epoch;
     const pending = {operation_id: this.random(), group_id: groupID, expected_version: this.state.current_version};
     try { this.onPending(pending); }
     catch { this.inform('无法保存切群请求，尚未提交。请恢复浏览器本地存储后重试。', 'error'); void this.audio?.sync(); return false; }
     this.pendingSwitch = pending; this.inform('正在切换群组，完成前请稍候。');
+    await this.confirmSwitch(true); return true;
+  }
+  async confirmRecommendation(recommendation, groupID) {
+    if (!this.allowed() || !this.connected || this.uiBlocked || this.mutationBusy || this.pendingSwitch || !this.state) return false;
+    const pending = {operation_id: this.random(), group_id: groupID, expected_version: recommendation.current_version,
+      recommendation_id: recommendation.recommendation_id, server_epoch: recommendation.server_epoch};
+    try { this.onPending(pending); }
+    catch { this.inform('无法保存确认请求，尚未提交。请恢复本地存储后重试。', 'error'); return false; }
+    this.pendingSwitch = pending;
+    this.recommendation?.interrupt('确认请求已提交，正在等待后台结果。');
+    this.cancelFloor(); this.audio?.suspend('正在确认推荐切群结果。');
+    this.inform('正在确认并进入推荐群组，完成前请稍候。');
     await this.confirmSwitch(true); return true;
   }
   async confirmSwitch(first = false) {
@@ -190,10 +211,12 @@ export class ControlClient {
         try { result = await this.request(`/operations/${encodeURIComponent(operation.operation_id)}`); }
         catch (error) { if (!(error instanceof APIError && error.status === 404)) throw error; }
       }
-      if (!result) result = await this.request('/current-group', 'PUT', operation);
+      if (!result) result = await this.request(operation.recommendation_id ? '/recommendations/confirm' : '/current-group', 'PUT', operation);
       if (epoch !== this.epoch || !this.allowed()) return;
       if (!['applied', 'rejected'].includes(result.operation?.status) || result.operation.operation_id !== operation.operation_id ||
-        result.operation.group_id !== operation.group_id || result.operation.expected_version !== operation.expected_version)
+        result.operation.group_id !== operation.group_id || result.operation.expected_version !== operation.expected_version ||
+        (operation.recommendation_id && (result.operation.recommendation_id !== operation.recommendation_id ||
+          result.operation.recommendation_epoch !== operation.server_epoch)))
         throw new Error('operation_not_terminal');
       const state = result.state || await this.request('/state');
       if (epoch !== this.epoch || !this.allowed()) return;
@@ -209,7 +232,7 @@ export class ControlClient {
   }
   serverNow() { return Date.parse(this.state?.server_time || '') + Math.max(0, this.now() - this.stateAt); }
   canPress() {
-    return this.allowed() && !this.uiBlocked && this.connected && !this.voice?.blocking && (!this.audio || this.audio.isReady()) && !!this.state?.current_group_id && !!this.state.server_epoch &&
+    return this.allowed() && !this.uiBlocked && this.connected && !this.voice?.blocking && !this.recommendation?.blocking && (!this.audio || this.audio.isReady()) && !!this.state?.current_group_id && !!this.state.server_epoch &&
       Number.isFinite(this.serverNow()) && !this.pendingSwitch && !this.mutationBusy && !this.acquiring && !this.releasing && !this.pressed;
   }
   stillPressed(generation, request) {
@@ -280,18 +303,19 @@ export class ControlClient {
   }
   forgetIdentity() {
     this.suspend(''); this.identity = null; this.state = null; this.pendingSwitch = null; this.share = null;
-    this.voice?.interrupt(); this.audio?.disable();
+    this.voice?.interrupt(); this.recommendation?.interrupt(); this.audio?.disable();
     this.authInvalid = false; this.active = true; this.connected = false; this.notice = ''; this.emit();
   }
   suspend(message) {
     this.active = false; this.cancel(this.retryTimer); this.retryTimer = null;
-    this.voice?.interrupt(); this.cancelFloor(message); this.audio?.suspend(message); this.emit();
+    this.voice?.interrupt(); this.recommendation?.interrupt('页面已暂停，请重新获取建议。'); this.cancelFloor(message); this.audio?.suspend(message); this.emit();
   }
   async activate() {
     this.cancelFloor(); this.audio?.suspend();
     if (this.restorePending && this.identity) this.pendingSwitch = this.restorePending(this.identity.device.id);
     this.active = true; ++this.epoch; this.state = null; this.connected = false; this.notice = ''; this.emit();
     await this.voice?.initialize();
+    await this.recommendation?.initialize();
     if (this.pendingSwitch) await this.confirmSwitch(); else await this.refresh();
   }
 }
@@ -305,6 +329,7 @@ export function channelPresentation(client) {
   if (!client.allowed()) return view('paused', '此页面已暂停', '返回正在使用的页面，或在这里继续。', '继续使用后再说话');
   if (client.pendingSwitch) return view('switching', '正在切换群组', '切换完成后将更新当前群，请稍候。', '正在切换，请稍候');
   if (client.voice?.blocking) return view('voice', client.voice.current ? '正在语音切群' : '正在准备', '语音操作结束后，会恢复群内对讲。', '结束语音操作后再说话');
+  if (client.recommendation?.blocking) return view('recommending', '正在选择协作群', '当前群保持不变。请先确认建议或取消。', '先完成或取消需求推荐');
   if (client.uiBlocked) return view('managing', '正在添加群组', '当前发言已停止。关闭面板后可返回对讲操作。', '先关闭添加群组面板');
   if (client.mutationBusy) return view('updating', '正在更新群组', '正在更新群组信息，请稍候。', '操作进行中，请稍候');
   if (!state) return !client.polling && client.noticeTone === 'error' ?
@@ -337,7 +362,7 @@ function boot() {
   };
   const text = (id, value) => { if ($(id).textContent !== String(value)) $(id).textContent = value; };
   const element = (tag, className, value) => { const node = document.createElement(tag); node.className = className; if (value !== undefined) node.textContent = value; return node; };
-  const canManage = () => client.allowed() && !client.mutationBusy && !client.pendingSwitch && !client.voice?.blocking;
+  const canManage = () => client.allowed() && !client.mutationBusy && !client.pendingSwitch && !client.voice?.blocking && !client.recommendation?.blocking;
   function openAddPanel(mode = 'join', trigger = $('add-group-open')) {
     if (!canManage()) return false;
     addPanelOpen = true; addMode = mode; addReturnFocus = trigger; formMessage = '';
@@ -430,7 +455,22 @@ function boot() {
     text('voice-cancel', voice?.canCancel ? '取消语音切群' : voice?.current?.submitted ? '正在切换，请稍候' : '正在返回群组');
     $('voice-check').hidden=voice?.phase!=='checking' || !!voice?.initializing;
     text('voice-status',voice?.message || '正在检查语音切群。');
-
+    const recommendation = client.recommendation;
+    $('recommendation-need').disabled = !recommendation?.canRequest();
+    $('recommendation-request').disabled = !recommendation?.canRequest();
+    $('recommendation-cancel').hidden = !recommendation?.blocking;
+    text('recommendation-status', recommendation?.message || '正在检查需求推荐。');
+    const recommendations = $('recommendation-results'); recommendations.replaceChildren();
+    for (const item of recommendation?.result?.suggestions || []) {
+      const row = element('li', 'recommendation-row');
+      row.append(element('strong', '', item.name));
+      if (item.purpose) row.append(element('p', 'group-purpose', item.purpose));
+      row.append(element('p', 'recommendation-reason', `建议理由 · 模型生成：${item.reason}`));
+      const button = element('button', 'button secondary', `确认进入 ${item.name}`);
+      button.type = 'button'; button.disabled = !client.allowed() || !!client.pendingSwitch || !client.connected;
+      button.addEventListener('click', () => { void recommendation.confirm(item.group_id); });
+      row.append(button); recommendations.append(row);
+    }
   }
   client = new ControlClient({authorize: owns, onChange: render, restorePending: id => read(pendingKey(id)),
     onIdentity(identity) { localStorage.setItem(IDENTITY_KEY, JSON.stringify(identity)); claimOwner(localStorage, identity.device.id, tab, true); },
@@ -444,6 +484,9 @@ function boot() {
   });
   client.voice=new VoiceCommandClient({control:client,audio:client.audio,request:(...args)=>client.request(...args),
     scopeRequest:()=>{const token=client.identity?.token;return(path,method,body,options)=>client.request(path,method,body,{...options,token});},onChange:render});
+  client.recommendation = new RecommendationClient({control: client, onChange: render});
+  $('recommendation-form').addEventListener('submit', event => { event.preventDefault(); void client.recommendation.request($('recommendation-need').value); });
+  $('recommendation-cancel').addEventListener('click', () => { if (!client.pendingSwitch && client.recommendation.blocking) client.recommendation.interrupt('已取消建议，当前群保持不变。'); });
   $('voice-start').addEventListener('click',()=>{if (!client.uiBlocked) void client.voice.start();});
   $('voice-cancel').addEventListener('click',()=>client.voice.interrupt());
   $('voice-check').addEventListener('click',()=>{void client.voice.initialize();});
@@ -506,10 +549,10 @@ function boot() {
   $('ptt').addEventListener('keyup', event => { if ([' ', 'Enter'].includes(event.key)) { event.preventDefault(); endPress(); } });
   $('ptt').addEventListener('blur', endPress);
   window.addEventListener('blur', endPress);
-  window.addEventListener('offline', () => { client.voice.interrupt('网络已断开，语音切群已停止。'); client.connected = false; client.cancelFloor('网络已断开，发言已经停止。'); client.audio.suspend('网络已断开。'); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) { client.voice.interrupt('页面隐藏，语音指令已停止。'); endPress(); client.audio.suspend('页面隐藏，音频已停止。'); } else if (client.allowed()) void client.refresh(); });
+  window.addEventListener('offline', () => { client.voice.interrupt('网络已断开，语音切群已停止。'); client.recommendation.interrupt('网络已断开，请重新获取建议。'); client.connected = false; client.cancelFloor('网络已断开，发言已经停止。'); client.audio.suspend('网络已断开。'); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { client.voice.interrupt('页面隐藏，语音指令已停止。'); client.recommendation.interrupt('页面已隐藏，请重新获取建议。'); endPress(); client.audio.suspend('页面隐藏，音频已停止。'); } else if (client.allowed()) void client.refresh(); });
   window.addEventListener('online', () => { if (client.allowed()) void client.refresh(); });
-  window.addEventListener('pagehide', () => { client.voice.interrupt('页面已离开，语音指令已停止。'); endPress(); client.audio.suspend(); if (client.identity && owns()) localStorage.removeItem(ownerKey(client.identity.device.id)); });
+  window.addEventListener('pagehide', () => { client.voice.interrupt('页面已离开，语音指令已停止。'); client.recommendation.interrupt('页面已离开，请重新获取建议。'); endPress(); client.audio.suspend(); if (client.identity && owns()) localStorage.removeItem(ownerKey(client.identity.device.id)); });
   window.addEventListener('pageshow', () => { if (client.identity && !identityChanged && claimOwner(localStorage, client.identity.device.id, tab)) void client.activate(); });
   window.addEventListener('storage', event => {
     if (!client.identity) { if (event.key === IDENTITY_KEY) location.reload(); return; }

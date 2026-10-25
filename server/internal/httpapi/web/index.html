@@ -70,6 +70,18 @@
           <div id="empty-filter" class="empty-state" hidden><p>没有匹配的群</p><small>换个关键词，或清空筛选。</small></div>
           <p class="field-help member-note">群内人数为已加入成员，不代表正在收听的人数。</p>
         </section>
+        <section class="panel recommendation-panel" aria-labelledby="recommendation-title">
+          <div class="section-heading"><h2 id="recommendation-title">需要哪一组帮忙</h2></div>
+          <form id="recommendation-form" class="compact-form">
+            <label for="recommendation-need">描述你的需求</label>
+            <input id="recommendation-need" placeholder="例如：音响没有声音，需要排查设备" maxlength="1024" autocomplete="off" aria-describedby="recommendation-help recommendation-status">
+            <p id="recommendation-help" class="field-help">本次需求及已加入群的名称、职责会交给模型生成建议。普通对讲不参与分析。</p>
+            <button id="recommendation-request" class="button secondary form-submit" type="submit" disabled>获取建议</button>
+          </form>
+          <p id="recommendation-status" class="field-help" role="status" aria-live="polite">正在检查需求推荐。</p>
+          <ul id="recommendation-results" class="recommendation-results" aria-label="群组建议"></ul>
+          <button id="recommendation-cancel" class="button quiet" type="button" hidden>取消推荐，返回对讲</button>
+        </section>
         <section id="add-group-panel" class="panel add-group-panel" aria-labelledby="add-group-title" hidden>
           <div class="section-heading"><h2 id="add-group-title">添加群组</h2><button id="add-group-close" type="button" class="icon-button" aria-label="关闭添加群组">关闭 <span aria-hidden="true">×</span></button></div>
           <div class="form-modes glass" role="group" aria-label="添加方式"><button id="join-mode" type="button" aria-pressed="true">用口令加入</button><button id="create-mode" type="button" aria-pressed="false">创建新群</button></div>

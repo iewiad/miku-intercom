@@ -98,7 +98,7 @@ test('product purpose rendering and filtering are text-only, retain the current 
       {name: '新群', purpose: 'Equipment Support'}, {name: '新群', purpose: 'Equipment Support'},
     ]);
     assert.equal(microphoneCalls, 0); assert.equal(peerCalls, 0);
-    assert.ok(requests.every(request => ['/voice', '/state', '/groups'].includes(request.path)));
+    assert.ok(requests.every(request => ['/voice', '/state', '/groups'].includes(request.path) || (request.path === '/recommendations' && request.method === 'GET')));
     assert.equal(state.current_group_id, 'current'); assert.equal(state.current_version, 1);
   } finally {
     for (const [key, descriptor] of originals) {

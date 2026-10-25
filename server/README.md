@@ -13,7 +13,7 @@ go run ./cmd/intercom
 
 使用两个独立浏览器配置或普通/隐私窗口创建不同身份。A 建立全员群，B 使用口令加入；再建立后勤组，第二次加入不改变当前群。两端点击启用音频并允许麦克风，再按住说话；检查双向声音、唯一授权、松手释放与手动切群，建议使用耳机，同机验证时将两个窗口并排保持可见。显示的是已加入成员数，不是在线人数。Token 只保存在浏览器本机存储，服务端保存摘要；群口令仅在创建后显示一次。
 
-建群时可填写最多 256 个 Unicode 码点的职责简介，已加入群可按名称或职责筛选，再手动进入。职责只在创建时填写；筛选不切群或启用音频。旧快照可由新版本读取；已有数据升级前应保留一致副本，含非空职责的新快照不能直接交给旧二进制读取。设备 HTTPS 入口省略职责，保持原目录规模；具体边界见 [007](../docs/specs/007-group-purpose.md)。语义模型推荐仍需独立验证。
+建群时可填写最多 256 个 Unicode 码点的职责简介，已加入群可按名称或职责筛选，再手动进入。职责只在创建时填写；筛选不切群或启用音频。旧快照可由新版本读取；已有数据升级前应保留一致副本，含非空职责的新快照不能直接交给旧二进制读取。设备 HTTPS 入口省略职责，保持原目录规模；具体边界见 [007](../docs/specs/007-group-purpose.md)。需求推荐另按 [009](../docs/specs/009-model-recommendation.md) 的显式启用和确认事务工作。
 
 ```sh
 go test -race ./...
@@ -91,3 +91,29 @@ go run ./cmd/intercom -addr 127.0.0.1:8080 \
 服务端在 `<data>.voice.json` 留存私有原子会话 journal，绑定 RTIC origin、app 与完整 RTC 授权策略（固定 origin 或数字节点域及端口）；不写 Key、短期 Token、SDP、转写或录音。先写待确认记录再请求创建；重启后只清理旧会话，不恢复为新语音命令。正常退出尝试 stop 全部已知会话；浏览器消失后 45 秒开始后台 stop，失败每 5 秒重试。**创建请求结果不明且没有 session_id 时，无法证明是否已创建，服务和页面保持阻塞；必须先在网关确认并处理该悬挂会话，再由开发者修复 journal，不能通过删除文件或重启来声称已清理。** 更换绑定配置同样要求先解决旧 journal；只有所有记录均已 terminal，才可由开发者归档旧 journal 后使用新策略，不能遗弃待确认记录。异常退出的私有存储锁沿用上文人工核实进程规则。
 
 每身份仅一个活动代理会话，全局上限 32 个；历史 command_id 保护记录上限 4096，不静默淘汰。已结束或先 stop 的 command_id 不得复活；新语音操作使用新随机 ID。数值、控制与 TLS 代理测试不替代真实转写、单 Peer 真机资源切换或真人听测。
+
+## 按需求推荐已加入群
+
+默认 `GET /api/v1/recommendations` 返回 `available:false`。原有 `-voice-config` 只开启语音信令；有已批准的同一份私有配置后，另外传 `-recommendation-model` 才开启真实模型推荐。缺少配置时明确启动失败，不使用关键词、模拟推荐或其他 Provider 兜底。
+
+```sh
+go run ./cmd/intercom -addr 127.0.0.1:8080 \
+  -data ../work/intercom/state.json \
+  -voice-config ../work/private/voice.json -recommendation-model
+```
+
+推荐器复用该配置的原网关、RTC 节点授权策略和模型 Profile，服务端用 Pion 发送需求和后台生成的授权候选 JSON。创建推荐会话显式设置 `enable_search=false`，DataChannel 请求 `modalities:["text"]`、关闭自动语音轮次、最多 512 输出 token；不使用 tools、结构化输出 API 或置信度字段。真实原 Profile 的有界文本终态已独立验证，结果见 [模型证据](../docs/evidence/2026-10-25-model-text.json)，不代表推荐准确率或板端验收。
+
+推荐器没有麦克风、音频解码器或播放路径。RTC 初始化只发送固定 Opus 静音，收到远端音轨只丢弃 RTP；普通群音频不进入推荐器。最多接收 256 个事件，每个 32 KiB，最终文本最多 4096 B；只接受同一 response ID 的 `completed` 终态。音频 DataChannel 事件、模型错误、超限、未知候选和不合法 JSON 均失败。请求模型时间上限 20 秒，清理另用独立 7 秒总期限反复查询同一个会话终态；结果与清理都确认后才发布建议。监听写期限 40 秒容纳该流程，浏览器请求期限仍有界。
+
+推荐会话使用原 `<data>.voice.json` journal 中的独立内部身份 `recommendation_model`，全局串行执行；清理尚未确认时保留原会话并拒绝新推荐。重启只清理遗留会话。journal、候选/需求和模型输出的处理边界及确认端点见 009；创建结果不明的处理沿用原 journal 规则，不能通过删文件绕过。
+
+独立宿主验证命令只操作新建的合成身份与群，不开启浏览器、音频设备或板端。私有目录须先建好并设为 0700；配置直接读取原文件，勿复制 Key。默认只做一个文本能力探测；`-through-control -confirm` 明确确认合成建议，并校验 HTTP 推荐、持久控制事务、重放和服务重建后的终态恢复。`-state` 必须是新的空快照，命令拒绝复用已有控制数据：
+
+```sh
+go run ./cmd/recommend-probe -voice-config ../work/private/voice.json \
+  -journal ../work/model-probe/cleanup.json \
+  -through-control -confirm -state ../work/model-probe/new-synthetic-state.json
+```
+
+命令仅输出白名单布尔值、字节数和事件类型，不输出 Key、会话标识、群标识、需求或模型理由。`confirmed_and_replay_verified` 表示本次合成控制链路通过；用户交互、语音需求、实际群音频恢复和板端触控仍需分别验收。
