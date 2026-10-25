@@ -9,6 +9,7 @@
 #include <string.h>
 #include <math.h>
 #include "cJSON.h"
+#include "group_json_response.h"
 #include "group_switch_journal.h"
 #include "group_command_state.h"
 

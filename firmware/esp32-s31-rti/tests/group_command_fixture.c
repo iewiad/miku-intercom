@@ -42,5 +42,18 @@ int main(void)
     s.revision=s.ticket=UINT32_MAX;
     assert(group_command_begin(&s,GROUP_COMMAND_VOICE,NULL));
     assert(s.revision==1 && s.ticket==1);
+    group_command_finish(&s);
+    char need[2049], unicode[2053];
+    for (unsigned i=0;i<512;++i) memcpy(unicode+i*4,"😀",4);
+    unicode[2048]=0;
+    assert(group_command_need_valid(unicode));
+    assert(group_command_begin(&s,GROUP_COMMAND_RECOMMEND,NULL));
+    s.need=need;s.need_capacity=sizeof(need);
+    group_command_phase(&s,GROUP_COMMAND_STARTING);assert(group_command_ready(&s,s.ticket));
+    assert(group_command_final(&s,s.ticket,unicode)&&!s.failed&&strlen(need)==2048&&!s.transcript[0]);
+    assert(group_command_cancel(&s)); // Worker still owns need until cleanup.
+    assert(strlen(need)==2048);group_command_finish(&s);assert(!need[0]);
+    unicode[2048]='x';unicode[2049]=0;assert(!group_command_need_valid(unicode));
+    assert(!group_command_need_valid("bad\ncontrol")&&!group_command_need_valid("\xc0\xaf"));
     puts("group command state: passed (code, busy, first final, stale, cancel, overflow, terminal, revision wrap)");
 }

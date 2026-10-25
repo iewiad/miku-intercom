@@ -75,6 +75,7 @@ static group_voice_api_error_t read_voice_api_error(const char *data, size_t use
 }
 static uint64_t http_requests, http_failures, tls_connections;
 static unsigned creations, connections, cleanups, transfers;
+static int observed_timeout;
 static int forced_body_error, forced_clear_error;
 enum response_mode { SUCCESS, INCOMPLETE, HTTP_500, OVERFLOW, INVALID_JSON, SERVER_CLOSE, EARLY_FAILURE };
 static enum response_mode mode;
@@ -97,6 +98,16 @@ static cJSON *cJSON_ParseWithLengthOpts(const char *data, size_t size, void *end
     return mode == INVALID_JSON ? NULL : calloc(1, sizeof(cJSON));
 }
 static void cJSON_Delete(cJSON *json) { free(json); }
+/* Real wire/tree validation is exercised with real cJSON by the recommendation
+ * fixture. Here only its admission boundary is doubled, like JSON/SDK above. */
+static bool force_response_guard_reject;
+static unsigned response_guard_calls;
+static cJSON *group_json_response_parse(const char *data, size_t used)
+{
+    ++response_guard_calls;
+    if (force_response_guard_reject) return NULL;
+    return cJSON_ParseWithLengthOpts(data, used + 1, NULL, true);
+}
 static int http_event(esp_http_client_event_t *event);
 static esp_http_client_handle_t esp_http_client_init(const esp_http_client_config_t *options)
 {
@@ -125,7 +136,8 @@ static int esp_http_client_set_method(client_t *client, int method)
 static int esp_http_client_set_timeout_ms(client_t *client, int timeout)
 {
     (void)client;
-    assert(timeout == 2500 || timeout == 8000);
+    assert(timeout == 2500 || timeout == 8000 || timeout == 35000);
+    observed_timeout = timeout;
     return ESP_OK;
 }
 static int esp_http_client_set_post_field(client_t *client, const char *data, int size)
@@ -302,6 +314,20 @@ int main(void)
         assert(group_voice_classify(true,false,last_http_status,last_voice_api_error,false,false,false)==GROUP_VOICE_TRANSPORT_ERROR);
     }
     assert(cleanups==creations);
+    mode=SUCCESS;
+    success("/recommendations",HTTP_METHOD_POST,&body);assert(observed_timeout==35000);
+    success("/recommendations",HTTP_METHOD_GET,NULL);assert(observed_timeout==2500);
+    success("/media/peers",HTTP_METHOD_POST,&body);assert(observed_timeout==8000);
+    success("/voice/resolve",HTTP_METHOD_POST,&body);assert(observed_timeout==2500);
+    /* Successful transfer is insufficient when its wire guard rejects the
+     * control response. No JSON or retained HTTP payload may escape. */
+    assert(response_guard_calls > 0);
+    force_response_guard_reject=true;
+    assert(request("/operations/pending_fixture",HTTP_METHOD_GET,NULL,&out)==ESP_ERR_INVALID_RESPONSE);
+    assert(!out&&!control_client);
+    force_response_guard_reject=false;
+    success("/state",HTTP_METHOD_GET,NULL);
+    drop_http_client();assert(cleanups==creations);
     puts("HTTP reuse regression: passed (production GET/POST/renew/GET/DELETE reuse, SDK Content-Type errors, complete-response cleanup, pointer detach)");
     return 0;
 }

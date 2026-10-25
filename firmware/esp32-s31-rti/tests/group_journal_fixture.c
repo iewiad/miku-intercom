@@ -461,6 +461,32 @@ int main(void)
     test_commit_failures();
     test_corrupted_blobs();
     test_terminal_and_fresh_state();
+    // Legacy v1 NVS remains byte-for-byte intact until terminal clear; loading
+    // normalizes only the in-memory format and retains its original payload.
+    reset_fixture();
+    typedef struct { uint32_t format;char server_url[192],device_id[81],operation_id[81],group_id[81];uint64_t expected_version; } legacy_t;
+    group_switch_journal_t old=sample_record(),loaded;
+    legacy_t legacy={.format=1,.expected_version=old.expected_version};
+    strcpy(legacy.server_url,old.server_url);strcpy(legacy.device_id,old.device_id);
+    strcpy(legacy.operation_id,old.operation_id);strcpy(legacy.group_id,old.group_id);
+    durable.namespace_exists=durable.present=true;durable.size=sizeof(legacy);memcpy(durable.data,&legacy,sizeof(legacy));
+    assert(group_switch_journal_load(&loaded)==ESP_OK&&loaded.format==2&&!loaded.recommendation_id[0]);
+    assert(!strcmp(loaded.operation_id,old.operation_id)&&loaded.expected_version==old.expected_version);
+    assert(durable.size==sizeof(legacy)&&!memcmp(durable.data,&legacy,sizeof(legacy))&&!commits);
+    assert(group_switch_journal_save(&loaded)==ESP_OK&&!commits);
+    assert(group_switch_journal_clear(loaded.operation_id)==ESP_OK);
+    reset_fixture();group_switch_journal_t rec=sample_record();
+    strcpy(rec.recommendation_id,"recommend_fixture");strcpy(rec.recommendation_epoch,"epoch_fixture");
+    assert(group_switch_journal_save(&rec)==ESP_OK);
+    group_switch_terminal_t terminal=sample_terminal(&rec);
+    assert(!group_switch_terminal_matches(&rec,&terminal)); // ordinary endpoint cannot substitute.
+    strcpy(terminal.recommendation_id,rec.recommendation_id);strcpy(terminal.recommendation_epoch,rec.recommendation_epoch);
+    assert(group_switch_terminal_matches(&rec,&terminal));
+    strcpy(terminal.recommendation_epoch,"epoch_other");assert(!group_switch_terminal_matches(&rec,&terminal));
+    group_switch_journal_t changed=rec;strcpy(changed.recommendation_epoch,"epoch_other");
+    assert(group_switch_journal_save(&changed)==ESP_ERR_INVALID_STATE);
+    changed=rec;changed.recommendation_id[0]=changed.recommendation_epoch[0]=0;
+    assert(group_switch_journal_save(&changed)==ESP_ERR_INVALID_STATE);
     require_no_handles();
     puts("production switch journal: passed (SDK double: storage, binding, commit errors, malformed blobs, terminal/state fences)");
     puts("scope: host simulation only; real NVS/Flash atomicity and power-loss durability were not tested");

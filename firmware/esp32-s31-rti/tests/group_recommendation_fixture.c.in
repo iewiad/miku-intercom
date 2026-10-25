@@ -1,0 +1,242 @@
+#include <assert.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "cJSON.h"
+#include "group_recommendation.h"
+#include "group_switch_journal.h"
+#include "group_json_response.h"
+#define HTTP_METHOD_GET 1
+#define HTTP_METHOD_PUT 2
+#define portENTER_CRITICAL(p) ((void)(p))
+#define portEXIT_CRITICAL(p) ((void)(p))
+static int guard,last_http_status;
+static struct {bool desired,ready,switch_pending;unsigned session;} intent;
+static struct {char server_url[192],device_id[81];} config;
+static group_switch_journal_t pending_operation;
+static bool journal_blocked,pending_saved,terminal_exists,lose_put,wrong_binding,fail_state,rejected;
+enum {SWITCH_IDLE,SWITCH_CONFIRMING,SWITCH_MISMATCH};
+static int switch_phase;
+static char switch_operation_id[81],switch_target_id[81];
+static unsigned operation_gets,operation_puts,clears,state_gets;
+static bool update_ui(const char *s) {(void)s;return true;}
+static int64_t esp_timer_get_time(void) {return 1000000;}
+static void intent_cancel(void *p) {assert(p==&intent);}
+static void advance_view_locked(void) {}
+static esp_err_t apply_state(const cJSON *s,int64_t a,int64_t b) {assert(cJSON_IsObject(s)&&a==b);return ESP_OK;}
+static esp_err_t group_switch_journal_clear(const char *id) {assert(!strcmp(id,pending_operation.operation_id));++clears;return ESP_OK;}
+static cJSON *terminal_response(void) {
+ cJSON *out=cJSON_CreateObject(),*op=cJSON_AddObjectToObject(out,"operation");assert(op);
+ cJSON_AddStringToObject(op,"operation_id",pending_operation.operation_id);
+ cJSON_AddStringToObject(op,"group_id",pending_operation.group_id);
+ cJSON_AddNumberToObject(op,"expected_version",pending_operation.expected_version);
+ cJSON_AddStringToObject(op,"status",rejected?"rejected":"applied");
+ cJSON_AddStringToObject(op,"error_code",rejected?"server_restarted":"");
+ cJSON_AddStringToObject(op,"current_group_id",pending_operation.group_id);
+ cJSON_AddNumberToObject(op,"current_version",8);
+ if(pending_operation.recommendation_id[0]) {
+  cJSON_AddStringToObject(op,"recommendation_id",pending_operation.recommendation_id);
+  cJSON_AddStringToObject(op,"recommendation_epoch",wrong_binding?"epoch_other":pending_operation.recommendation_epoch);
+ }
+ return out;
+}
+static esp_err_t request(const char *path,int method,const cJSON *body,cJSON **out) {
+ if(!strncmp(path,"/operations/",12)) {
+  assert(method==HTTP_METHOD_GET&&!body);++operation_gets;
+  if(!terminal_exists){last_http_status=404;return ESP_FAIL;}
+  *out=terminal_response();last_http_status=200;return ESP_OK;
+ }
+ if(!strcmp(path,"/state")) {
+  assert(method==HTTP_METHOD_GET);++state_gets;if(fail_state)return ESP_FAIL;
+  *out=cJSON_Parse("{\"current_group_id\":\"later_group\",\"current_version\":9}");return ESP_OK;
+ }
+ assert(method==HTTP_METHOD_PUT);++operation_puts;
+ assert(!strcmp(path,pending_operation.recommendation_id[0]?"/recommendations/confirm":"/current-group"));
+ assert(!strcmp(cJSON_GetObjectItemCaseSensitive(body,"operation_id")->valuestring,pending_operation.operation_id));
+ assert(!strcmp(cJSON_GetObjectItemCaseSensitive(body,"group_id")->valuestring,pending_operation.group_id));
+ assert(cJSON_GetObjectItemCaseSensitive(body,"expected_version")->valuedouble==pending_operation.expected_version);
+ if(pending_operation.recommendation_id[0]) {
+  assert(!strcmp(cJSON_GetObjectItemCaseSensitive(body,"recommendation_id")->valuestring,pending_operation.recommendation_id));
+  assert(!strcmp(cJSON_GetObjectItemCaseSensitive(body,"server_epoch")->valuestring,pending_operation.recommendation_epoch));
+ } else assert(!cJSON_HasObjectItem(body,"recommendation_id"));
+ terminal_exists=true;if(lose_put){lose_put=false;return ESP_FAIL;}
+ *out=terminal_response();return ESP_OK;
+}
+/* @production-functions */
+static void reset(bool recommend) {
+ memset(&pending_operation,0,sizeof(pending_operation));pending_operation.format=GROUP_SWITCH_JOURNAL_FORMAT;
+ strcpy(config.server_url,"https://fixture.invalid");strcpy(config.device_id,"device_fixture");
+ strcpy(pending_operation.server_url,config.server_url);strcpy(pending_operation.device_id,config.device_id);
+ strcpy(pending_operation.operation_id,"operation_fixture");strcpy(pending_operation.group_id,"target_fixture");
+ pending_operation.expected_version=7;
+ if(recommend){strcpy(pending_operation.recommendation_id,"recommend_fixture");strcpy(pending_operation.recommendation_epoch,"epoch_fixture");}
+ intent.desired=intent.switch_pending=true;intent.ready=false;intent.session=1;
+ pending_saved=true;journal_blocked=terminal_exists=lose_put=wrong_binding=fail_state=rejected=false;
+ operation_gets=operation_puts=clears=state_gets=0;
+}
+static cJSON *recommendation_response(void) {
+ return cJSON_Parse("{\"recommendation\":{\"recommendation_id\":\"recommend_fixture\",\"request_id\":\"request_fixture\",\"server_epoch\":\"epoch_fixture\",\"current_version\":7,\"candidate_digest\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"expires_at\":\"2026-10-25T01:00:00Z\",\"suggestions\":[{\"group_id\":\"target_fixture\",\"name\":\"fixture name\",\"purpose\":\"fixture purpose\",\"reason\":\"fixture reason\"}]}}");
+}
+static char *replace_wire(const char *raw,const char *from,const char *to) {
+ const char *at=strstr(raw,from);assert(at);
+ const size_t before=(size_t)(at-raw),tail=strlen(at+strlen(from));
+ char *changed=malloc(before+strlen(to)+tail+1);assert(changed);
+ memcpy(changed,raw,before);memcpy(changed+before,to,strlen(to));
+ memcpy(changed+before+strlen(to),at+strlen(from),tail+1);return changed;
+}
+typedef struct {const char *key,*value,*escaped_key;} wire_binding_t;
+static void wire_binding_cases(cJSON *document,const char *root_key,
+                                const wire_binding_t *bindings,size_t count,
+                                group_recommendation_t *result) {
+ char *raw=cJSON_PrintUnformatted(document);assert(raw);
+ cJSON *valid=group_json_response_parse(raw,strlen(raw));assert(valid);cJSON_Delete(valid);
+ for(size_t i=0;i<count;++i) {
+  char from[192],to[512];
+  snprintf(from,sizeof(from),"\"%s\":\"%s\"",bindings[i].key,bindings[i].value);
+  snprintf(to,sizeof(to),"\"%s\":\"%s\\u0000tail\"",bindings[i].key,bindings[i].value);
+  char *bad=replace_wire(raw,from,to);
+  // Plain cJSON has already discarded the decoded string length: its tree
+  // cannot distinguish this value from the original binding. Wire rejection
+  // must therefore happen before the C-string-only post-parse guards.
+  cJSON *lost_length=cJSON_Parse(bad);assert(lost_length);
+  const cJSON *record=cJSON_GetObjectItemCaseSensitive(lost_length,root_key);
+  if(!strcmp(root_key,"recommendation")&&!strcmp(bindings[i].key,"group_id"))
+   record=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(record,"suggestions"),0);
+  assert(!strcmp(cJSON_GetObjectItemCaseSensitive(record,bindings[i].key)->valuestring,bindings[i].value));
+  assert(group_json_tree_unambiguous(lost_length));cJSON_Delete(lost_length);
+  assert(!group_json_response_parse(bad,strlen(bad)));free(bad);
+  snprintf(from,sizeof(from),"\"%s\":",bindings[i].key);
+  snprintf(to,sizeof(to),"\"%s\\u0000tail\":",bindings[i].key);
+  bad=replace_wire(raw,from,to);assert(!group_json_response_parse(bad,strlen(bad)));free(bad);
+  snprintf(from,sizeof(from),"\"%s\":\"%s\"",bindings[i].key,bindings[i].value);
+  snprintf(to,sizeof(to),"\"%s\":\"%s\",\"%s\":\"other_binding\"",
+           bindings[i].key,bindings[i].value,bindings[i].escaped_key);
+  bad=replace_wire(raw,from,to);
+  assert(!group_json_response_parse(bad,strlen(bad)));
+  cJSON *duplicate=cJSON_Parse(bad);assert(duplicate&&!group_json_tree_unambiguous(duplicate));
+  if(!strcmp(root_key,"operation")) {
+   group_switch_terminal_t terminal;assert(!parse_switch_terminal(duplicate,&terminal));
+  } else assert(!group_recommendation_parse(duplicate,"request_fixture","epoch_fixture",7,result));
+  cJSON_Delete(duplicate);free(bad);
+ }
+ free(raw);
+}
+static void wire_limits_and_payloads(group_recommendation_t *result) {
+ const wire_binding_t rec_bindings[]={
+  {"recommendation_id","recommend_fixture","recommendation_\\u0069d"},
+  {"request_id","request_fixture","request_\\u0069d"},
+  {"server_epoch","epoch_fixture","server_\\u0065poch"},
+  {"group_id","target_fixture","group_\\u0069d"},
+ };
+ cJSON *document=recommendation_response();
+ wire_binding_cases(document,"recommendation",rec_bindings,sizeof(rec_bindings)/sizeof(rec_bindings[0]),result);
+ char *raw=cJSON_PrintUnformatted(document);
+ char *changed=replace_wire(raw,"\"epoch_fixture\"","\"epoch_other\"");
+ cJSON *different=group_json_response_parse(changed,strlen(changed));assert(different);
+ assert(!group_recommendation_parse(different,"request_fixture","epoch_fixture",7,result));
+ cJSON_Delete(different);free(changed);free(raw);cJSON_Delete(document);
+ reset(true);document=terminal_response();
+ const wire_binding_t op_bindings[]={
+  {"operation_id","operation_fixture","operation_\\u0069d"},
+  {"recommendation_id","recommend_fixture","recommendation_\\u0069d"},
+  {"recommendation_epoch","epoch_fixture","recommendation_\\u0065poch"},
+  {"group_id","target_fixture","group_\\u0069d"},
+ };
+ wire_binding_cases(document,"operation",op_bindings,sizeof(op_bindings)/sizeof(op_bindings[0]),result);
+ raw=cJSON_PrintUnformatted(document);changed=replace_wire(raw,"\"epoch_fixture\"","\"epoch_other\"");
+ different=group_json_response_parse(changed,strlen(changed));assert(different);
+ group_switch_terminal_t terminal;assert(!parse_switch_terminal(different,&terminal));
+ cJSON_Delete(different);free(changed);free(raw);
+ cJSON_AddStringToObject(cJSON_GetObjectItemCaseSensitive(document,"operation"),"recommendation_epoch","epoch_other");
+ assert(!group_json_tree_unambiguous(document)&&!parse_switch_terminal(document,&terminal));cJSON_Delete(document);
+ // A literal backslash followed by u0000 is ordinary display data, not NUL.
+ const char literal[]="{\"text\":\"literal\\\\u0000\"}";
+ document=group_json_response_parse(literal,strlen(literal));assert(document);
+ assert(!strcmp(cJSON_GetObjectItemCaseSensitive(document,"text")->valuestring,"literal\\u0000"));cJSON_Delete(document);
+ const char embedded[]="{\"text\":\"a\0b\"}";
+ assert(!group_json_response_parse(embedded,sizeof(embedded)-1));
+ const char invalid_utf8[]="{\"text\":\"\xc0\xaf\"}";
+ assert(!group_json_response_parse(invalid_utf8,sizeof(invalid_utf8)-1));
+ const char raw_control[]="{\"text\":\"bad\ncontrol\"}";
+ assert(!group_json_response_parse(raw_control,strlen(raw_control)));
+ assert(!group_json_response_parse("{}tail",6));
+ char name[129],purpose[1025],reason[641];
+ for(unsigned i=0;i<32;++i)memcpy(name+4*i,"😀",4);name[128]=0;
+ for(unsigned i=0;i<256;++i)memcpy(purpose+4*i,"😀",4);purpose[1024]=0;
+ for(unsigned i=0;i<160;++i)memcpy(reason+4*i,"😀",4);reason[640]=0;
+ document=recommendation_response();cJSON *record=cJSON_GetObjectItemCaseSensitive(document,"recommendation");
+ cJSON *items=cJSON_GetObjectItemCaseSensitive(record,"suggestions"),*item=cJSON_GetArrayItem(items,0);
+ cJSON_ReplaceItemInObjectCaseSensitive(item,"name",cJSON_CreateString(name));
+ cJSON_ReplaceItemInObjectCaseSensitive(item,"purpose",cJSON_CreateString(purpose));
+ cJSON_ReplaceItemInObjectCaseSensitive(item,"reason",cJSON_CreateString(reason));
+ for(unsigned i=1;i<3;++i){cJSON *next=cJSON_Duplicate(item,true);char id[32];snprintf(id,sizeof(id),"target_fixture_%u",i);cJSON_ReplaceItemInObjectCaseSensitive(next,"group_id",cJSON_CreateString(id));cJSON_AddItemToArray(items,next);}
+ raw=cJSON_PrintUnformatted(document);assert(raw&&strlen(raw)>2048&&strlen(raw)<48*1024);
+ different=group_json_response_parse(raw,strlen(raw));assert(different);
+ assert(group_recommendation_parse(different,"request_fixture","epoch_fixture",7,result)&&result->count==3);
+ cJSON_Delete(different);free(raw);cJSON_Delete(document);
+ // Full bounded device catalog remains accepted; no 2KiB error-envelope cap
+ // may be reused for successful recommendation or state responses.
+ document=cJSON_CreateObject();record=cJSON_AddObjectToObject(document,"state");items=cJSON_AddArrayToObject(record,"groups");
+ cJSON_AddStringToObject(record,"current_group_id","target_fixture");cJSON_AddNumberToObject(record,"current_version",7);
+ for(unsigned i=0;i<128;++i){item=cJSON_CreateObject();char id[32];snprintf(id,sizeof(id),"group_fixture_%03u",i);cJSON_AddStringToObject(item,"id",id);cJSON_AddStringToObject(item,"name",name);cJSON_AddItemToArray(items,item);}
+ raw=cJSON_PrintUnformatted(document);assert(raw&&strlen(raw)>2048&&strlen(raw)<48*1024);
+ different=group_json_response_parse(raw,strlen(raw));assert(different);cJSON_Delete(different);free(raw);cJSON_Delete(document);
+ document=cJSON_CreateObject();
+ for(unsigned i=0;i<64;++i){char key[24];snprintf(key,sizeof(key),"key_%u",i);cJSON_AddNumberToObject(document,key,i);}
+ raw=cJSON_PrintUnformatted(document);different=group_json_response_parse(raw,strlen(raw));assert(different);cJSON_Delete(different);free(raw);
+ cJSON_AddNumberToObject(document,"key_64",64);raw=cJSON_PrintUnformatted(document);
+ assert(!group_json_response_parse(raw,strlen(raw))&&!group_json_tree_unambiguous(document));free(raw);cJSON_Delete(document);
+ const char deep[]="{\"v\":[[[[[[[[[0]]]]]]]]]}";
+ assert(!group_json_response_parse(deep,strlen(deep)));
+ const char bounded_depth[]="{\"v\":[[[[[[[0]]]]]]]}";
+ different=group_json_response_parse(bounded_depth,strlen(bounded_depth));assert(different);cJSON_Delete(different);
+ document=cJSON_CreateObject();items=cJSON_AddArrayToObject(document,"values");
+ for(unsigned i=0;i<4097;++i)cJSON_AddItemToArray(items,cJSON_CreateNumber(i));
+ raw=cJSON_PrintUnformatted(document);assert(strlen(raw)<48*1024);
+ assert(!group_json_tree_unambiguous(document)&&!group_json_response_parse(raw,strlen(raw)));free(raw);cJSON_Delete(document);
+ char *oversized=malloc(48*1024+1);assert(oversized);memset(oversized,' ',48*1024);oversized[0]='{';oversized[1]='}';oversized[48*1024]=0;
+ assert(!group_json_response_parse(oversized,48*1024));free(oversized);
+}
+int main(void) {
+ group_recommendation_t *result=calloc(1,sizeof(*result));assert(result);
+ wire_limits_and_payloads(result);
+ cJSON *out=recommendation_response();
+ assert(group_recommendation_parse(out,"request_fixture","epoch_fixture",7,result)&&result->count==1);
+ assert(!group_recommendation_parse(out,"request_other","epoch_fixture",7,result));
+ assert(!group_recommendation_parse(out,"request_fixture","epoch_other",7,result));
+ assert(!group_recommendation_parse(out,"request_fixture","epoch_fixture",8,result));
+ cJSON *record=cJSON_GetObjectItemCaseSensitive(out,"recommendation"),*items=cJSON_GetObjectItemCaseSensitive(record,"suggestions");
+ cJSON *item=cJSON_GetArrayItem(items,0);cJSON_AddItemToArray(items,cJSON_Duplicate(item,true));
+ assert(!group_recommendation_parse(out,"request_fixture","epoch_fixture",7,result));cJSON_DeleteItemFromArray(items,1);
+ cJSON_ReplaceItemInObjectCaseSensitive(item,"reason",cJSON_CreateString("bad\ncontrol"));
+ assert(!group_recommendation_parse(out,"request_fixture","epoch_fixture",7,result));cJSON_Delete(out);
+ out=recommendation_response();record=cJSON_GetObjectItemCaseSensitive(out,"recommendation");items=cJSON_GetObjectItemCaseSensitive(record,"suggestions");
+ item=cJSON_GetArrayItem(items,0);
+ char too_long[162];memset(too_long,'x',161);too_long[161]=0;
+ cJSON_ReplaceItemInObjectCaseSensitive(item,"reason",cJSON_CreateString(too_long));
+ assert(!group_recommendation_parse(out,"request_fixture","epoch_fixture",7,result));
+ cJSON_ReplaceItemInObjectCaseSensitive(item,"reason",cJSON_CreateString("fixture reason"));
+ cJSON_ReplaceItemInObjectCaseSensitive(item,"name",cJSON_CreateString("123456789012345678901234567890123"));
+ assert(!group_recommendation_parse(out,"request_fixture","epoch_fixture",7,result));
+ cJSON_ReplaceItemInObjectCaseSensitive(item,"name",cJSON_CreateString("fixture name"));
+ for(unsigned i=1;i<4;++i){cJSON *next=cJSON_Duplicate(item,true);char id[32];snprintf(id,sizeof(id),"target_fixture_%u",i);cJSON_ReplaceItemInObjectCaseSensitive(next,"group_id",cJSON_CreateString(id));cJSON_AddItemToArray(items,next);}
+ assert(!group_recommendation_parse(out,"request_fixture","epoch_fixture",7,result));cJSON_DeleteItemFromArray(items,3);
+ assert(group_recommendation_parse(out,"request_fixture","epoch_fixture",7,result)&&result->count==3);
+ cJSON_AddStringToObject(record,"server_epoch","epoch_fixture");
+ assert(!group_recommendation_parse(out,"request_fixture","epoch_fixture",7,result));cJSON_Delete(out);
+ for(unsigned n=0;n<2;++n){reset(n!=0);assert(resolve_pending_switch(1)==ESP_OK&&operation_puts==1&&clears==1&&!pending_saved&&state_gets==1);}
+ reset(true);lose_put=true;
+ assert(resolve_pending_switch(1)!=ESP_OK&&operation_puts==1&&pending_saved&&!clears);
+ assert(resolve_pending_switch(1)==ESP_OK&&operation_puts==1&&clears==1&&operation_gets==2); // same operation after lost response.
+ reset(true);terminal_exists=wrong_binding=true;
+ assert(resolve_pending_switch(1)==ESP_ERR_INVALID_RESPONSE&&pending_saved&&!operation_puts&&!clears&&!state_gets);
+ reset(true);terminal_exists=fail_state=true;
+ assert(resolve_pending_switch(1)!=ESP_OK&&pending_saved&&!clears);fail_state=false;
+ assert(resolve_pending_switch(1)==ESP_OK&&!operation_puts&&clears==1);
+ reset(true);rejected=true;assert(resolve_pending_switch(1)==ESP_OK&&clears==1&&operation_puts==1);
+ reset(true);intent.desired=false;assert(resolve_pending_switch(1)==ESP_ERR_INVALID_STATE&&!operation_gets&&!operation_puts&&pending_saved);
+ reset(true);strcpy(config.device_id,"different_device");assert(resolve_pending_switch(1)==ESP_ERR_INVALID_STATE&&!operation_gets&&!operation_puts&&pending_saved);
+ free(result);puts("recommendation: response bounds, immutable endpoint/payload replay, lost response, epoch binding, fresh-state and identity gates passed (host only)");
+ return 0;
+}

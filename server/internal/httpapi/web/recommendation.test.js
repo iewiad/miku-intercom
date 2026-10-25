@@ -123,3 +123,12 @@ test('terminal from a different recommendation epoch cannot clear the saved conf
   c.request = async (_, __, body) => ({operation: {...body, recommendation_epoch: 'wrong_epoch', status: 'applied'}, state: c.state});
   await r.confirm('group_two'); assert.ok(c.pendingSwitch); assert.equal(c.canPress(), false);
 });
+
+test('cancelled or forged voice handoff cannot become an ordinary text request after the client is idle', async () => {
+  const {c, r, requests} = setup();
+  c.voice = {blocking: false, canHandoffNeed: () => false, interruptNeed() {}};
+  const reservation = r.reserveVoiceNeed(); assert.ok(reservation); r.interrupt('取消');
+  assert.equal(await r.request('迟到的语音需求', reservation), false);
+  assert.equal(await r.request('伪造的语音需求', {...reservation}), false);
+  assert.deepEqual(requests, []); assert.equal(r.result, null);
+});

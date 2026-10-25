@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define GROUP_SWITCH_JOURNAL_FORMAT 1U
+#define GROUP_SWITCH_JOURNAL_FORMAT 2U
 #define GROUP_SWITCH_MAX_VERSION 9007199254740991ULL
 
 typedef struct {
@@ -13,6 +13,8 @@ typedef struct {
     char operation_id[81];
     char group_id[81];
     uint64_t expected_version;
+    char recommendation_id[81];
+    char recommendation_epoch[81];
 } group_switch_journal_t;
 
 typedef struct {
@@ -23,6 +25,8 @@ typedef struct {
     char error_code[81];
     char current_group_id[81];
     uint64_t current_version;
+    char recommendation_id[81];
+    char recommendation_epoch[81];
 } group_switch_terminal_t;
 
 bool group_switch_identifier(const char *value);

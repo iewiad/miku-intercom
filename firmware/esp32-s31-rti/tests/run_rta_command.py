@@ -128,7 +128,7 @@ int main(void) {
     assert(parsed("{\"type\":\"conversation.item.input_audio_transcription.completed\",\"transcript\":12}").type==RTA_COMMAND_INPUT_ERROR);
     assert(parsed("{\"type\":\"conversation.item.input_audio_transcription.completed\",\"transcript\":\"a\\u0000b\"}").type==RTA_COMMAND_INPUT_ERROR);
     assert(parsed("{\"type\":\"session.updated\"}garbage").type==RTA_COMMAND_INPUT_IGNORE);
-    char text[520], json[800];
+    char text[2200], json[2500];
     memset(text,'a',512); text[512]=0;
     snprintf(json,sizeof(json),"{\"type\":\"conversation.item.input_audio_transcription.completed\",\"transcript\":\"%s\"}",text);
     assert(parsed(json).type==RTA_COMMAND_INPUT_FINAL);
@@ -138,12 +138,21 @@ int main(void) {
     text[0]=(char)0xc0;text[1]=(char)0xaf;text[2]=0;
     snprintf(json,sizeof(json),"{\"type\":\"conversation.item.input_audio_transcription.completed\",\"transcript\":\"%s\"}",text);
     assert(parsed(json).type==RTA_COMMAND_INPUT_ERROR);
-    // Exact 512-byte mixed UTF-8 final accepted, boundary+1 rejected unchanged.
+    // Generic events allow 512 codepoints, while explicit-switch state keeps
+    // its original 512-byte admission limit (tested by group_command_fixture).
     for (size_t i=0;i<170;++i) memcpy(text+i*3,"组",3);
     text[510]='a';text[511]='b';text[512]=0;
     snprintf(json,sizeof(json),"{\"type\":\"conversation.item.input_audio_transcription.completed\",\"transcript\":\"%s\"}",text);
     assert(parsed(json).type==RTA_COMMAND_INPUT_FINAL);
     text[512]='c';text[513]=0;
+    snprintf(json,sizeof(json),"{\"type\":\"conversation.item.input_audio_transcription.completed\",\"transcript\":\"%s\"}",text);
+    assert(parsed(json).type==RTA_COMMAND_INPUT_FINAL);
+    for (size_t i=0;i<512;++i) memcpy(text+i*4,"😀",4);
+    text[2048]=0;
+    snprintf(json,sizeof(json),"{\"type\":\"conversation.item.input_audio_transcription.completed\",\"transcript\":\"%s\"}",text);
+    assert(parsed(json).type==RTA_COMMAND_INPUT_FINAL);
+    for (size_t i=0;i<513;++i) memcpy(text+i*3,"组",3);
+    text[1539]=0;
     snprintf(json,sizeof(json),"{\"type\":\"conversation.item.input_audio_transcription.completed\",\"transcript\":\"%s\"}",text);
     assert(parsed(json).type==RTA_COMMAND_INPUT_ERROR);
     char *payload=build_session_update_payload(true);assert(payload);assert_payload(payload,true);free(payload);

@@ -2672,13 +2672,29 @@ static void log_stop_wait(const char *stage, EventBits_t expected, EventBits_t o
              result, (esp_timer_get_time() - started_us) / 1000, last_state);
 }
 
+bool webrtc_peer_stopped(void)
+{
+    /* Owned by the serialized lifecycle caller. Worker retirement alone is not
+     * sufficient: retained queues/codecs/EventGroups must be released too. */
+    return rtc.peer == NULL && rtc.events == NULL && rtc.lock == NULL &&
+           rtc.loop_task == NULL && rtc.data_task == NULL &&
+           rtc.mic_task == NULL && rtc.playback_task == NULL &&
+           rtc.data_queue == NULL && rtc.playback_queue == NULL &&
+           rtc.reference_stream == NULL && rtc.local_sdp == NULL &&
+           rtc.opus_encoder == NULL && rtc.opus_decoder == NULL && rtc.aec == NULL &&
+#if CONFIG_MIKU_RTI_OFFICIAL_CAPTURE_AEC
+           rtc.capture_source == NULL &&
+#endif
+           !rtc.running && !rtc.audio_running;
+}
+
 void webrtc_peer_stop(void)
 {
     webrtc_peer_command_cancel();
     if (rtc.command_mode) command_log_stats("stop");
     webrtc_peer_group_set_sending(false, 0);
     group_mark_unavailable();
-    if (rtc.peer == NULL && rtc.events == NULL && rtc.lock == NULL && rtc.data_queue == NULL) {
+    if (webrtc_peer_stopped()) {
         portENTER_CRITICAL(&group_state_lock);
         group_mode_active = false;
         portEXIT_CRITICAL(&group_state_lock);

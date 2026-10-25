@@ -33,6 +33,7 @@ HOST_SUITES = (
     ("run_group_journal.py", ("--sanitize",)),
     ("run_switch_resolver.py", ("--cjson-dir",)),
     ("run_group_commands.py", ()),
+    ("run_group_recommendation.py", ("--sanitize", "--cjson-dir")),
     ("run_voice_diagnostics.py", ("--sanitize", "--cjson-dir")),
     ("run_group_command_ui.py", ()),
     ("run_group_command_flow.py", ("--cjson-dir",)),

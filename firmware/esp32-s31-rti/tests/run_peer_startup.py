@@ -129,6 +129,7 @@ static void rtc_alloc_diag_end(void) { }
 static void drain_alloc_failures(const char *phase) { (void)phase; }
 static bool command_active(void) { return fixture_command_active; }
 static void webrtc_peer_stop(void);
+static bool webrtc_peer_stopped(void);
 static void peer_loop_task(void *);
 static void data_event_task(void *);
 static void *run_task(void *argument) { self=argument;self->fn(self->argument);assert(!"task returned");return NULL; }
@@ -210,23 +211,24 @@ int main(void) {
  assert(open_peer_transport(&config,3)==ESP_ERR_NO_MEM);assert(!atomic_load(&loop_calls)&&atomic_load(&close_calls)==1);join_retired();
  for(unsigned i=0;i<8;++i) {
   reset(i%2==0);assert(open_peer_transport(&config,4+i)==ESP_OK);wait_for_loop();
-  assert(task_count==(rtc.group_mode?1:2));webrtc_peer_stop();assert(atomic_load(&close_calls)==1);join_retired();
+  assert(task_count==(rtc.group_mode?1:2));assert(!webrtc_peer_stopped());
+  webrtc_peer_stop();assert(atomic_load(&close_calls)==1);assert(webrtc_peer_stopped());join_retired();
  }
  // A blocked owner retains its context; a later stop may safely release the
  // startup EventGroup again without notifying an already retired task handle.
  reset(true);atomic_store(&hold_loop,true);assert(open_peer_transport(&config,12)==ESP_OK);wait_for_loop();
- webrtc_peer_stop();assert(rtc.peer&&rtc.events&&rtc.lock&&!atomic_load(&close_calls));
+ webrtc_peer_stop();assert(rtc.peer&&rtc.events&&rtc.lock&&!atomic_load(&close_calls));assert(!webrtc_peer_stopped());
  assert(strstr(last_peer_data,"stage=peer_data expected=0x004 observed=0x200 retired=0x000 result=timeout elapsed_ms="));
  assert(strstr(last_cleanup,"stage=cleanup expected=0x004 observed=0x200 retired=0x000 result=retained elapsed_ms="));
  atomic_store(&hold_loop,false);
  TickType_t until=xTaskGetTickCount()+1000;
  while(!(rtc.retired_workers&RTC_EVENT_LOOP_DONE)&&xTaskGetTickCount()<until)vTaskDelay(1);
  assert(rtc.retired_workers&RTC_EVENT_LOOP_DONE);
- webrtc_peer_stop();assert(atomic_load(&close_calls)==1);join_retired();
+ webrtc_peer_stop();assert(atomic_load(&close_calls)==1);assert(webrtc_peer_stopped());join_retired();
  // DONE may wake stop while a worker is still inside EventGroupSetBits. It
  // cannot release owners until retirement is separately published.
  reset(true);atomic_store(&hold_retirement,true);assert(open_peer_transport(&config,13)==ESP_OK);wait_for_loop();
- webrtc_peer_stop();assert(rtc.peer&&rtc.events&&rtc.lock&&!atomic_load(&close_calls));
+ webrtc_peer_stop();assert(rtc.peer&&rtc.events&&rtc.lock&&!atomic_load(&close_calls));assert(!webrtc_peer_stopped());
  assert(strstr(last_cleanup,"stage=cleanup expected=0x004 observed=0x204 retired=0x000 result=retained elapsed_ms="));
  atomic_store(&hold_retirement,false);
  until=xTaskGetTickCount()+1000;
@@ -234,6 +236,10 @@ int main(void) {
  webrtc_peer_stop();assert(atomic_load(&close_calls)==1);
  assert(strstr(last_cleanup,"stage=cleanup expected=0x004 observed=0x204 retired=0x004 result=safe_to_release elapsed_ms="));
  join_retired();
+ // A partial context with only a codec still needs real cleanup. An empty
+ // peer/events/lock triple must not certify it as released.
+ memset(&rtc,0,sizeof(rtc));rtc.opus_encoder=malloc(1);assert(rtc.opus_encoder);
+ assert(!webrtc_peer_stopped());webrtc_peer_stop();assert(webrtc_peer_stopped());
  puts("Peer startup: 20KiB internal reservation/gate preserved; ready/failed/timeout/cancel diagnostics and observed-before-retired owner retention passed");
  return 0;
 }
@@ -256,7 +262,7 @@ def main():
     functions = '\n\n'.join(extract_function(source, name) for name in (
         'peer_mode', 'peer_last_state', 'wait_peer_bits', 'wait_peer_ready',
         'finish_worker', 'fail_peer_start', 'peer_loop_task', 'log_stop_wait',
-        'webrtc_peer_stop', 'open_peer_transport'))
+        'webrtc_peer_stopped', 'webrtc_peer_stop', 'open_peer_transport'))
     code = PREFIX.replace('/* @production-defines */', defines) + '\n' + functions + '\n' + SUFFIX
     flags = ['-std=c11', '-D_POSIX_C_SOURCE=200809L', '-Wall', '-Wextra', '-Werror', '-pthread']
     if args.sanitize:

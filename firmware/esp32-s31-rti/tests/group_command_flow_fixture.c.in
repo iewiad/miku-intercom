@@ -13,9 +13,13 @@
 #include "rti_session.h"
 #include "rta_command_events.h"
 #include "group_config.h"
+#include "group_recommendation.h"
 #define portENTER_CRITICAL(p) ((void)(p))
 #define portEXIT_CRITICAL(p) ((void)(p))
 #define HTTP_METHOD_POST 1
+#define HTTP_METHOD_GET 2
+#define MALLOC_CAP_SPIRAM 2
+#define MALLOC_CAP_8BIT 4
 #define strlcpy fixture_strlcpy
 static size_t fixture_strlcpy(char *d,const char*s,size_t cap) { size_t n=strlen(s);if(cap){size_t m=n<cap-1?n:cap-1;memcpy(d,s,m);d[m]=0;}return n; }
 /* @production-intent */
@@ -33,6 +37,11 @@ static bool command_session_live,command_peer_live;
 static int64_t command_deadline_us,command_cleanup_retry_us,now_us;
 static char command_target[81],command_result[160];
 static uint64_t command_expected_version;
+static group_recommendation_t *recommendation;
+static char *recommendation_need;
+static int64_t recommendation_deadline_us,recommendation_next_poll_us;
+static uint32_t recommendation_catalog_view;
+static char recommendation_request_id[81],recommendation_epoch[81],server_epoch[81];
 static bool catalog_known,selection_queued,pending_saved,journal_blocked;
 static uint32_t view_generation;
 static char published_group_id[81],selected_group_id[81],group_id[81],peer_id[81];
@@ -51,6 +60,11 @@ static char last_resolve_log[600];
 static cJSON *floor_request;
 static unsigned notifications,disconnects,release_calls,create_calls,start_calls,peer_stops,stop_calls,gate_calls,requests,join_posts,resolve_posts,journal_saves;
 static unsigned stop_failures;
+static unsigned retained_stops,recommend_posts;
+static bool cancel_in_recommend,cancel_before_recommend_post,change_candidates_on_poll,fail_recommend_alloc,capability_available;
+static unsigned capability_gets;
+static bool confirm_during_poll,expire_during_poll;
+static esp_err_t refresh_result;
 static esp_err_t create_result,start_result,request_result;
 static bool create_error_with_id, cancel_in_create,cancel_in_resolve,stop_during_release,stop_after_submit;
 static char resolved_target[81],seen_transcript[513],last_detail[192];
@@ -58,19 +72,44 @@ static uint32_t ui_revision;
 static bool ui_busy;
 static esp_err_t group_controller_voice_action(bool cancel,void *context);
 static esp_err_t group_controller_join_group(const char *,void *);
+static esp_err_t group_controller_recommendation_action(group_recommendation_action_t,unsigned,uint32_t,void *);
 static void command_event(const webrtc_command_event_t *,void *);
 static int64_t esp_timer_get_time(void) {return now_us;}
+static int64_t server_now(void) {return 1000000+now_us/1000;}
+static int64_t parse_time(const char *text) {(void)text;return 1060000;}
+static esp_err_t refresh_state(bool join) {
+ assert(!join);
+ if(confirm_during_poll) {
+  confirm_during_poll=false;
+  assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CONFIRM,1,command.revision,NULL)==ESP_OK);
+ }
+ if(change_candidates_on_poll)++view_generation;
+ if(expire_during_poll)now_us+=61000000;
+ return refresh_result;
+}
+static void *heap_caps_calloc(size_t count,size_t size,unsigned caps) {assert(caps==(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));return fail_recommend_alloc?NULL:calloc(count,size);}
 static void mbedtls_platform_zeroize(void *p,size_t n) {volatile unsigned char *c=p;while(n--)*c++=0;}
 static void notify_worker(void) {++notifications;}
 static void webrtc_peer_command_cancel(void) {++gate_calls;}
 static void webrtc_peer_group_suspend_media(void) {}
 static void cancel_locked(void) {intent.pressed=false;intent.held=false;++intent.generation;}
-static bool update_ui(const char *detail) {if(detail)strlcpy(last_detail,detail,sizeof(last_detail));ui_revision=command.revision;ui_busy=command.kind!=GROUP_COMMAND_NONE;return true;}
+static bool update_ui(const char *detail) {
+ if(detail)strlcpy(last_detail,detail,sizeof(last_detail));ui_revision=command.revision;ui_busy=command.kind!=GROUP_COMMAND_NONE;
+ if(cancel_before_recommend_post&&command.phase==GROUP_COMMAND_REQUESTING) {
+  cancel_before_recommend_post=false;
+  assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CANCEL,0,command.revision,NULL)==ESP_OK);
+ }
+ return true;
+}
 static void release_floor(void) {++release_calls;cancel_locked();if(stop_during_release)intent.desired=false;}
 static void disconnect_peer(void) {++disconnects;intent.ready=false;release_floor();peer_id[0]=0;}
 static esp_err_t reject_state(esp_err_t err) {intent.ready=false;catalog_known=false;return err;}
 static esp_err_t apply_state(const cJSON *state,int64_t started,int64_t ended) {(void)started;(void)ended;return cJSON_IsObject(state)?ESP_OK:ESP_ERR_INVALID_RESPONSE;}
 static esp_err_t request(const char *path,int method,const cJSON *body,cJSON **out) {
+ if(method==HTTP_METHOD_GET) {
+  assert(!strcmp(path,"/recommendations")&&!body);++capability_gets;
+  *out=cJSON_CreateObject();cJSON_AddBoolToObject(*out,"available",capability_available);return request_result;
+ }
  assert(method==HTTP_METHOD_POST);++requests;
  last_voice_api_error=GROUP_VOICE_API_NONE;
  if(!strcmp(path,"/memberships")) {
@@ -85,6 +124,11 @@ static esp_err_t request(const char *path,int method,const cJSON *body,cJSON **o
   strlcpy(seen_transcript,text->valuestring,sizeof(seen_transcript));
   if(cancel_in_resolve)assert(group_controller_voice_action(true,NULL)==ESP_OK);
   if(request_result==ESP_OK&&out) { *out=cJSON_CreateObject();assert(cJSON_AddStringToObject(*out,"group_id",resolved_target)); }
+ } else if(!strcmp(path,"/recommendations")) {
+  assert(!command_peer_live&&!command_session_live);++recommend_posts;
+  assert(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(body,"need")));
+  if(cancel_in_recommend)assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CANCEL,0,command.revision,NULL)==ESP_OK);
+  if(request_result==ESP_OK&&out) *out=cJSON_Parse("{\"recommendation\":{\"recommendation_id\":\"recommend_fixture\",\"request_id\":\"fixture_operation\",\"server_epoch\":\"epoch_fixture\",\"current_version\":7,\"candidate_digest\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"expires_at\":\"test-clock-expiry\",\"suggestions\":[{\"group_id\":\"grp_aaaa\",\"name\":\"fixture alpha\",\"reason\":\"fixture reason\"},{\"group_id\":\"grp_bbbb\",\"name\":\"fixture beta\",\"purpose\":\"fixture purpose\",\"reason\":\"fixture reason\"}]}}");
  } else assert(!"unexpected request");
  return request_result;
 }
@@ -99,6 +143,7 @@ static esp_err_t webrtc_peer_start_command(const rti_session_t *s,const board_au
  return start_result;
 }
 static void webrtc_peer_stop(void) {++peer_stops;}
+static bool webrtc_peer_stopped(void) {if(retained_stops){--retained_stops;return false;}return true;}
 esp_err_t rti_session_stop_command(const rti_session_t *s,const char *reason) {
  assert(s->session_id[0]&&reason);++stop_calls;
  if(stop_failures){--stop_failures;return ESP_FAIL;}return ESP_OK;
@@ -146,6 +191,9 @@ static esp_err_t board_display_show_group(void (*action)(bool,void *),void (*ptt
 }
 static esp_err_t board_display_set_group_commands(esp_err_t (*join)(const char *,void *),esp_err_t (*voice)(bool,void *),void *context) {
  assert(join==group_controller_join_group&&voice==group_controller_voice_action&&context==NULL);return ESP_OK;
+}
+static esp_err_t board_display_set_group_recommendation_action(group_recommendation_action_cb_t callback,void *context) {
+ assert(callback==group_controller_recommendation_action&&!context);return ESP_OK;
 }
 bool group_config_ready(void) {return true;}
 static void run(void *context) {(void)context;assert(!"task must not run in this fixture");}
@@ -243,6 +291,13 @@ static void reset(void) {
  strlcpy(resolved_target,"grp_bbbb",81);seen_transcript[0]=last_detail[0]=0;
  last_resolve_log[0]=0;last_http_status=0;last_voice_api_error=GROUP_VOICE_API_NONE;
  injected_voice_api_error=GROUP_VOICE_API_OTHER;injected_voice_http_status=422;
+ retained_stops=recommend_posts=capability_gets=0;
+ cancel_in_recommend=cancel_before_recommend_post=change_candidates_on_poll=fail_recommend_alloc=false;
+ capability_available=true;refresh_result=ESP_OK;
+ confirm_during_poll=expire_during_poll=false;
+ recommendation_deadline_us=recommendation_next_poll_us=0;strlcpy(server_epoch,"epoch_fixture",81);
+ if(recommendation)memset(recommendation,0,sizeof(*recommendation));
+ if(recommendation_need)memset(recommendation_need,0,GROUP_RECOMMENDATION_NEED_BYTES+1);
 }
 static void begin_voice(void) {
  assert(group_controller_voice_action(false,NULL)==ESP_OK);
@@ -252,6 +307,20 @@ static void begin_voice(void) {
 }
 static void final_event(uint32_t ticket,const char *text) {
  webrtc_command_event_t event={.type=WEBRTC_COMMAND_FINAL,.generation=ticket};strlcpy(event.text,text,sizeof(event.text));command_event(&event,NULL);
+}
+static void begin_recommendation(void) {
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_START,0,command.revision,NULL)==ESP_OK);
+ assert(command.kind==GROUP_COMMAND_RECOMMEND&&intent.command_busy&&!intent.ready);
+ assert(process_command()&&command.phase==GROUP_COMMAND_LISTENING&&command.need);
+ final_event(command.ticket,"fixture need");assert(command.phase==GROUP_COMMAND_RESOLVING);
+ assert(process_command()&&command.phase==GROUP_COMMAND_CLEANUP&&!recommend_posts&&!resolve_posts);
+ assert(!command_deadline_us); // RTA's 45s budget cannot expire model/review.
+}
+static void choose_recommendation(void) {
+ begin_recommendation();
+ assert(process_command()&&command.phase==GROUP_COMMAND_REQUESTING&&!recommend_posts);
+ assert(process_command()&&command.phase==GROUP_COMMAND_CHOOSING&&recommend_posts==1);
+ assert(!command.need[0]&&recommendation->count==2&&!journal_saves&&!selection_queued);
 }
 static void *no_cjson_memory(size_t size) {(void)size;return NULL;}
 int main(void) {
@@ -355,6 +424,59 @@ int main(void) {
  assert(process_command());assert(join_posts==0&&command.kind==GROUP_COMMAND_NONE);
  reset();assert(group_controller_join_group("ABCDEFG2",NULL)==ESP_OK);stop_after_submit=true;
  assert(process_command());assert(join_posts==1&&!intent.desired&&command.kind==GROUP_COMMAND_NONE);
+ reset();begin_recommendation();retained_stops=1;stop_failures=1;
+ assert(process_command()&&command_peer_live&&!stop_calls&&!recommend_posts);
+ assert(process_command()&&!command_peer_live&&command_session_live&&stop_calls==1&&!recommend_posts);
+ now_us+=2000000;assert(process_command()&&!command_session_live&&command.phase==GROUP_COMMAND_REQUESTING&&!recommend_posts);
+ assert(process_command()&&command.phase==GROUP_COMMAND_CHOOSING&&recommend_posts==1);
+ uint32_t review=command.revision;
+ assert(process_command()&&command.revision==review); // A view/countdown refresh is not a new revision.
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CONFIRM,0,review-1,NULL)==ESP_ERR_INVALID_STATE);
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CONFIRM,3,review,NULL)==ESP_ERR_INVALID_STATE);
+ assert(!journal_saves&&!selection_queued);
+ // Explicitly confirming the already-current group still consumes through the
+ // recommendation journal; no ordinary same-group fast path may substitute.
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CONFIRM,0,review,NULL)==ESP_OK);
+ assert(command.submitted&&command.phase==GROUP_COMMAND_CONFIRMING&&!journal_saves);
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CANCEL,0,command.revision,NULL)==ESP_ERR_INVALID_STATE);
+ intent.desired=false;assert(!process_command()&&pending_saved&&journal_saves==1&&!selection_queued);
+ assert(!strcmp(saved_record.group_id,"grp_aaaa")&&!strcmp(saved_record.recommendation_id,"recommend_fixture"));
+ assert(!strcmp(saved_record.recommendation_epoch,"epoch_fixture")&&saved_record.expected_version==7);
+ reset();choose_recommendation();review=command.revision;
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CANCEL,0,review,NULL)==ESP_OK);
+ assert(!process_command()&&command.phase==GROUP_COMMAND_RECOVERING&&!journal_saves&&!selection_queued);
+ reset();choose_recommendation();now_us+=61000000;
+ assert(!process_command()&&command.phase==GROUP_COMMAND_RECOVERING&&!journal_saves);
+ reset();choose_recommendation();change_candidates_on_poll=true;now_us+=1000001;
+ assert(!process_command()&&command.phase==GROUP_COMMAND_RECOVERING&&!journal_saves);
+ reset();choose_recommendation();refresh_result=ESP_FAIL;now_us+=1000001;
+ assert(!process_command()&&command.phase==GROUP_COMMAND_RECOVERING&&!journal_saves);
+ reset();begin_recommendation();assert(process_command());cancel_in_recommend=true;
+ assert(process_command()&&command.phase==GROUP_COMMAND_RECOVERING&&!journal_saves&&!command.need[0]);
+ reset();begin_recommendation();assert(process_command());request_result=ESP_FAIL;
+ assert(process_command()&&command.phase==GROUP_COMMAND_RECOVERING&&!journal_saves&&!command.need[0]);
+ reset();begin_recommendation();assert(process_command());cancel_before_recommend_post=true;
+ assert(process_command()&&command.phase==GROUP_COMMAND_RECOVERING&&!recommend_posts&&!journal_saves&&!command.need[0]);
+ reset();capability_available=false;
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_START,0,command.revision,NULL)==ESP_OK);
+ assert(!process_command()&&command.phase==GROUP_COMMAND_RECOVERING&&capability_gets==1);
+ assert(!create_calls&&!start_calls&&!recommend_posts&&!journal_saves);
+ reset();request_result=ESP_FAIL;
+ assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_START,0,command.revision,NULL)==ESP_OK);
+ assert(!process_command()&&command.phase==GROUP_COMMAND_RECOVERING&&!create_calls&&!start_calls&&!recommend_posts&&!journal_saves);
+ // A stale CHOOSING stack frame may not retract a CONFIRM admitted while its
+ // state request was in flight, regardless of the response/error/deadline.
+ for(unsigned race=0;race<3;++race) {
+  reset();choose_recommendation();now_us+=1000001;confirm_during_poll=true;
+  if(race==0)refresh_result=ESP_FAIL;
+  if(race==1)change_candidates_on_poll=true;
+  if(race==2)expire_during_poll=true;
+  assert(process_command()&&command.phase==GROUP_COMMAND_CONFIRMING&&command.submitted&&!journal_saves);
+  assert(!process_command()&&pending_saved&&journal_saves==1&&command.phase==GROUP_COMMAND_RECOVERING);
+  assert(!strcmp(saved_record.group_id,"grp_bbbb")&&!strcmp(saved_record.recommendation_id,"recommend_fixture"));
+  assert(!strcmp(saved_record.recommendation_epoch,"epoch_fixture")&&saved_record.expected_version==7);
+ }
+ free(recommendation);recommendation=NULL;free(recommendation_need);recommendation_need=NULL;
  puts("controller command flow: passed (saved volume/UI/status, first final, stop ACK retry, late event, early/in-flight cancel, journal handoff, join STOP)");
  return 0;
 }

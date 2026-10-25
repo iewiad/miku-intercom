@@ -534,8 +534,8 @@ it cannot invalidate the connection ticket by calling PTT callbacks.
 `INTERCOM_JOIN <code>`, `INTERCOM_VOICE_START` and `INTERCOM_VOICE_CANCEL`
 exercise the same controller intents over the development console. A REQUESTED
 reply means accepted intent; inspect `INTERCOM_STATUS` for completion.
-`command_kind` is none/join/voice (0/1/2); `command_phase` is
-idle/queued/starting/listening/resolving/cleanup/recovering (0..6).
+`command_kind` is none/join/voice/recommend (0..3); `command_phase` is
+idle/queued/starting/listening/resolving/cleanup/recovering/requesting/choosing/confirming (0..9).
 No transcript or join code is included in status.
 
 The command Peer accepts one current final user transcript, stops capture and
@@ -544,3 +544,40 @@ the same RTIC session; only a matching terminal `ended/failed/expired` response
 allows group recovery. HTTP 202 alone is not terminal proof. Failed confirmation
 keeps the local microphone closed and retries cleanup. The original standalone
 RTA application's stop API retains its existing acknowledgement semantics.
+
+## Active need recommendation (009)
+
+The separate **需求找组** entry opens a preparation page; only **开始说需求**
+starts this one voice capture. It is independent from the exact group-name
+**语音切群** command. The board must have its existing RTA configuration and a
+ready authorized group. The server also needs the approved `-voice-config`
+and explicit `-recommendation-model`; missing model capability fails clearly,
+without keyword or fixed-suggestion fallback.
+
+After one final need transcript, capture stops. The serialized worker waits
+for all local Peer resources to retire and for the known remote RTA session
+to reach its terminal state before calling the authenticated native
+`/recommendations` API. The existing unknown-session creation limitation in
+[006](../../docs/specs/006-first-version.md) still applies. No ordinary group
+audio is analyzed. Need text is bounded to 512 codepoints/2048 UTF-8 bytes and
+stored in worker-preallocated PSRAM; the old exact command retains its
+512-byte limit. Results and the display copy use PSRAM too.
+
+The review page shows at most three groups with responsibilities and
+model-generated reasons. Touching a card only selects; **确认进入** is a
+separate action. A suggestion does not establish online presence or a usable
+audio connection. Cancellation/expiry restores the authoritative current
+group with PTT released. Confirmation uses a format-2 NVS pending record
+binding the recommendation ID/epoch to the immutable original operation.
+Uncertain results query/replay that same record at `/recommendations/confirm`,
+never the ordinary `/current-group` endpoint. Format-1 ordinary pending
+records remain readable; invalid/unknown blobs are preserved and block
+recovery rather than being erased. Complete a new pending recommendation
+before rolling back to firmware that cannot read it.
+
+The board-free checks exercise production state, parsing, cleanup, storage and
+UI layout with doubles. They do not establish real recognition quality,
+physical touch, RTOS/NVS behavior or target-group audio recovery. See
+[009](../../docs/specs/009-model-recommendation.md) and the separate
+[acceptance record](../../docs/acceptance.md) before treating a candidate as
+hardware-verified.
