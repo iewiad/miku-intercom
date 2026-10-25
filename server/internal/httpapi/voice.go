@@ -5,11 +5,52 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/iewiad/miku-intercom/server/internal/control"
 )
+
+// encoding/json replaces malformed UTF-8 and unpaired UTF-16 escapes. Reject
+// both locally before a voice proposal can reach the model with changed text.
+type voiceProposalTranscript string
+
+func (value *voiceProposalTranscript) UnmarshalJSON(data []byte) error {
+	if !utf8.Valid(data) {
+		return errors.New("valid Unicode transcript required")
+	}
+	var text string
+	if err := json.Unmarshal(data, &text); err != nil {
+		return err
+	}
+	for i := 0; i < len(data); i++ {
+		if data[i] != '\\' {
+			continue
+		}
+		i++
+		if i >= len(data) || data[i] != 'u' {
+			continue
+		}
+		code, _ := strconv.ParseUint(string(data[i+1:i+5]), 16, 16)
+		i += 4
+		if code >= 0xD800 && code <= 0xDBFF {
+			if i+6 >= len(data) || data[i+1] != '\\' || data[i+2] != 'u' {
+				return errors.New("valid Unicode transcript required")
+			}
+			low, err := strconv.ParseUint(string(data[i+3:i+7]), 16, 16)
+			if err != nil || low < 0xDC00 || low > 0xDFFF {
+				return errors.New("valid Unicode transcript required")
+			}
+			i += 6
+		} else if code >= 0xDC00 && code <= 0xDFFF {
+			return errors.New("valid Unicode transcript required")
+		}
+	}
+	*value = voiceProposalTranscript(text)
+	return nil
+}
 
 // logVoiceResolution has a fixed schema: never add command text, request data,
 // returned groups, or raw errors. A server-local hook keeps tests independent of
@@ -24,6 +65,28 @@ func (s *Server) logVoiceResolution(d control.VoiceResolutionDiagnostics, starte
 }
 
 func (s *Server) handleVoice(w http.ResponseWriter, r *http.Request, path, id string) error {
+	if path == "/voice/proposals" {
+		var req struct {
+			RequestID       string                  `json:"request_id"`
+			Transcript      voiceProposalTranscript `json:"transcript"`
+			ExpectedVersion *uint64                 `json:"expected_version"`
+			ServerEpoch     string                  `json:"server_epoch"`
+		}
+		if err := decode(w, r, &req); err != nil {
+			return err
+		}
+		if req.ExpectedVersion == nil {
+			return invalid("invalid_request", "expected_version is required", 400)
+		}
+		recommendation, err := s.service.ProposeVoiceTarget(r.Context(), id, control.VoiceProposalRequest{
+			RequestID: req.RequestID, Transcript: string(req.Transcript), ExpectedVersion: *req.ExpectedVersion, ServerEpoch: req.ServerEpoch,
+		})
+		if err != nil {
+			return err
+		}
+		send(w, 200, map[string]any{"recommendation": recommendation})
+		return nil
+	}
 	if path == "/voice/resolve" {
 		started := time.Now()
 		diagnostic := control.VoiceResolutionDiagnostics{AcceptedPrefix: "none", Outcome: "invalid_input", ErrorCode: "invalid_input"}

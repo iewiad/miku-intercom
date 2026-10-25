@@ -29,6 +29,11 @@ type suggestion struct {
 type caseReport struct {
 	CaseID             string                `json:"case_id"`
 	Category           string                `json:"category"`
+	Intent             string                `json:"intent,omitempty"`
+	Source             string                `json:"source,omitempty"`
+	PromptVersion      string                `json:"prompt_version,omitempty"`
+	PromptSHA256       string                `json:"prompt_sha256,omitempty"`
+	ReasonPolicy       string                `json:"reason_policy,omitempty"`
 	Protocol           string                `json:"protocol_status"`
 	Semantic           string                `json:"semantic_status"`
 	Transport          string                `json:"transport_status"`
@@ -192,7 +197,11 @@ func semanticPass(c evalCase, suggestions []suggestion) bool {
 
 func runCase(ctx context.Context, c evalCase, p profile, model reportingModel, now func() time.Time, cleanupPending func() bool) (result caseReport) {
 	started := now()
-	result = caseReport{CaseID: c.ID, Category: c.Category, Protocol: "not_evaluated", Semantic: "not_scored", Transport: "not_called", Cleanup: "not_started", ReasonCode: "synthetic_setup_failed", Suggestions: []suggestion{}, CandidateOrder: []string{}}
+	result = caseReport{CaseID: c.ID, Category: c.Category, Intent: c.Intent, Protocol: "not_evaluated", Semantic: "not_scored", Transport: "not_called", Cleanup: "not_started", ReasonCode: "synthetic_setup_failed", Suggestions: []suggestion{}, CandidateOrder: []string{}}
+	result.PromptVersion, result.PromptSHA256, result.ReasonPolicy = recommendmodel.PromptVersion, recommendmodel.PromptSHA256(), control.RecommendationReasonPolicy
+	if c.Intent == "voice_target" {
+		result.PromptVersion, result.PromptSHA256, result.ReasonPolicy = recommendmodel.VoiceTargetPromptVersion, recommendmodel.VoiceTargetPromptSHA256(), "voice-target-review-v1"
+	}
 	defer func() { result.ElapsedMS = now().Sub(started).Milliseconds() }()
 	trace := &observedModel{inner: model, groups: p.Groups}
 	store := &memorySnapshot{}
@@ -226,7 +235,12 @@ func runCase(ctx context.Context, c evalCase, p profile, model reportingModel, n
 		return
 	}
 	requestBytes, _ := json.Marshal(control.RecommendationRequest{RequestID: "evaluation_request_0001", Need: c.Need, ExpectedVersion: before.CurrentVersion, ServerEpoch: before.ServerEpoch})
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:18792/api/v1/recommendations", bytes.NewReader(requestBytes)).WithContext(ctx)
+	path := "/api/v1/recommendations"
+	if c.Intent == "voice_target" {
+		path = "/api/v1/voice/proposals"
+		requestBytes, _ = json.Marshal(map[string]any{"request_id": "evaluation_request_0001", "transcript": c.Need, "expected_version": before.CurrentVersion, "server_epoch": before.ServerEpoch})
+	}
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:18792"+path, bytes.NewReader(requestBytes)).WithContext(ctx)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer "+token)
 	response := httptest.NewRecorder()
@@ -264,7 +278,18 @@ func runCase(ctx context.Context, c evalCase, p profile, model reportingModel, n
 		result.ReasonCode = "cleanup_unconfirmed"
 		return
 	}
-	if result.Transport != "ok" {
+	// Exact voice proposals intentionally make no provider call. They still
+	// traverse the production HTTP/control review path and must remain read-only.
+	exact := false
+	if c.Intent == "voice_target" && trace.calls == 0 && response.Code == http.StatusOK {
+		var body struct {
+			Recommendation struct {
+				Source string `json:"source"`
+			} `json:"recommendation"`
+		}
+		exact = json.Unmarshal(response.Body.Bytes(), &body) == nil && body.Recommendation.Source == "exact"
+	}
+	if result.Transport != "ok" && !exact {
 		result.ReasonCode = "transport_error"
 		if result.Transport == "not_called" {
 			result.ReasonCode = "control_rejected_before_model"
@@ -287,6 +312,22 @@ func runCase(ctx context.Context, c evalCase, p profile, model reportingModel, n
 		result.Protocol, result.ReasonCode = "invalid", "control_or_output_rejected"
 		return
 	}
+	if c.Intent == "voice_target" {
+		var source struct {
+			Recommendation struct {
+				Source string `json:"source"`
+			} `json:"recommendation"`
+		}
+		if json.Unmarshal(response.Body.Bytes(), &source) != nil || source.Recommendation.Source != "exact" && source.Recommendation.Source != "model" || exact && source.Recommendation.Source != "exact" {
+			result.Protocol, result.ReasonCode = "invalid", "invalid_voice_source"
+			return
+		}
+		result.Source = source.Recommendation.Source
+		if (result.Source == "exact") != (trace.calls == 0) {
+			result.Protocol, result.ReasonCode = "invalid", "voice_source_call_mismatch"
+			return
+		}
+	}
 	for _, item := range body.Recommendation.Suggestions {
 		g, ok := keys[item.GroupID]
 		if !ok || item.Name != g.Name || item.Purpose != g.Purpose || !validText(item.Reason, 160, false) {
@@ -297,7 +338,7 @@ func runCase(ctx context.Context, c evalCase, p profile, model reportingModel, n
 		result.Suggestions = append(result.Suggestions, suggestion{Key: g.Key, Reason: item.Reason})
 	}
 	result.Protocol, result.ReasonCode = "valid", "semantic_miss"
-	if result.Cleanup == "confirmed" {
+	if result.Cleanup == "confirmed" || exact {
 		result.Semantic = "miss"
 		if semanticPass(c, result.Suggestions) {
 			result.Semantic, result.ReasonCode = "pass", "semantic_match"
@@ -324,6 +365,12 @@ func runEvaluation(ctx context.Context, data dataset, cases []evalCase, model re
 	started := options.now()
 	deadline := started.Add(runLimit)
 	result := evaluation{Version: 1, ReasonPolicy: control.RecommendationReasonPolicy, DatasetVersion: data.Version, Selected: len(cases), StopReason: "completed", Cases: []caseReport{}}
+	for _, c := range cases {
+		if c.Intent == "voice_target" {
+			result.ReasonPolicy = "case-specific-v1"
+			break
+		}
+	}
 	var lastStart time.Time
 	for _, c := range cases {
 		if ctx.Err() != nil {

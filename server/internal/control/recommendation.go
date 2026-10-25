@@ -39,6 +39,7 @@ type RecommendationCandidate struct {
 	Purpose     string `json:"purpose,omitempty"`
 }
 type RecommendationInput struct {
+	Intent     string                    `json:"intent,omitempty"`
 	Need       string                    `json:"need"`
 	Candidates []RecommendationCandidate `json:"candidates"`
 }
@@ -55,6 +56,7 @@ type RecommendationSuggestion struct {
 	Reason  string `json:"reason"`
 }
 type Recommendation struct {
+	Source           string                     `json:"source,omitempty"`
 	RecommendationID string                     `json:"recommendation_id"`
 	RequestID        string                     `json:"request_id"`
 	ServerEpoch      string                     `json:"server_epoch"`
@@ -132,11 +134,25 @@ func (s *Service) pruneRecommendations(now time.Time) int {
 // Recommend captures authorized candidates under the control lock, runs the
 // bounded text model without that lock, then revalidates the complete snapshot.
 func (s *Service) Recommend(ctx context.Context, id string, req RecommendationRequest) (Recommendation, error) {
+	return s.recommend(ctx, id, req, "")
+}
+
+func (s *Service) recommend(ctx context.Context, id string, req RecommendationRequest, intent string) (Recommendation, error) {
 	req.Need = strings.TrimSpace(req.Need)
-	if !validID(req.RequestID) || !boundedRecommendationText(req.Need, 512) || !validID(req.ServerEpoch) {
+	limit := 512
+	if intent == VoiceTargetIntent {
+		limit = 256
+		if len(req.Need) > 1024 {
+			return Recommendation{}, fail(400, "invalid_recommendation_request", "voice transcript exceeds the byte limit")
+		}
+	}
+	if !validID(req.RequestID) || !boundedRecommendationText(req.Need, limit) || !validID(req.ServerEpoch) {
 		return Recommendation{}, fail(400, "invalid_recommendation_request", "a request id, epoch and need of 1 to 512 characters are required")
 	}
-	encoded, _ := json.Marshal(req)
+	encoded, _ := json.Marshal(struct {
+		Kind    string                `json:"kind"`
+		Request RecommendationRequest `json:"request"`
+	}{intent, req})
 	fingerprint := digest(string(encoded))
 	s.mu.Lock()
 	now := s.opts.Now().UTC()
@@ -145,7 +161,7 @@ func (s *Service) Recommend(ctx context.Context, id string, req RecommendationRe
 		s.mu.Unlock()
 		return Recommendation{}, err
 	}
-	if s.opts.Recommender == nil {
+	if s.opts.Recommender == nil && intent != VoiceTargetIntent {
 		s.mu.Unlock()
 		return Recommendation{}, fail(503, "recommendation_unavailable", "the configured RTA text capability has not been verified")
 	}
@@ -194,12 +210,30 @@ func (s *Service) Recommend(ctx context.Context, id string, req RecommendationRe
 		s.mu.Unlock()
 		return Recommendation{}, fail(422, "recommendation_candidates_too_large", "joined group directory exceeds the bounded model candidate limit")
 	}
+	source, reasonNote := "", RecommendationReasonNote
+	var exact []RecommendationSuggestion
+	if intent == VoiceTargetIntent {
+		source, reasonNote = "model", VoiceTargetReasonNote
+		names, _ := voiceTargetNames(req.Need)
+		for _, candidate := range candidates {
+			if names[candidate.Name] {
+				exact = append(exact, RecommendationSuggestion{GroupID: candidate.ID, Name: candidate.Name,
+					Purpose: candidate.Purpose, Reason: reasonNote})
+			}
+		}
+		if len(exact) == 1 {
+			source = "exact"
+		} else if s.opts.Recommender == nil {
+			s.mu.Unlock()
+			return Recommendation{}, fail(503, "recommendation_unavailable", "model-assisted voice targets are not configured")
+		}
+	}
 	recID, err := s.randomID("rec_", 24)
 	if err != nil {
 		s.mu.Unlock()
 		return Recommendation{}, err
 	}
-	recommendation := Recommendation{RecommendationID: recID, RequestID: req.RequestID, ServerEpoch: s.epoch, CurrentVersion: d.CurrentVersion, CandidateDigest: candidateDigest, ExpiresAt: now.Add(RecommendationTTL), Suggestions: []RecommendationSuggestion{}}
+	recommendation := Recommendation{Source: source, RecommendationID: recID, RequestID: req.RequestID, ServerEpoch: s.epoch, CurrentVersion: d.CurrentVersion, CandidateDigest: candidateDigest, ExpiresAt: now.Add(RecommendationTTL), Suggestions: []RecommendationSuggestion{}}
 	record := &recommendationRecord{requestDigest: fingerprint, recommendation: recommendation, candidates: candidates}
 	if records == nil {
 		records = map[string]*recommendationRecord{}
@@ -207,7 +241,13 @@ func (s *Service) Recommend(ctx context.Context, id string, req RecommendationRe
 	}
 	records[req.RequestID] = record
 	s.recommendationLast[id] = now
-	input := RecommendationInput{Need: req.Need, Candidates: make([]RecommendationCandidate, len(candidates))}
+	if source == "exact" {
+		record.ready = true
+		record.recommendation.Suggestions = exact
+		s.mu.Unlock()
+		return copyRecommendation(record.recommendation), nil
+	}
+	input := RecommendationInput{Intent: intent, Need: req.Need, Candidates: make([]RecommendationCandidate, len(candidates))}
 	for i, g := range candidates {
 		input.Candidates[i] = RecommendationCandidate{CandidateID: candidateKey(i), Name: g.Name, Purpose: g.Purpose}
 	}
@@ -216,7 +256,7 @@ func (s *Service) Recommend(ctx context.Context, id string, req RecommendationRe
 	raw, modelErr := s.opts.Recommender.Recommend(modelCtx, input)
 	modelContextErr := modelCtx.Err()
 	cancel()
-	suggestions, parseErr := parseRecommendation(raw, candidates)
+	suggestions, parseErr := parseRecommendationWithNote(raw, candidates, reasonNote)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record.ready = true
@@ -252,6 +292,10 @@ func candidateKey(index int) string {
 	return "c" + string([]byte{alphabet[index/16], alphabet[index%16]})
 }
 func parseRecommendation(raw string, candidates []recommendationGroup) ([]RecommendationSuggestion, error) {
+	return parseRecommendationWithNote(raw, candidates, RecommendationReasonNote)
+}
+
+func parseRecommendationWithNote(raw string, candidates []recommendationGroup, reasonNote string) ([]RecommendationSuggestion, error) {
 	invalid := func() ([]RecommendationSuggestion, error) {
 		return nil, fail(502, "recommendation_invalid_output", "model output did not exactly match authorized candidates")
 	}
@@ -278,7 +322,7 @@ func parseRecommendation(raw string, candidates []recommendationGroup) ([]Recomm
 		matched := false
 		for i, group := range candidates {
 			if candidateKey(i) == suggestion.CandidateID {
-				results = append(results, RecommendationSuggestion{GroupID: group.ID, Name: group.Name, Purpose: group.Purpose, Reason: RecommendationReasonNote})
+				results = append(results, RecommendationSuggestion{GroupID: group.ID, Name: group.Name, Purpose: group.Purpose, Reason: reasonNote})
 				matched = true
 				break
 			}

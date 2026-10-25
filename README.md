@@ -52,7 +52,7 @@ flowchart LR
     N <-->|独立 RTC · 文本请求与结束确认| R
 ```
 
-普通群音频经媒体面转发给同群其他成员，控制面是身份、当前群与麦权的唯一授权来源。源包入队与目标写出前都重新校验权限；麦权与 Peer 只保存在内存，服务重启后清空。明确群名指令使用有限解析；主动需求先结束转写会话，再交给受限文本推荐器。推荐结果不改变当前群，明确确认使用原持久切群终态并原子消费建议。默认部署保持 localhost；S3 通过完整显式参数开放指定 LAN IP 的设备 HTTPS 与 UDP 入口，配置见[开发指南](docs/development.md#s3-板端-lan-开发入口)。板端实际证据单独记录，不外推到公网。
+普通群音频经媒体面转发给同群其他成员，控制面是身份、当前群与麦权的唯一授权来源。源包入队与目标写出前都重新校验权限；麦权与 Peer 只保存在内存，服务重启后清空。语音指令先结束转写会话，再生成待确认目标：精确群名省去模型，其余由受限文本模型辅助理解。主动需求使用独立职责推荐规则。所有建议都不改变当前群，明确确认使用原持久切群终态并原子消费建议。默认部署保持 localhost；S3 通过完整显式参数开放指定 LAN IP 的设备 HTTPS 与 UDP 入口，配置见[开发指南](docs/development.md#s3-板端-lan-开发入口)。板端实际证据单独记录，不外推到公网。
 
 ## 连接与发言状态
 
@@ -168,21 +168,29 @@ stateDiagram-v2
     state "群音频就绪" as GroupReady
     state "关闭群 Peer · 准备指令" as Preparing
     state "采集就绪 · 请说群名" as Listening
-    state "核对已加入群" as Resolving
-    state "结束 RTA 与确认切群终态" as Confirming
+    state "结束 RTA" as Cleaning
+    state "理解目标" as Resolving
+    state "核对候选 · 等待明确确认" as Reviewing
+    state "确认切群终态" as Confirming
     state "核实当前群 · 重建群 Peer" as Recovering
     GroupReady --> Preparing: 主动点击语音切群 / 取消PTT
     Preparing --> Listening: session.updated 与采集就绪
-    Listening --> Resolving: 首次最终用户转写 / 停采集
-    Preparing --> Confirming: 取消 / 初始化失败
-    Listening --> Confirming: 取消 / 超时 / 断网
-    Resolving --> Confirming: 有限群名命令 / 或明确拒绝
-    Confirming --> Confirming: stop或切群结果不明 / 重试原操作
-    Confirming --> Recovering: RTA结束确认且切群无未决操作
+    Listening --> Cleaning: 首次最终用户转写 / 停采集
+    Preparing --> Cleaning: 取消 / 初始化失败
+    Listening --> Cleaning: 取消 / 超时 / 断网
+    Cleaning --> Cleaning: stop未确认 / 重试原会话
+    Cleaning --> Resolving: 清理确认且转写仍有效
+    Cleaning --> Recovering: 清理确认且取消或失败
+    Resolving --> Reviewing: 精确命中或模型候选
+    Reviewing --> Confirming: 用户明确确认 / 固定操作
+    Reviewing --> Recovering: 取消或失效 / 未切群
+    Resolving --> Recovering: 无候选或失败 / 未切群
+    Confirming --> Confirming: 切群结果不明 / 查询重放原操作
+    Confirming --> Recovering: 切群无未决操作
     Recovering --> GroupReady: 当前群媒体可用 / 未按麦
 ```
 
-明确群名切换时，板端先结束 RTA 再持久提交切群；浏览器先持久提交并确认控制操作，再结束 RTA。两者始终串行使用一个本地 Peer，RTA stop 未确认时不恢复群音频。详细边界见 [006 首版规格](docs/specs/006-first-version.md)。独立语音需求入口在两端都先完成转写清理，再请求推荐；确认与恢复见 [009](docs/specs/009-model-recommendation.md)。
+两端先结束 RTA，再请求语音目标候选，所有结果均待用户点击“确认进入”。模型只辅助选候选，服务端重验权限、版本、目录与期限；精确路径也不能跳过确认。RTA stop 未确认时不恢复群音频。当前边界见 [010 语音目标核对](docs/specs/010-voice-target-review.md)；独立语音需求入口的职责推荐与确认见 [009](docs/specs/009-model-recommendation.md)。
 
 启动使用 `python3 tools/dev.py`；板端 LAN、私有证书、USB 初始化和可选 RTA 配置见[首次运行指南](docs/first-run.md)。本地主机回归用 `python3 tools/check.py`，范围与依赖见[开发指南](docs/development.md#自动验证)；完整演示和关闭检查见[演示与收尾指南](docs/demo.md)。
 

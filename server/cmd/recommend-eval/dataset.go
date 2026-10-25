@@ -30,6 +30,7 @@ type evalCase struct {
 	ID             string   `json:"id"`
 	Category       string   `json:"category"`
 	Profile        string   `json:"profile"`
+	Intent         string   `json:"intent,omitempty"`
 	Need           string   `json:"need"`
 	AcceptableKeys []string `json:"acceptable_keys"`
 	Expected       string   `json:"expected"`
@@ -134,6 +135,9 @@ func readDataset(reader io.Reader) (dataset, error) {
 	for _, c := range result.Cases {
 		p, ok := result.Profiles[c.Profile]
 		if !ok || !slug.MatchString(c.ID) || ids[c.ID] || !slug.MatchString(c.Category) || !validText(c.Need, 512, false) || !utf8.ValidString(c.Notes) || utf8.RuneCountInString(c.Notes) > 2000 || len(c.AcceptableKeys) > 3 {
+			return dataset{}, errDataset
+		}
+		if c.Intent != "" && c.Intent != "voice_target" || c.Intent == "voice_target" && (utf8.RuneCountInString(c.Need) > 256 || len(c.Need) > 1024) {
 			return dataset{}, errDataset
 		}
 		ids[c.ID] = true

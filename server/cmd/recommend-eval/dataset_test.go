@@ -21,6 +21,8 @@ func TestDatasetStrictSchemaBoundsAndAuthorizationLabels(t *testing.T) {
 		t.Fatal("valid synthetic dataset rejected")
 	}
 	for _, mutate := range []func(*dataset){
+		func(d *dataset) { d.Cases[0].Intent = "execute" },
+		func(d *dataset) { d.Cases[0].Intent = "voice_target"; d.Cases[0].Need = strings.Repeat("中", 257) },
 		func(d *dataset) { d.Version = 2 },
 		func(d *dataset) { d.Cases[0].Need = strings.Repeat("中", 513) },
 		func(d *dataset) { d.Cases[0].Need = "含\n控制" },
@@ -52,6 +54,15 @@ func TestDatasetStrictSchemaBoundsAndAuthorizationLabels(t *testing.T) {
 		if _, err := readDataset(strings.NewReader(raw)); err == nil {
 			t.Fatal("duplicate, unknown, oversized or deep dataset accepted")
 		}
+	}
+}
+
+func TestVoiceTargetDatasetUsesBoundedTranscriptAndFrozenLabels(t *testing.T) {
+	data := fixtureDataset()
+	data.Cases[0].Intent, data.Cases[0].Need = "voice_target", "帮我转到维修组"
+	parsed, err := readDataset(bytes.NewReader(encodeDataset(t, data)))
+	if err != nil || parsed.Cases[0].Intent != "voice_target" {
+		t.Fatal("bounded voice-target dataset rejected")
 	}
 }
 

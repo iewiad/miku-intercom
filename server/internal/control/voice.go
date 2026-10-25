@@ -1,10 +1,52 @@
 package control
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"unicode/utf8"
 )
+
+const VoiceTargetIntent = "voice_target"
+const VoiceTargetReasonNote = "请核对识别出的目标群，确认后才会切换。"
+
+type VoiceProposalRequest struct {
+	RequestID       string `json:"request_id"`
+	Transcript      string `json:"transcript"`
+	ExpectedVersion uint64 `json:"expected_version"`
+	ServerEpoch     string `json:"server_epoch"`
+}
+
+// ProposeVoiceTarget never executes a switch. Exact names avoid a model turn,
+// but receive the same bounded confirmation record as model-assisted targets.
+func (s *Service) ProposeVoiceTarget(ctx context.Context, id string, req VoiceProposalRequest) (Recommendation, error) {
+	return s.recommend(ctx, id, RecommendationRequest{RequestID: req.RequestID, Need: req.Transcript,
+		ExpectedVersion: req.ExpectedVersion, ServerEpoch: req.ServerEpoch}, VoiceTargetIntent)
+}
+
+// voiceTargetNames is shared with the legacy resolver, including its ambiguity
+// protection for punctuation which can also be literal group-name data.
+func voiceTargetNames(transcript string) (map[string]bool, string) {
+	names := map[string]bool{}
+	acceptedPrefix := "none"
+	for text := strings.TrimSpace(transcript); text != ""; {
+		for _, prefix := range []struct{ text, code string }{{"切换到", "switch_to"}, {"切到", "switch_short"}, {"进入", "enter"}} {
+			if strings.HasPrefix(text, prefix.text) {
+				name := strings.TrimSpace(strings.TrimPrefix(text, prefix.text))
+				if name != "" {
+					acceptedPrefix = prefix.code
+					names[name] = true
+				}
+			}
+		}
+		last, width := utf8.DecodeLastRuneInString(text)
+		if !strings.ContainsRune("。.!！", last) {
+			break
+		}
+		text = strings.TrimSpace(text[:len(text)-width])
+	}
+	return names, acceptedPrefix
+}
 
 // VoiceResolutionDiagnostics contains only counts and fixed enum values. It must
 // never contain command text, group data, or identity/credential material.
@@ -57,35 +99,18 @@ func (s *Service) ResolveVoiceWithDiagnostics(id, transcript string) (Group, Voi
 	}
 	diagnostic.CandidateCount = len(st.Groups)
 	matches := map[string]Group{}
-	names := map[string]bool{}
-	command := false
+	names, prefix := voiceTargetNames(transcript)
+	diagnostic.AcceptedPrefix = prefix
 	// ASR sentence punctuation may also be literal group-name data. Consider the
 	// unchanged command and every removable punctuation suffix; never prefer a
 	// normalized spelling over another joined group with a literal suffix.
-	for text := strings.TrimSpace(transcript); text != ""; {
-		for _, prefix := range []struct{ text, code string }{{"切换到", "switch_to"}, {"切到", "switch_short"}, {"进入", "enter"}} {
-			if strings.HasPrefix(text, prefix.text) {
-				name := strings.TrimSpace(strings.TrimPrefix(text, prefix.text))
-				if name != "" {
-					command = true
-					diagnostic.AcceptedPrefix = prefix.code
-					names[name] = true
-				}
-			}
-		}
-		last, width := utf8.DecodeLastRuneInString(text)
-		if !strings.ContainsRune("。.!！", last) {
-			break
-		}
-		text = strings.TrimSpace(text[:len(text)-width])
-	}
 	for _, group := range st.Groups {
 		if names[group.Name] {
 			matches[group.ID] = group
 		}
 	}
 	diagnostic.ExactMatchCount = len(matches)
-	if !command {
+	if prefix == "none" {
 		return Group{}, diagnostic, fail(400, "invalid_voice_command", "say an explicit switch command")
 	}
 	if len(matches) == 0 {

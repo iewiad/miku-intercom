@@ -198,7 +198,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1")
-	methods := map[string]string{"/devices": "POST", "/state": "GET", "/groups": "POST", "/memberships": "POST", "/current-group": "PUT", "/floor/acquire": "POST", "/floor/renew": "POST", "/floor/release": "POST", "/voice/resolve": "POST", "/voice": "GET", "/voice/sessions": "POST", "/recommendations": "GET", "/recommendations/confirm": "PUT"}
+	methods := map[string]string{"/devices": "POST", "/state": "GET", "/groups": "POST", "/memberships": "POST", "/current-group": "PUT", "/floor/acquire": "POST", "/floor/renew": "POST", "/floor/release": "POST", "/voice/resolve": "POST", "/voice/proposals": "POST", "/voice": "GET", "/voice/sessions": "POST", "/recommendations": "GET", "/recommendations/confirm": "PUT"}
 	method, ok := methods[path]
 	if path == "/recommendations" {
 		method = "GET, POST"
