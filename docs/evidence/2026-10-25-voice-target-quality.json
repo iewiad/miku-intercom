@@ -1,0 +1,434 @@
+{
+  "schema": "miku-intercom.voice-target-quality.v1",
+  "date": "2026-10-25",
+  "dataset_frozen_commit": "b90d4f5",
+  "dataset_sha256": "95133ef8a21f70efcedbcba0bd1dfdee67b36fa276ad172de6d3f44545fbdecd",
+  "only_synthetic_transcripts_and_groups": true,
+  "microphone_paths": 0,
+  "playback_paths": 0,
+  "confirmation_requests": 0,
+  "rounds": [
+    {
+      "prompt_version": "voice-target-v1",
+      "prompt_sha256": "f8a6e8fae3992ea3c404bdc13ce04240aa3017f958a5bec48953d26747016207",
+      "backend_commit": "9c1d28c",
+      "metrics": {
+        "cases": 22,
+        "protocol_valid": 22,
+        "protocol_errors": 0,
+        "transport_errors": 0,
+        "transport_timeouts": 0,
+        "transport_cancelled": 0,
+        "cleanup_unconfirmed": 0,
+        "semantic_scored": 22,
+        "semantic_passed": 21,
+        "semantic_missed": 1
+      },
+      "model_calls": 20,
+      "exact_no_model": 2,
+      "all_unconfirmed_state_unchanged": true,
+      "all_no_operations": true,
+      "all_authorized": true,
+      "all_model_cleanup_confirmed": true,
+      "cleanup_pending_after_close": false,
+      "raw_report_sha256": "c2971563cb49f953aabe411fba406f556627cc567b588599b51cd182e63451e3",
+      "cases": [
+        {
+          "case_id": "V01",
+          "source": "exact",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "logistics"
+          ]
+        },
+        {
+          "case_id": "V02",
+          "source": "exact",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "acceptance"
+          ]
+        },
+        {
+          "case_id": "V03",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "logistics"
+          ]
+        },
+        {
+          "case_id": "V04",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "acceptance"
+          ]
+        },
+        {
+          "case_id": "V05",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "all"
+          ]
+        },
+        {
+          "case_id": "V06",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "logistics_one"
+          ]
+        },
+        {
+          "case_id": "V07",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": []
+        },
+        {
+          "case_id": "V08",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": []
+        },
+        {
+          "case_id": "V09",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": []
+        },
+        {
+          "case_id": "V10",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "all"
+          ]
+        },
+        {
+          "case_id": "V11",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "acceptance"
+          ]
+        },
+        {
+          "case_id": "V12",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "logistics_one"
+          ]
+        },
+        {
+          "case_id": "V13",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "miss",
+          "target_keys": [
+            "logistics"
+          ]
+        },
+        {
+          "case_id": "V14",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "logistics",
+            "logistics_one"
+          ]
+        },
+        {
+          "case_id": "V15",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": []
+        },
+        {
+          "case_id": "V16",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": []
+        },
+        {
+          "case_id": "V17",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": []
+        },
+        {
+          "case_id": "V18",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": []
+        },
+        {
+          "case_id": "V19",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": []
+        },
+        {
+          "case_id": "V20",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "all"
+          ]
+        },
+        {
+          "case_id": "V21",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "all"
+          ]
+        },
+        {
+          "case_id": "V22",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": []
+        }
+      ]
+    },
+    {
+      "prompt_version": "voice-target-v2",
+      "prompt_sha256": "a597b56f256d014a083d753cb25c8cbdc1e29f9e40379b66b254f77410461628",
+      "backend_commit": "983ded7",
+      "metrics": {
+        "cases": 22,
+        "protocol_valid": 22,
+        "protocol_errors": 0,
+        "transport_errors": 0,
+        "transport_timeouts": 0,
+        "transport_cancelled": 0,
+        "cleanup_unconfirmed": 0,
+        "semantic_scored": 22,
+        "semantic_passed": 22,
+        "semantic_missed": 0
+      },
+      "model_calls": 20,
+      "exact_no_model": 2,
+      "all_unconfirmed_state_unchanged": true,
+      "all_no_operations": true,
+      "all_authorized": true,
+      "all_model_cleanup_confirmed": true,
+      "cleanup_pending_after_close": false,
+      "raw_report_sha256": "922572296681718e6b612bbd9119ca1aa3bbf9e690dbb648603ee6667cc67907",
+      "cases": [
+        {
+          "case_id": "V01",
+          "source": "exact",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "logistics"
+          ]
+        },
+        {
+          "case_id": "V02",
+          "source": "exact",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "acceptance"
+          ]
+        },
+        {
+          "case_id": "V03",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "logistics"
+          ]
+        },
+        {
+          "case_id": "V04",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "acceptance"
+          ]
+        },
+        {
+          "case_id": "V05",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "all"
+          ]
+        },
+        {
+          "case_id": "V06",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "logistics_one"
+          ]
+        },
+        {
+          "case_id": "V07",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": []
+        },
+        {
+          "case_id": "V08",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": []
+        },
+        {
+          "case_id": "V09",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": []
+        },
+        {
+          "case_id": "V10",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "all"
+          ]
+        },
+        {
+          "case_id": "V11",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "acceptance"
+          ]
+        },
+        {
+          "case_id": "V12",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "logistics_one"
+          ]
+        },
+        {
+          "case_id": "V13",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "similar",
+            "logistics"
+          ]
+        },
+        {
+          "case_id": "V14",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "logistics",
+            "logistics_one"
+          ]
+        },
+        {
+          "case_id": "V15",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": []
+        },
+        {
+          "case_id": "V16",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": []
+        },
+        {
+          "case_id": "V17",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": []
+        },
+        {
+          "case_id": "V18",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": []
+        },
+        {
+          "case_id": "V19",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": []
+        },
+        {
+          "case_id": "V20",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "all"
+          ]
+        },
+        {
+          "case_id": "V21",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": [
+            "all"
+          ]
+        },
+        {
+          "case_id": "V22",
+          "source": "model",
+          "protocol": "valid",
+          "semantic": "pass",
+          "target_keys": []
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "Synthetic text regression only; not ASR or physical board acceptance.",
+    "v2 followed inspection of the v1 V13 miss; the same cases are an informed regression, not an independent holdout.",
+    "No general accuracy or latency claim."
+  ]
+}

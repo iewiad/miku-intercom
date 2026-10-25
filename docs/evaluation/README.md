@@ -1,6 +1,6 @@
 # 需求推荐质量评估
 
-语音目标理解使用独立的 [010 契约](../specs/010-voice-target-review.md)、[22 例固定集](voice-target-cases-v1.json)和[冻结说明](voice-target-review-v1.md)。评估器识别 `intent=voice_target` 后请求生产 `/voice/proposals`；精确路径的零模型调用单列为 `source=exact`，不伪造模型或清理证据。职责推荐原集合与结果保持原范围。
+语音目标理解使用独立的 [010 契约](../specs/010-voice-target-review.md)、[22 例固定集](voice-target-cases-v1.json)和[冻结说明](voice-target-review-v1.md)。评估器识别 `intent=voice_target` 后请求生产 `/voice/proposals`；精确路径的零模型调用单列为 `source=exact`，不伪造模型或清理证据。[两轮结果](voice-target-results-2026-10-25.md)分别保留 v1 的 21/22 与 v2 的 22/22，不外推为总体准确率。职责推荐原集合与结果保持原范围。
 
 2026-10-25，Asia/Shanghai。基于 PR #19 合并后的生产推荐链路。评估只发送合成文字需求和合成授权群目录，使用原已批准 RTA 配置；不接板、不开麦、不播放、不操作既有产品服务或真实群数据。
 
