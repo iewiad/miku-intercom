@@ -59,6 +59,9 @@ static void *group_recommendation_context;
 static group_recommendation_view_t group_recommendation_view;
 static group_recommendation_item_t *group_recommendation_items;
 static bool group_recommendation_active, group_recommendation_pending;
+static bool group_recommendation_voice;
+static uint32_t group_voice_origin_revision, group_recommendation_origin_revision;
+static bool group_voice_cancelled, group_recommendation_cancelled;
 static uint32_t group_recommendation_pending_revision, group_recommendation_deadline;
 static bool group_recommendation_expiry_set;
 static int group_recommendation_selected = -1;
@@ -552,6 +555,7 @@ static void tap_center(lv_obj_t *object) {
     tap((area.x1 + area.x2) / 2, (area.y1 + area.y2) / 2);
 }
 static void check_recommendation_cards(void) {
+    lv_obj_update_layout(lv_screen_active());
     assert(inside(group_recommendation_list, "recommendation viewport"));
     assert(inside(group_recommendation_footer, "recommendation footer"));
     assert(inside(group_recommendation_submit, "recommendation confirm"));
@@ -717,6 +721,21 @@ static bool test_recommendation(void) {
     assert(board_display_set_group_recommendation(&stale,items)==ESP_OK&&group_recommendation_view.phase==GROUP_RECOMMENDATION_FAILED);
     view.count=4;assert(board_display_set_group_recommendation(&view,items)==ESP_ERR_INVALID_ARG);view.count=3;
     psram_fail=true;assert(board_display_set_group_recommendation(&view,items)==ESP_ERR_NO_MEM);psram_fail=false;
+    /* Accepted cancellation is a UI intent too: a newer choosing frame from
+     * the same worker must never restore selectable cards. */
+    view.phase=GROUP_RECOMMENDATION_CHOOSING;view.revision=12;
+    view.can_cancel=view.can_confirm=true;view.expires_remaining_ms=30000;
+    assert(board_display_set_group_recommendation(&view,items)==ESP_OK);
+    assert(group_recommendation_view.phase==GROUP_RECOMMENDATION_CLEANUP);
+    assert(!group_recommendation_items&&!group_recommendation_view.can_confirm);
+    assert(!group_recommendation_cards[0]);
+    view.phase=GROUP_RECOMMENDATION_IDLE;view.revision=13;view.count=0;
+    view.can_start=true;view.can_cancel=view.can_confirm=false;view.expires_remaining_ms=0;
+    assert(board_display_set_group_recommendation(&view,NULL)==ESP_OK);
+    tap_center(group_recommendation_cancel);
+    assert(group_modal==GROUP_MODAL_NONE);
+    tap_center(group_recommendation_button);tap_center(group_recommendation_submit);
+    assert(recommendation_calls==5&&recommendation_action==GROUP_RECOMMENDATION_START);
     const char *names[]={"设备问题协助组","后勤保障组","现场协调组"};
     const char *purposes[]={"排查设备无声、网络连接和音频设置问题","协助处理场地、物资与日常保障需求","协调现场任务分工与跨组沟通"};
     const char *reason="模型建议联系该组，请核对群职责后确认。";
@@ -726,28 +745,137 @@ static bool test_recommendation(void) {
         strlcpy(items[i].purpose,purposes[i],sizeof(items[i].purpose));
         strlcpy(items[i].reason,reason,sizeof(items[i].reason));
     }
-    view.phase=GROUP_RECOMMENDATION_CHOOSING;view.revision=12;view.count=3;view.can_start=false;
+    view.phase=GROUP_RECOMMENDATION_CHOOSING;view.revision=14;view.count=3;view.can_start=false;
     view.can_cancel=view.can_confirm=true;view.expires_remaining_ms=30000;
     strlcpy(view.detail,"仅根据本次主动需求，推荐你已加入的群",sizeof(view.detail));
     assert(board_display_set_group_recommendation(&view,items)==ESP_OK);
     lv_obj_update_layout(lv_screen_active());
     preview("recommendation-typical");
     lv_area_t first;lv_obj_get_coords(group_recommendation_cards[0],&first);
-    tap(500,first.y1+30);assert(recommendation_calls==4&&group_recommendation_selected==0);
+    tap(500,first.y1+30);assert(recommendation_calls==5&&group_recommendation_selected==0);
     check_recommendation_cards();preview("recommendation-typical-selected");
     assert(strstr(lv_label_get_text(group_recommendation_footer),names[0]));
     /* Missing intermediate frames may deliver a new result directly over an
      * old choosing view. Its revision starts its own expiry and clears choice. */
     const uint32_t old_deadline=group_recommendation_deadline;
-    view.revision=13;view.expires_remaining_ms=50000;
+    view.revision=15;view.expires_remaining_ms=50000;
     strlcpy(items[0].name,"新的设备协助组",sizeof(items[0].name));
     assert(board_display_set_group_recommendation(&view,items)==ESP_OK);
     assert((int32_t)(group_recommendation_deadline-old_deadline)>0&&group_recommendation_selected==-1);
-    assert(recommendation_calls==4&&lv_obj_has_state(group_recommendation_submit,LV_STATE_DISABLED));
-    view.phase=GROUP_RECOMMENDATION_FAILED;view.revision=14;view.count=0;view.can_start=true;view.can_cancel=view.can_confirm=false;
+    assert(recommendation_calls==5&&lv_obj_has_state(group_recommendation_submit,LV_STATE_DISABLED));
+    view.phase=GROUP_RECOMMENDATION_FAILED;view.revision=16;view.count=0;view.can_start=true;view.can_cancel=view.can_confirm=false;
     assert(board_display_set_group_recommendation(&view,NULL)==ESP_OK);
     tap_center(group_recommendation_cancel);assert(group_modal==GROUP_MODAL_NONE);
     puts("Recommendation UI: explicit start/selection/confirmation, real pointer scrolling of three maximum text cards, expiry/revision guards, PSRAM ownership and reason-only recovery/failure passed.");
+    return true;
+}
+static bool test_voice_proposals(void) {
+    assert(board_display_show_group(NULL,page_ptt,NULL,volume_action,38,&volume_calls)==ESP_OK);
+    choices.known=choices.can_select=true;choices.switching=false;
+    group_choices_valid=group_candidate_valid=true;group_stop_action=true;
+    strlcpy(choices.current_id,"a",sizeof(choices.current_id));
+    assert(board_display_set_group_state(NULL,"群语音已就绪",true,false)==ESP_OK);
+    assert(board_display_set_group_recommendation_action(recommendation_action_fixture,&recommendation_calls)==ESP_OK);
+    group_recommendation_view_t view={.phase=GROUP_RECOMMENDATION_IDLE,.revision=30,.can_start=true};
+    assert(board_display_set_group_recommendation(&view,NULL)==ESP_OK);
+    assert(board_display_set_group_command_state(30,false,false,false,"")==ESP_OK);
+    recommendation_calls=0;
+    tap_center(group_voice_button);
+    assert(group_modal==GROUP_MODAL_VOICE);
+    check_tree(group_command_overlay);preview("voice-target-prepare");
+    tap_center(group_command_submit);
+    assert(recommendation_calls==1&&recommendation_action==GROUP_RECOMMENDATION_START_VOICE);
+    assert(recommendation_revision==30&&group_voice_origin_revision==30);
+    assert(board_display_set_group_command_state(31,false,true,true,"现在请说目标群名称")==ESP_OK);
+    view=(group_recommendation_view_t){.phase=GROUP_RECOMMENDATION_LISTENING,.revision=31,.voice_mode=true,.can_cancel=true};
+    assert(board_display_set_group_recommendation(&view,NULL)==ESP_OK);
+    group_recommendation_item_t item={0};
+    strlcpy(item.name,"新版验收群",sizeof(item.name));
+    strlcpy(item.purpose,"完成对讲与语音切群验收",sizeof(item.purpose));
+    strlcpy(item.reason,"请核对识别出的目标群，确认后才会切换。",sizeof(item.reason));
+    view.phase=GROUP_RECOMMENDATION_CHOOSING;view.revision=33;view.count=1;
+    view.can_confirm=true;view.expires_remaining_ms=50000;
+    strlcpy(view.detail,"请选择建议并明确确认进入，未确认不会切群",sizeof(view.detail));
+    const unsigned releases=page_release,force_releases=release_calls;
+    assert(board_display_set_group_recommendation(&view,&item)==ESP_OK);
+    assert(group_modal==GROUP_MODAL_RECOMMENDATION&&group_recommendation_voice);
+    assert(group_recommendation_origin_revision==30&&group_voice_origin_revision==0);
+    assert(page_release==releases&&release_calls==force_releases&&recommendation_calls==1);
+    assert(strstr(lv_label_get_text(group_recommendation_title),"请核对目标群，再确认进入（剩余 "));
+    assert(lv_obj_has_state(group_recommendation_submit,LV_STATE_DISABLED));
+    check_recommendation_cards();preview("voice-target-choices");
+    tap_center(group_recommendation_cards[0]);
+    assert(group_recommendation_selected==0&&recommendation_calls==1);
+    assert(!lv_obj_has_state(group_recommendation_submit,LV_STATE_DISABLED));
+    check_recommendation_cards();preview("voice-target-selected");
+    tap_center(group_recommendation_submit);
+    assert(recommendation_calls==2&&recommendation_action==GROUP_RECOMMENDATION_CONFIRM&&recommendation_revision==33);
+    preview("voice-target-confirming");
+    view.phase=GROUP_RECOMMENDATION_IDLE;view.revision=36;view.count=0;
+    view.can_start=true;view.can_cancel=view.can_confirm=false;view.expires_remaining_ms=0;
+    assert(board_display_set_group_recommendation(&view,NULL)==ESP_OK);
+    assert(board_display_set_group_command_state(36,false,false,false,"")==ESP_OK);
+    tap_center(group_recommendation_cancel);assert(group_modal==GROUP_MODAL_NONE);
+
+    /* Accepted cancel must not flash a late candidate view or lose the origin
+     * when intermediate controller revisions have already been published. */
+    tap_center(group_voice_button);tap_center(group_command_submit);
+    assert(recommendation_calls==3&&recommendation_revision==36&&group_voice_origin_revision==36);
+    assert(board_display_set_group_command_state(37,false,true,true,"正在识别目标群")==ESP_OK);
+    view=(group_recommendation_view_t){.phase=GROUP_RECOMMENDATION_LISTENING,.revision=37,.voice_mode=true,.can_cancel=true};
+    assert(board_display_set_group_recommendation(&view,NULL)==ESP_OK);
+    lv_obj_t *voice_overlay=group_command_overlay;
+    tap_center(group_command_cancel);
+    assert(recommendation_calls==4&&recommendation_action==GROUP_RECOMMENDATION_CANCEL&&recommendation_revision==36);
+    assert(group_voice_cancelled);
+    view.phase=GROUP_RECOMMENDATION_CHOOSING;view.revision=39;view.count=1;
+    view.can_confirm=true;view.expires_remaining_ms=50000;
+    assert(board_display_set_group_recommendation(&view,&item)==ESP_OK);
+    assert(group_command_overlay==voice_overlay&&group_modal==GROUP_MODAL_VOICE);
+    assert(group_recommendation_view.phase==GROUP_RECOMMENDATION_CLEANUP&&!group_recommendation_view.count);
+    assert(!group_recommendation_view.can_confirm&&!group_recommendation_items&&!group_recommendation_cards[0]);
+    assert(!strcmp(lv_label_get_text(group_command_title),"正在取消语音"));
+    check_tree(group_command_overlay);preview("voice-target-cancelling");
+    assert(board_display_set_group_command_state(40,false,false,false,"")==ESP_OK);
+    view.phase=GROUP_RECOMMENDATION_IDLE;view.revision=40;view.count=0;
+    view.can_start=true;view.can_cancel=view.can_confirm=false;view.expires_remaining_ms=0;
+    assert(board_display_set_group_recommendation(&view,NULL)==ESP_OK);
+    tap_center(group_command_cancel);assert(group_modal==GROUP_MODAL_NONE);
+
+    /* The shared chooser's cancel also uses the original voice admission,
+     * despite deletion of the old overlay during the handoff. */
+    tap_center(group_voice_button);tap_center(group_command_submit);
+    assert(recommendation_calls==5&&recommendation_revision==40);
+    assert(board_display_set_group_command_state(41,false,true,true,"处理中")==ESP_OK);
+    view.phase=GROUP_RECOMMENDATION_CHOOSING;view.revision=43;view.count=1;
+    view.can_start=false;view.can_cancel=view.can_confirm=true;view.expires_remaining_ms=50000;
+    assert(board_display_set_group_recommendation(&view,&item)==ESP_OK);
+    assert(group_modal==GROUP_MODAL_RECOMMENDATION&&group_recommendation_origin_revision==40);
+    tap_center(group_recommendation_cancel);
+    assert(recommendation_calls==6&&recommendation_action==GROUP_RECOMMENDATION_CANCEL&&recommendation_revision==40);
+    view.revision=44;
+    assert(board_display_set_group_recommendation(&view,&item)==ESP_OK);
+    assert(group_recommendation_view.phase==GROUP_RECOMMENDATION_CLEANUP&&!group_recommendation_cards[0]);
+    assert(!group_recommendation_view.can_confirm&&!group_recommendation_items);
+    view.phase=GROUP_RECOMMENDATION_IDLE;view.revision=45;view.count=0;
+    view.can_start=true;view.can_cancel=view.can_confirm=false;view.expires_remaining_ms=0;
+    assert(board_display_set_group_recommendation(&view,NULL)==ESP_OK);
+    assert(board_display_set_group_command_state(45,false,false,false,"")==ESP_OK);
+    tap_center(group_recommendation_cancel);assert(group_modal==GROUP_MODAL_NONE);
+
+    /* Leaving the visible voice intent cancels with its admission token; late
+     * results may update state but must not recreate a chooser. */
+    tap_center(group_voice_button);tap_center(group_command_submit);
+    assert(recommendation_calls==7&&recommendation_revision==45);
+    assert(board_display_set_group_command_state(46,false,true,true,"处理中")==ESP_OK);
+    lv_obj_send_event(lv_screen_active(),LV_EVENT_SCREEN_UNLOAD_START,NULL);
+    assert(recommendation_calls==8&&recommendation_action==GROUP_RECOMMENDATION_CANCEL&&recommendation_revision==45);
+    assert(group_modal==GROUP_MODAL_NONE&&!group_command_overlay);
+    view.phase=GROUP_RECOMMENDATION_CHOOSING;view.revision=48;view.count=1;
+    view.can_start=false;view.can_cancel=view.can_confirm=true;view.expires_remaining_ms=50000;
+    assert(board_display_set_group_recommendation(&view,&item)==ESP_OK);
+    assert(group_modal==GROUP_MODAL_NONE&&!group_command_overlay&&recommendation_calls==8);
+    puts("Voice proposal UI: visible voice-to-chooser handoff, preserved admission token, explicit selection/confirm, cancel intent masks late choices and screen unload never reopens passed.");
     return true;
 }
 int main(int argc, char **argv) {
@@ -769,6 +897,7 @@ int main(int argc, char **argv) {
     if(!only && !test_volume()) return EXIT_FAILURE;
     if(!only && !test_group_page()) return EXIT_FAILURE;
     if(!only && !test_recommendation()) return EXIT_FAILURE;
+    if(!only && !test_voice_proposals()) return EXIT_FAILURE;
     lv_deinit();
     return EXIT_SUCCESS;
 }

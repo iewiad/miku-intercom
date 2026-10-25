@@ -34,12 +34,12 @@ def main():
     intent = re.search(r'typedef struct \{[^}]+\} group_intent_t;', production)
     if not intent:
         raise RuntimeError('production intent type missing')
-    names = ('intent_cancel', 'intent_action', 'intent_queue_switch', 'advance_view_locked',
+    names = ('intent_cancel', 'intent_action', 'advance_view_locked',
              'group_controller_refresh_config_status', 'load_config', 'group_controller_action',
-             'string_field', 'command_event', 'finish_command',
-             'join_command', 'recommendation_recover', 'request_recommendation', 'prepare_recommended_switch',
+             'command_event', 'finish_command',
+             'join_command', 'command_uses_proposals', 'recommendation_recover', 'request_recommendation', 'prepare_recommended_switch',
              'process_command', 'group_controller_join_group', 'group_controller_voice_action', 'group_controller_recommendation_action',
-             'prepare_selected_switch', 'volume', 'group_controller_init', 'group_controller_print_status')
+             'volume', 'group_controller_init', 'group_controller_print_status')
     fixture = Path(__file__).with_name('group_command_flow_fixture.c.in').read_text()
     fixture = fixture.replace('/* @production-intent */', intent.group())
     for header, name in [('board_audio.h', 'board_audio_t'), ('webrtc_peer.h', 'webrtc_group_stats_t')]:

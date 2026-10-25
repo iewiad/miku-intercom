@@ -73,7 +73,9 @@ def png_previews(directory):
                  'recommendation-prepare', 'recommendation-listening', 'recommendation-waiting',
                  'recommendation-choices', 'recommendation-scrolled', 'recommendation-selected',
                  'recommendation-confirming', 'recommendation-expired', 'recommendation-recovering',
-                 'recommendation-failed', 'recommendation-typical', 'recommendation-typical-selected'):
+                 'recommendation-failed', 'recommendation-typical', 'recommendation-typical-selected',
+                 'voice-target-prepare', 'voice-target-choices', 'voice-target-selected',
+                 'voice-target-confirming', 'voice-target-cancelling'):
         path = directory / f'board-{name}.ppm'
         raw = path.read_bytes()
         header = b'P6\n800 480\n255\n'
@@ -90,7 +92,7 @@ def run(project, lvgl, build, previews=None):
     names = (
         "create_rti_keyboard", "group_label", "group_glass_style", "group_control_label",
         "group_command_busy", "group_command_ready", "group_is_switching", "group_can_choose", "group_render_controls",
-        "group_current_index", "group_render_current", "board_display_set_group_state",
+        "group_current_index", "group_render_current", "board_display_set_group_state", "board_display_set_group_command_state",
         "group_modal_delete_event_cb", "group_close_command", "group_render_command",
         "group_command_cancel_event_cb", "group_voice_submit_event_cb", "group_join_submit",
         "group_join_submit_event_cb", "group_join_keyboard_event_cb", "group_command_button",
@@ -100,7 +102,7 @@ def run(project, lvgl, build, previews=None):
         "group_valid_text", "group_recommendation_label", "group_recommendation_expired",
         "group_recommendation_card_event_cb", "group_recommendation_submit_event_cb",
         "group_recommendation_cancel_event_cb", "group_render_recommendation", "group_recommendation_tick",
-        "group_recommendation_build_cards", "group_recommendation_open_event_cb",
+        "group_recommendation_build_cards", "group_open_recommendation_panel", "group_recommendation_open_event_cb",
         "board_display_set_group_recommendation_action", "board_display_set_group_recommendation",
     )
     bodies = [function(source, name) for name in names]

@@ -14,6 +14,7 @@ typedef struct {
     group_command_phase_t phase;
     uint32_t revision;
     uint32_t ticket;
+    uint32_t origin_revision;
     bool cancelled;
     bool failed;
     bool submitted;
