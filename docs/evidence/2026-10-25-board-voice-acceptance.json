@@ -1,0 +1,135 @@
+{
+  "schema": "miku-intercom.board-voice-acceptance.v1",
+  "date": "2026-10-25",
+  "timezone": "Asia/Shanghai",
+  "result": "not_passed",
+  "scope": "voice group switching; narrowed by user after ordinary audio diagnostics",
+  "firmware": {
+    "source_commit": "8ad4bac8e4ef9009a9af0e89d1cf39d93871d2d4",
+    "version": "v0-98-g8ad4bac",
+    "bytes": 3501936,
+    "sha256": "efc533d818e99ec7641223a0f9f0917009ef6a58bf05f63dbc07689271a5688f",
+    "chip": "esp32s31",
+    "application_offset": 65536,
+    "application_partition_bytes": 4194304,
+    "application_only_written": true,
+    "independent_flash_verify_passed": true,
+    "boot_version_log_observed": false
+  },
+  "service": {
+    "source_commit": "fad870cddf47bd4b7820e8e2c9c603ec1fd24be0",
+    "binary_sha256": "023e109591c38c42dbab4bb698632750468a7b438f9b2166ad7d013365323a3e",
+    "restarted_in_this_board_round": false
+  },
+  "focused_case": {
+    "requested_human_command": "切换到新版验收群",
+    "source_group": "后勤组",
+    "target_group": "新版验收群",
+    "version_before": 33,
+    "version_after": 33,
+    "http_status": 422,
+    "fixed_error_code": "voice_target_unknown",
+    "input_bytes": 24,
+    "supported_command_prefix_recognized": true,
+    "target_exact_match": false,
+    "switch_submitted": false,
+    "target_applied": false,
+    "restored_original_group_ready": true,
+    "restored_unpressed": true,
+    "human_confirmation": "not recognized/not switched or other error"
+  },
+  "observation": {
+    "from": "2026-10-25T18:37:06.113452+08:00",
+    "until": "2026-10-25T19:09:11.583000+08:00",
+    "seconds": 1925.47,
+    "status_samples": 1843,
+    "fault_counts": {
+      "fatal_detected": 0,
+      "rtc_alloc_failure": 0,
+      "rtc_start_failure": 0,
+      "rtc_cleanup_deferred": 0
+    },
+    "controlled_cancel_then_periodic_status": {
+      "seconds": 120.228,
+      "status_samples": 115,
+      "configured_all_samples": true,
+      "unpressed_all_samples": true,
+      "passed": true
+    }
+  },
+  "changes": [
+    {
+      "commit": "fa7265af425fec3af8e0458f47e967c64e665201",
+      "change": "official SDK TLS/DTLS allocation moved to existing PSRAM; certificate and crypto settings preserved",
+      "measured_restored_group_DMA_free_bytes_before": 5423,
+      "after": 54431,
+      "boundary": "single controller comparison; not proof of all old crash causes"
+    },
+    {
+      "commit": "8ad4bac8e4ef9009a9af0e89d1cf39d93871d2d4",
+      "change": "serial STATUS reads guarded RAM configuration metadata; init/load/explicit config save refresh it; no per-status NVS/CA parsing",
+      "validation": "host sanitizer regressions, clean IDF build, identical Kconfig to fa, linked STATUS no NVS/CA calls, periodic hardware observation"
+    }
+  ],
+  "history_boundaries": [
+    "old v0-91 four-direction human listening results belong to that image",
+    "v0-97 observed four resets; one later classified Cache error (MCAUSE0x19, valid ISR top SP); not proven ISR stack overflow",
+    "v0-97 passive no-periodic-STATUS cancellation plus120s observation had no fault; correlation only",
+    "human v0-97 short commands invalid_command400 and enter command unknown_target422 remained unapplied",
+    "fixed TTS passive comparison played but invalid_command400/27bytes; acoustic input level/coupling unverified",
+    "one prior fixed-TTS orchestration did not execute playback because board had reset and precondition was not ready",
+    "current v0-98 ordinary A-pair user hearing confirmation exists, but physical board uplink was not machine-observed in that batch; controlled synthetic uplink later sent packets and released cleanly, human result not supplied"
+  ],
+  "closeout": {
+    "last_authoritative_group": "后勤组",
+    "last_authoritative_version": 33,
+    "joined_groups": 7,
+    "volume": 38,
+    "board_flags": {
+      "desired": false,
+      "connected": false,
+      "pressed": false,
+      "held": false,
+      "busy": false,
+      "switch_pending": false
+    },
+    "command_kind": 0,
+    "command_phase": 0,
+    "rtc_stop_complete_observed": true,
+    "browser_A": {
+      "current_group": "新版验收群",
+      "audio_UI": "not_connected",
+      "PTT_disabled": true,
+      "PTT_pressed": false
+    },
+    "browser_B": {
+      "current_group": "新版验收群",
+      "audio_UI": "not_connected",
+      "PTT_disabled": true,
+      "PTT_pressed": false
+    },
+    "browser_tabs_preserved": true,
+    "serial_observer_closed": true,
+    "serial_port_released": true,
+    "service_preserved": true,
+    "browser_voice_journal_records": 25,
+    "browser_voice_journal_stopped": 25
+  },
+  "limitations": [
+    "no raw environment recording or ASR transcript retained",
+    "no whole-product acceptance pass; other board/recommendation checks deferred after user focused on voice switching",
+    "no exact current product-page capture/Peer counts exported",
+    "local STOP/current browser journal do not prove remote termination for all sessions whose identifiers were lost at prior crashes",
+    "no precise acoustic latency or long-term stability claim"
+  ],
+  "contract_research": {
+    "model_route": "qwen3.5-omni-plus-realtime via approved RTC route",
+    "dedicated_ASR_corpus_field_verified_for_this_route": false,
+    "resolver_remains_exact": true,
+    "sources": [
+      "https://help.aliyun.com/zh/model-studio/client-events",
+      "https://help.aliyun.com/en/model-studio/qwen-asr-realtime-client-events",
+      "https://help.aliyun.com/en/model-studio/omni-realtime-python-sdk"
+    ]
+  }
+}
