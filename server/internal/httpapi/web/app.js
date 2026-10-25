@@ -468,8 +468,8 @@ function boot() {
     for (const item of recommendation?.result?.suggestions || []) {
       const row = element('li', 'recommendation-row');
       row.append(element('strong', '', item.name));
-      if (item.purpose) row.append(element('p', 'group-purpose', item.purpose));
-      row.append(element('p', 'recommendation-reason', `建议理由 · 模型生成：${item.reason}`));
+      if (item.purpose) row.append(element('p', 'group-purpose', `群职责（填写内容）：${item.purpose}`));
+      row.append(element('p', 'recommendation-reason', `推荐说明：${item.reason}`));
       const button = element('button', 'button secondary', `确认进入 ${item.name}`);
       button.type = 'button'; button.disabled = !client.allowed() || !!client.pendingSwitch || !client.connected;
       button.addEventListener('click', () => { void recommendation.confirm(item.group_id); });

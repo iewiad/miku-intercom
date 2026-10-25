@@ -719,12 +719,12 @@ static bool test_recommendation(void) {
     psram_fail=true;assert(board_display_set_group_recommendation(&view,items)==ESP_ERR_NO_MEM);psram_fail=false;
     const char *names[]={"设备问题协助组","后勤保障组","现场协调组"};
     const char *purposes[]={"排查设备无声、网络连接和音频设置问题","协助处理场地、物资与日常保障需求","协调现场任务分工与跨组沟通"};
-    const char *reasons[]={"本次设备排查需求与职责相符，请核对后确认进入。","适合需要物资或场地协助的需求。建议不代表有人在线。","适合需要现场协同的需求。确认后才会提交切群操作。"};
+    const char *reason="模型建议联系该组，请核对群职责后确认。";
     memset(items,0,sizeof(items));
     for(unsigned i=0;i<3;++i) {
         strlcpy(items[i].name,names[i],sizeof(items[i].name));
         strlcpy(items[i].purpose,purposes[i],sizeof(items[i].purpose));
-        strlcpy(items[i].reason,reasons[i],sizeof(items[i].reason));
+        strlcpy(items[i].reason,reason,sizeof(items[i].reason));
     }
     view.phase=GROUP_RECOMMENDATION_CHOOSING;view.revision=12;view.count=3;view.can_start=false;
     view.can_cancel=view.can_confirm=true;view.expires_remaining_ms=30000;

@@ -51,8 +51,8 @@ test('product request/review renders untrusted data as text and only explicit co
     assert.equal($('current-name').textContent, '全员'); assert.equal($('voice-start').disabled, true); assert.equal($('add-group-open').disabled, true);
     assert.equal($('recommendation-cancel').hidden, false);
     const row = $('recommendation-results').children[0];
-    assert.equal(row.children[0].textContent, group.name); assert.equal(row.children[1].textContent, group.purpose);
-    assert.equal(row.children[2].textContent, '建议理由 · 模型生成：<b>建议理由</b>');
+    assert.equal(row.children[0].textContent, group.name); assert.equal(row.children[1].textContent, `群职责（填写内容）：${group.purpose}`);
+    assert.equal(row.children[2].textContent, '推荐说明：<b>建议理由</b>');
     assert.equal(requests.some(item => item.path === '/recommendations/confirm' || item.path === '/current-group' || item.path.includes('/media')), false);
     assert.equal([...store.values()].some(value => value.includes('设备坏了')), false);
     $('recommendation-cancel').dispatch('click'); assert.equal($('recommendation-results').children.length, 0);
