@@ -27,6 +27,34 @@
 
 评估器 `server/cmd/recommend-eval` 必须显式开启 live 才调用原模型，读取原私有配置而不复制密钥。结果与清理 journal 分别写新文件，父目录 0700、输出 0600；拒绝覆盖已有报告。每例串行，间隔至少 5 秒，单次沿用生产 20 秒模型期限及独立 7 秒清理期限，总时限 40 分钟。已知会话清理不明时停止新请求，保留原 journal，仅对原会话做有界收尾。
 
+从仓库根目录做无调用预检：
+
+```sh
+cd server
+go run ./cmd/recommend-eval -dataset ../docs/evaluation/recommendation-cases-v1.json
+```
+
+真实评估只在明确授权后运行。先准备新的 0700 目录，原配置原地读取；下列配置路径是示例，不能复制密钥到仓库：
+
+```sh
+go run ./cmd/recommend-eval -live \
+  -dataset ../docs/evaluation/recommendation-cases-v1.json -max-cases 60 \
+  -voice-config ../work/private/voice-config.json \
+  -journal ../work/recommendation-eval/baseline-cleanup.json \
+  -output ../work/recommendation-eval/baseline-report.json
+```
+
+`-case-id C01,C02` 可选择子集，仍按数据集顺序执行，报告保留计划数量。SIGINT/SIGTERM 会取消当前请求并执行原有有界清理；已经产生的失败和检查点不会改成成功。若原清理日志仍有已知活动会话，只收尾原会话，不建新模型会话：
+
+```sh
+go run ./cmd/recommend-eval -cleanup-only \
+  -voice-config ../work/private/voice-config.json \
+  -journal ../work/recommendation-eval/baseline-cleanup.json \
+  -output ../work/recommendation-eval/cleanup-report.json
+```
+
+正常 live 模式拒绝已有 journal，报告也必须使用新文件；不要删除未决日志绕过清理门槛。收尾后的最终 pending 状态与每例当时的清理失败分别保留。
+
 私有报告只保存合成 case ID、合成群 key、已通过生产有界校验的理由、白名单模型阶段及耗时等元数据。原始错误、凭据、会话/真实群标识、SDP 与音频不进入报告。提交的证据仅保留评分及经过审阅的必要摘要；模型原始文本不作为执行指令。
 
 60 条合成需求的单轮结果用于定位缺陷。相似改写和同一目录并非独立真实用户样本，不能据此推断总体准确率、用户满意度、ASR 或板端恢复质量。生产 prompt 若调整，应记录新源码与数据版本，分别报告基线、回归和后续独立保留集，不能混合不同版本成绩。

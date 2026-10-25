@@ -233,3 +233,24 @@ func TestUnavailableAndCancelledNeverStartSession(t *testing.T) {
 		t.Fatal("oversize prompt created session")
 	}
 }
+
+func TestRecommendWithReportUsesProductionTurnAndCleanup(t *testing.T) {
+	p, creates := fakeRTC(t, true)
+	m := New(p)
+	input := control.RecommendationInput{Need: "合成设备需求", Candidates: []control.RecommendationCandidate{{CandidateID: "c00", Name: "合成维修组", Purpose: "设备排障"}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	text, report, err := m.RecommendWithReport(ctx, input)
+	if err != nil || text != `{"suggestions":[]}` || creates.Load() != 1 || report.Stage != "text_completed" ||
+		!report.StopConfirmed || !report.ResponseDone || report.TextBytes != len(text) || report.AudioEvents != 0 || report.MicrophonePaths != 0 || report.PlaybackPaths != 0 {
+		t.Fatalf("production observation failed: report=%+v err=%v", report, err)
+	}
+	if report.CreateMS < 0 || report.OfferMS < 0 || report.ResponseMS < 0 || report.CleanupMS < 0 ||
+		report.TotalMS < report.CreateMS+report.OfferMS+report.ResponseMS+report.CleanupMS {
+		t.Fatal("stage duration metadata is negative or exceeds the whole turn")
+	}
+	var absent *Model
+	if text, report, err = absent.RecommendWithReport(ctx, input); err == nil || text != "" || report.Stage != "prepare" || report.StopConfirmed {
+		t.Fatal("unavailable observation claimed a completed turn")
+	}
+}
