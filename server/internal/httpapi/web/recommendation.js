@@ -18,7 +18,7 @@ export class RecommendationClient {
   constructor({control, onChange = () => {}}) {
     Object.assign(this, {control, onChange});
     this.available = false; this.phase = 'unavailable'; this.generation = 0; this.result = null; this.snapshot = null;
-    this.voiceReservation = null; this.mode = 'need';
+    this.voiceReservation = null; this.mode = 'need'; this.targetTranscript = '';
     this.message = '正在检查需求推荐。';
   }
   get blocking() { return ['capturing', 'awaiting_cleanup', 'requesting', 'review'].includes(this.phase); }
@@ -50,7 +50,7 @@ export class RecommendationClient {
     const reservation = {generation: ++this.generation, identity: this.control.identity?.token, mode,
       ...(mode === 'target' ? {binding: binding(this.control)} : {})};
     this.mode = mode;
-    this.voiceReservation = reservation; this.result = null; this.snapshot = null; this.phase = 'capturing';
+    this.voiceReservation = reservation; this.result = null; this.snapshot = null; this.targetTranscript = ''; this.phase = 'capturing';
     this.message = mode === 'target' ? '请说“切到”加完整群名，识别后核对确认。' : '请说出需要的帮助；本次需求会交给模型生成建议，仍需你确认进入。'; this.emit();
     return reservation;
   }
@@ -61,7 +61,7 @@ export class RecommendationClient {
   }
   interrupt(message = '') {
     const reservation = this.voiceReservation; this.voiceReservation = null;
-    ++this.generation; this.result = null; this.snapshot = null;
+    ++this.generation; this.result = null; this.snapshot = null; this.targetTranscript = '';
     this.phase = this.available ? 'idle' : 'unavailable';
     if (message) this.message = message;
     if (reservation) this.control.voice?.interruptReservation?.(reservation, message || '已取消本次语音操作。');
@@ -73,8 +73,14 @@ export class RecommendationClient {
       else if (this.voiceReservation.mode === 'target' && !sameBinding(this.voiceReservation.binding, binding(this.control))) this.interrupt('群组或连接状态已变化，请重新说出目标群。');
       return; // Voice handoff binds only after cleanup and a fresh authorized state.
     }
-    if (this.blocking && !sameBinding(this.snapshot, binding(this.control))) this.interrupt('群组或连接状态已变化，请重新获取建议。');
+    if ((this.blocking || this.targetTranscript) && (!this.control.allowed() || !sameBinding(this.snapshot, binding(this.control)))) this.interrupt('群组或连接状态已变化，请重新获取建议。');
     else if (this.result && Date.parse(this.result.expires_at) <= this.control.serverNow()) this.interrupt('建议已过期，请重新描述需求。');
+  }
+  settleTarget(message) {
+    // Keep only the submitted text and its binding for this visible terminal
+    // result. It grants no confirmation authority and is never persisted.
+    this.result = null; this.phase = this.available ? 'idle' : 'unavailable';
+    this.message = message; this.emit();
   }
   async request(need, reservation = null) {
     return this.requestResult(need, reservation, 'need');
@@ -92,15 +98,17 @@ export class RecommendationClient {
     const c = this.control;
     this.voiceReservation = null; this.mode = mode;
     c.cancelFloor();
-    this.snapshot = binding(c); this.result = null; this.phase = 'requesting';
+    const submitted = value.trim();
+    this.snapshot = binding(c); this.result = null; this.targetTranscript = target ? submitted : ''; this.phase = 'requesting';
     this.message = target ? '正在核对识别目标群，当前群保持不变。' : '正在向已加入的群获取建议，当前群保持不变。';
     const generation = ++this.generation, requestID = c.random(), groups = c.state.groups.map(group => ({...group}));
     this.emit();
     try {
       const {recommendation: result} = await c.request(target ? '/voice/proposals' : '/recommendations', 'POST', {
-        request_id: requestID, [target ? 'transcript' : 'need']: value.trim(), expected_version: this.snapshot.version, server_epoch: this.snapshot.epoch,
+        request_id: requestID, [target ? 'transcript' : 'need']: submitted, expected_version: this.snapshot.version, server_epoch: this.snapshot.epoch,
       }, {timeoutMs: 35000});
-      if (generation !== this.generation || !c.allowed()) return false;
+      if (generation !== this.generation) return false;
+      if (!c.allowed()) { this.interrupt('身份或页面使用权已变化，请重新发起语音。'); return false; }
       if (!sameBinding(this.snapshot, binding(c))) throw new Error('binding_changed');
       if (!result || result.request_id !== requestID || result.server_epoch !== this.snapshot.epoch || result.current_version !== this.snapshot.version ||
         typeof result.recommendation_id !== 'string' || !/^[A-Za-z0-9_-]{8,80}$/.test(result.recommendation_id) ||
@@ -117,16 +125,26 @@ export class RecommendationClient {
         seen.add(item.group_id);
       }
       if (!result.suggestions.length) {
-        this.interrupt(target ? '没有找到可确认的已加入目标群，请重新说出群名或从群列表选择。' : '没有找到合适的已加入群。可修改需求，或从群列表选择。'); return true;
+        if (target) this.settleTarget('没有找到可确认的已加入目标群，请核对本次识别文字，或从群列表选择。');
+        else this.interrupt('没有找到合适的已加入群。可修改需求，或从群列表选择。');
+        return true;
       }
       this.result = result; this.phase = 'review';
       this.message = target ? '请核对识别目标群，明确确认后才会切换。' : '请核对职责和建议理由，选择后明确确认进入。建议不代表有人在线或已接听。'; this.emit(); return true;
     } catch (error) {
       if (generation !== this.generation) return false;
+      if (target) {
+        if (!c.allowed() || !sameBinding(this.snapshot, binding(c))) {
+          this.interrupt('群组或连接状态已变化，请重新说出目标群。'); return false;
+        }
+        const negated = error.status === 422 && error.code === 'voice_intent_negated';
+        this.settleTarget(negated ? '已识别为不切群，当前群保持不变。' : '未取得可验证的语音目标，当前群保持不变。请核对本次识别文字后重试，或从群列表选择。');
+        return negated;
+      }
       const messages = {recommendation_unavailable: '需求推荐暂不可用，请从群列表选择。',
         recommendation_busy: '推荐正在处理，请稍后重试。', recommendation_rate_limited: '请求较频繁，请稍后重试。',
         version_conflict: '当前群已变化，请重新获取建议。', epoch_conflict: '服务已重新连接，请重新获取建议。'};
-      this.interrupt(target ? '未取得可验证的语音目标，当前群保持不变。请重试或从群列表选择。' : messages[error.code] || '未取得可验证的建议。当前群保持不变，可重新尝试或从群列表选择。'); return false;
+      this.interrupt(messages[error.code] || '未取得可验证的建议。当前群保持不变，可重新尝试或从群列表选择。'); return false;
     }
   }
   async confirm(groupID) {

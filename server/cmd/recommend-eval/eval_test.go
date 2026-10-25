@@ -83,6 +83,23 @@ func TestVoiceTargetEvaluationTraversesProposalAndScoresExactWithoutModel(t *tes
 	}
 }
 
+func TestVoiceTargetIntentGuardIsScoredWithoutInventingModelOrToken(t *testing.T) {
+	c := fixtureDataset().Cases[0]
+	c.Intent, c.Need, c.Expected, c.AcceptableKeys, c.RequireAll = "voice_target", "不要切到维修组", "abstain", nil, false
+	model := &fakeModel{}
+	result := runFixture(c, model)
+	if result.HTTPStatus != 422 || result.Guard != "explicit-negation-v1" || result.Source != "" ||
+		result.Semantic != "pass" || result.Protocol != "valid" || model.calls != 0 || result.Transport != "not_called" ||
+		result.Cleanup != "not_started" || !result.Unchanged || !result.NoOperations || len(result.Suggestions) != 0 {
+		t.Fatalf("intent guard was misreported: %+v", result)
+	}
+	c.Expected, c.AcceptableKeys = "recommend", []string{"repair"}
+	result = runFixture(c, &fakeModel{})
+	if result.Semantic != "miss" || result.Protocol != "valid" {
+		t.Fatal("unexpected guard rejection must remain a semantic miss for a positive label")
+	}
+}
+
 func TestRealHTTPControlPathMapsAuthorizedCandidatesWithoutConfirmation(t *testing.T) {
 	data, model := fixtureDataset(), &fakeModel{}
 	result := runFixture(data.Cases[0], model)

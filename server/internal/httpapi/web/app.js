@@ -476,11 +476,15 @@ function boot() {
     const recommendation = client.recommendation;
     const targetReview = recommendation?.mode === 'target';
     text('voice-status', !voice?.current && targetReview ? recommendation.message : voice?.message || '正在检查语音切群。');
-    $('voice-proposal-panel').hidden = !targetReview || !recommendation?.blocking;
+    const targetPanelVisible = targetReview && (recommendation.blocking || !!recommendation.targetTranscript);
+    $('voice-proposal-panel').hidden = !targetPanelVisible;
     text('voice-proposal-status', targetReview ? recommendation.message : '识别后请核对目标群，确认后才会切换。');
+    $('voice-proposal-transcript-area').hidden = !targetReview || !recommendation.targetTranscript;
+    text('voice-proposal-transcript', targetReview ? recommendation.targetTranscript : '');
     text('voice-proposal-source', targetReview && recommendation.result ?
       (recommendation.result.source === 'exact' ? '群名匹配结果' : '模型匹配结果，请核对群名') : '');
-    $('voice-proposal-cancel').hidden = !targetReview || !recommendation?.blocking;
+    $('voice-proposal-cancel').hidden = !targetPanelVisible;
+    text('voice-proposal-cancel', recommendation?.blocking ? '取消核对，保持当前群' : '返回对讲 / 关闭');
     renderSuggestions('voice-proposal-results', targetReview ? recommendation : null, true);
     $('recommendation-need').disabled = !recommendation?.canRequest();
     $('recommendation-request').disabled = !recommendation?.canRequest();
@@ -506,7 +510,7 @@ function boot() {
   $('recommendation-form').addEventListener('submit', event => { event.preventDefault(); void client.recommendation.request($('recommendation-need').value); });
   $('recommendation-voice').addEventListener('click', () => { void client.voice.start({mode: 'need'}); });
   $('recommendation-cancel').addEventListener('click', () => { if (!client.pendingSwitch && client.recommendation.blocking) client.recommendation.interrupt('已取消建议，当前群保持不变。'); });
-  $('voice-proposal-cancel').addEventListener('click', () => { if (!client.pendingSwitch && client.recommendation.mode === 'target' && client.recommendation.blocking) client.recommendation.interrupt('已取消目标核对，当前群保持不变。'); });
+  $('voice-proposal-cancel').addEventListener('click', () => { if (!client.pendingSwitch && client.recommendation.mode === 'target' && (client.recommendation.blocking || client.recommendation.targetTranscript)) client.recommendation.interrupt('已关闭目标核对，当前群保持不变。'); });
   $('voice-start').addEventListener('click',()=>{if (!client.uiBlocked) void client.voice.start();});
   $('voice-cancel').addEventListener('click',()=>client.voice.interrupt());
   $('voice-check').addEventListener('click',()=>{void client.voice.initialize();});

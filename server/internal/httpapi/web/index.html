@@ -57,6 +57,10 @@
           <section id="voice-proposal-panel" aria-labelledby="voice-proposal-title" hidden>
             <h3 id="voice-proposal-title">语音目标核对</h3>
             <p id="voice-proposal-status" role="status" aria-live="polite">识别后请核对目标群，确认后才会切换。</p>
+            <div id="voice-proposal-transcript-area" hidden>
+              <p class="field-help" id="voice-proposal-transcript-label">本次识别文字</p>
+              <p id="voice-proposal-transcript" class="voice-transcript" tabindex="0" role="region" aria-labelledby="voice-proposal-transcript-label"></p>
+            </div>
             <p id="voice-proposal-source" class="field-help"></p>
             <ul id="voice-proposal-results" class="recommendation-results" aria-label="识别目标群"></ul>
             <button id="voice-proposal-cancel" class="button quiet" type="button" hidden>取消核对，保持当前群</button>

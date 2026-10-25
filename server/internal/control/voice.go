@@ -48,6 +48,119 @@ func voiceTargetNames(transcript string) (map[string]bool, string) {
 	return names, acceptedPrefix
 }
 
+// voiceIntentNegated is a deliberately narrow veto, not a second intent model.
+// The caller first admits a unique literal target, so names remain data even
+// when they contain cancellation words or punctuation. Mixed or unclear clauses
+// fall through to model review; a veto never selects an alternative target.
+func voiceIntentNegated(transcript string, candidates []recommendationGroup) bool {
+	names := make(map[string]bool, len(candidates))
+	for _, candidate := range candidates {
+		names[candidate.Name] = true
+	}
+	clauses := strings.FieldsFunc(transcript, func(r rune) bool {
+		return strings.ContainsRune(",，;；。.!！", r)
+	})
+	for len(clauses) > 0 && voiceCourtesyClause(clauses[len(clauses)-1]) {
+		clauses = clauses[:len(clauses)-1]
+	}
+	if len(clauses) == 0 {
+		return false
+	}
+	// An independently stated final global cancellation withdraws earlier
+	// actions. A negated target ("不要进某组") is not a global cancellation.
+	if len(clauses) > 1 && voiceGlobalCancellation(clauses[len(clauses)-1]) {
+		return true
+	}
+	denied := false
+	for _, clause := range clauses {
+		if voiceCourtesyClause(clause) {
+			continue
+		}
+		if !voiceGlobalCancellation(clause) && !voiceSimpleNegation(clause, names) {
+			return false
+		}
+		denied = true
+	}
+	return denied
+}
+
+func voiceCourtesyClause(clause string) bool {
+	switch strings.TrimSpace(clause) {
+	case "请", "请你", "麻烦了", "谢谢", "谢谢你", "谢谢了", "好的", "好", "嗯":
+		return true
+	}
+	return false
+}
+
+func voiceWithoutCourtesy(clause string) string {
+	text := strings.TrimSpace(clause)
+	for {
+		previous := text
+		for _, prefix := range []string{"请帮我", "麻烦你", "麻烦", "请你", "请", "帮我"} {
+			if strings.HasPrefix(text, prefix) {
+				text = strings.TrimSpace(strings.TrimPrefix(text, prefix))
+				break
+			}
+		}
+		if text == previous {
+			return text
+		}
+	}
+}
+
+func voiceGlobalCancellation(clause string) bool {
+	switch voiceWithoutCourtesy(clause) {
+	case "取消", "取消切群", "取消切换", "取消换群", "取消本次切换", "取消本次操作",
+		"别切了", "不要切了", "先别切了", "先不要切了", "先不切了", "不切了",
+		"不要切群", "别切群", "不用切群", "先别切群", "先不要切群", "先不切群",
+		"不要换群", "别换群", "不用换群", "不切换", "先不切换", "不用切换", "不需要切换",
+		"保持当前群", "保持现在的群", "保持原群", "保持当前状态", "保持现在这样", "保持不变",
+		"先保持当前群", "先保持原群", "先保持现在这样", "算了", "先算了":
+		return true
+	}
+	return false
+}
+
+func voiceSimpleNegation(clause string, names map[string]bool) bool {
+	text := voiceWithoutCourtesy(clause)
+	negative := false
+	for _, prefix := range []string{"先不要", "暂时不要", "暂时别", "不要", "先别", "别", "不用", "不必", "无需", "勿"} {
+		if strings.HasPrefix(text, prefix) {
+			text = strings.TrimSpace(strings.TrimPrefix(text, prefix))
+			negative = true
+			break
+		}
+	}
+	if !negative {
+		return false
+	}
+	for _, action := range []string{"切换到", "切换至", "切到", "换到", "转到", "转去", "转入", "进入", "进", "去"} {
+		if strings.HasPrefix(text, action) {
+			text = strings.TrimSpace(strings.TrimPrefix(text, action))
+			break
+		}
+	}
+	// Only a complete authorized name, with optional closed courtesy endings,
+	// proves where this target ends. Unknown spellings or any remaining clause
+	// are model input, not something a broad negation regex may discard.
+	for text != "" {
+		if names[text] {
+			return true
+		}
+		previous := text
+		for _, suffix := range []string{"谢谢你", "谢谢", "就好", "吧", "了"} {
+			if strings.HasSuffix(text, suffix) {
+				text = strings.TrimSpace(strings.TrimSuffix(text, suffix))
+				break
+			}
+		}
+		if text == previous {
+			break
+		}
+	}
+	return false
+}
+
 // VoiceResolutionDiagnostics contains only counts and fixed enum values. It must
 // never contain command text, group data, or identity/credential material.
 // UTF8Valid and input counts are meaningful only when InputEvaluated is true.

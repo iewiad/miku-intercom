@@ -223,6 +223,9 @@ func (s *Service) recommend(ctx context.Context, id string, req RecommendationRe
 		}
 		if len(exact) == 1 {
 			source = "exact"
+		} else if voiceIntentNegated(req.Need, candidates) {
+			s.mu.Unlock()
+			return Recommendation{}, fail(422, "voice_intent_negated", "voice input explicitly declines a switch; no target was proposed")
 		} else if s.opts.Recommender == nil {
 			s.mu.Unlock()
 			return Recommendation{}, fail(503, "recommendation_unavailable", "model-assisted voice targets are not configured")

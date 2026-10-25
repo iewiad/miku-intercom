@@ -166,9 +166,11 @@ for (const source of ['exact', 'model']) test(`${source} voice target works with
   assert.equal(f.r.result.source, source); assert.equal(f.r.phase, 'review');
   assert.equal(f.c.state.current_group_id, 'group_one'); assert.equal(f.c.pendingSwitch, null);
   assert.deepEqual(f.requests[0].body, {request_id: 'synthetic_1', transcript: '切到维修组', expected_version: 2, server_epoch: 'epoch_one'});
+  assert.equal(f.r.targetTranscript, f.requests[0].body.transcript);
   assert.equal(await f.r.confirm('group_two'), false); // Cleanup handoff has not released the voice owner yet.
   f.c.voice.blocking = false;
   assert.equal(await f.r.confirm('group_two'), true);
+  assert.equal(f.r.targetTranscript, '');
   assert.equal(f.requests.filter(x => x.path === '/recommendations/confirm').length, 1);
   assert.equal(f.requests.some(x => x.path === '/current-group' || x.path === '/voice/resolve'), false);
 });
@@ -209,11 +211,66 @@ test('cancel, ownership loss and expiry discard target tokens; late or forged ha
   const f = targetSetup(), late = deferred(), original = f.c.request;
   f.c.request = async (...args) => { await late.promise; return original(...args); };
   const request = f.r.requestVoiceTarget('切到维修组', f.reservation);
+  assert.equal(f.r.targetTranscript, '切到维修组');
   f.r.interrupt('已取消核对'); late.resolve();
   assert.equal(await request, false); assert.equal(f.r.result, null);
+  assert.equal(f.r.targetTranscript, '');
   assert.equal(await f.r.requestVoiceTarget('切到维修组', {...f.reservation}), false);
   const expired = targetSetup(); await expired.r.requestVoiceTarget('切到维修组', expired.reservation);
   expired.c.voice.blocking = false; expired.advance(60001);
   assert.equal(await expired.r.confirm('group_two'), false); assert.equal(expired.r.result, null);
   assert.equal(expired.requests.some(x => x.path === '/recommendations/confirm'), false);
+});
+
+test('target empty, negated and failed terminals retain only the submitted text without confirmation authority', async () => {
+  for (const outcome of ['empty', 'negated', 'failure', 'wrong_status']) {
+    const f = targetSetup('model'), original = f.c.request;
+    f.c.request = async (...args) => {
+      if (outcome === 'negated') throw new APIError(422, 'voice_intent_negated', 'synthetic');
+      if (outcome === 'wrong_status') throw new APIError(500, 'voice_intent_negated', 'synthetic');
+      if (outcome === 'failure') throw new APIError(503, 'voice_unavailable', 'synthetic');
+      const response = await original(...args); response.recommendation.suggestions = []; return response;
+    };
+    assert.equal(await f.r.requestVoiceTarget(' \n 不要切到维修组 \n', f.reservation), ['empty', 'negated'].includes(outcome), outcome);
+    assert.equal(f.r.targetTranscript, '不要切到维修组', outcome);
+    assert.equal(f.r.blocking, false, outcome); assert.equal(f.r.result, null, outcome);
+    f.c.voice.blocking = false;
+    assert.equal(await f.r.confirm('group_two'), false, outcome);
+    assert.equal(f.c.pendingSwitch, null, outcome);
+    if (outcome === 'negated') assert.equal(f.r.message, '已识别为不切群，当前群保持不变。');
+    else assert.doesNotMatch(f.r.message, /已识别为不切群/);
+    f.r.interrupt(); assert.equal(f.r.targetTranscript, '');
+  }
+});
+
+test('terminal target text is cleared on binding loss, a new start, or explicit close', async () => {
+  for (const change of ['identity', 'epoch', 'version', 'directory', 'ownership', 'start', 'close']) {
+    const f = targetSetup('model');
+    f.c.request = async () => { throw new APIError(422, 'voice_intent_negated', 'synthetic'); };
+    await f.r.requestVoiceTarget('不要切群', f.reservation); f.c.voice.blocking = false;
+    if (change === 'identity') f.c.identity.token = 'other';
+    if (change === 'epoch') f.c.state.server_epoch = 'other';
+    if (change === 'version') ++f.c.state.current_version;
+    if (change === 'directory') f.c.state.groups[1].purpose = 'new';
+    if (change === 'ownership') f.c.authorize = () => false;
+    if (change === 'start') assert.ok(f.r.reserveVoice('target'));
+    else if (change === 'close') f.r.interrupt();
+    else f.r.observeState();
+    assert.equal(f.r.targetTranscript, '', change); assert.equal(f.r.result, null, change);
+  }
+});
+
+test('a late negated response cannot restore cleared text or overwrite a newer target intent', async () => {
+  for (const next of ['close', 'start', 'binding']) {
+    const f = targetSetup(), wait = deferred();
+    f.c.request = async () => { await wait.promise; throw new APIError(422, 'voice_intent_negated', 'synthetic'); };
+    const pending = f.r.requestVoiceTarget('不要切群', f.reservation);
+    f.r.interrupt(); f.c.voice.blocking = false;
+    if (next === 'start') assert.ok(f.r.reserveVoice('target'));
+    if (next === 'binding') { ++f.c.state.current_version; f.r.observeState(); }
+    const generation = f.r.generation; wait.resolve();
+    assert.equal(await pending, false); assert.equal(f.r.generation, generation);
+    assert.equal(f.r.targetTranscript, ''); assert.equal(f.r.result, null);
+    assert.notEqual(f.r.message, '已识别为不切群，当前群保持不变。');
+  }
 });

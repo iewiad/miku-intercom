@@ -26,6 +26,12 @@ typedef int esp_err_t;
 #define MALLOC_CAP_8BIT 2
 static bool psram_fail;
 static unsigned psram_allocations;
+static unsigned review_erases;
+static void mbedtls_platform_zeroize(void *buffer, size_t length) {
+    if (length==513) ++review_erases;
+    volatile unsigned char *bytes=buffer;
+    while(length--) *bytes++=0;
+}
 static void *heap_caps_malloc(size_t size, int caps) {
     assert(caps == (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     ++psram_allocations; return psram_fail ? NULL : malloc(size);
@@ -62,6 +68,10 @@ static bool group_recommendation_active, group_recommendation_pending;
 static bool group_recommendation_voice;
 static uint32_t group_voice_origin_revision, group_recommendation_origin_revision;
 static bool group_voice_cancelled, group_recommendation_cancelled;
+static char *group_voice_review_text;
+static uint32_t group_voice_review_origin_revision;
+static bool group_voice_review_attempted;
+static lv_obj_t *group_voice_review_label, *group_voice_review_card;
 static uint32_t group_recommendation_pending_revision, group_recommendation_deadline;
 static bool group_recommendation_expiry_set;
 static int group_recommendation_selected = -1;
@@ -102,7 +112,8 @@ static void group_force_release(void) { ++release_calls; }
  * production group-page/slider initialization and event handlers remain real. */
 static void group_dropdown_event_cb(lv_event_t *event) { (void)event; }
 static void group_switch_event_cb(lv_event_t *event) { (void)event; }
-static bool bsp_display_lock(int timeout) { (void)timeout; return true; }
+static bool gui_lock_ok=true;
+static bool bsp_display_lock(int timeout) { (void)timeout; return gui_lock_ok; }
 static void bsp_display_unlock(void) {}
 
 /* @maps */
@@ -796,10 +807,14 @@ static bool test_voice_proposals(void) {
     view.phase=GROUP_RECOMMENDATION_CHOOSING;view.revision=33;view.count=1;
     view.can_confirm=true;view.expires_remaining_ms=50000;
     strlcpy(view.detail,"请选择建议并明确确认进入，未确认不会切群",sizeof(view.detail));
+    assert(board_display_set_group_voice_review(30,"切换到新版验收群")==ESP_OK);
+    char *review=group_voice_review_text;
     const unsigned releases=page_release,force_releases=release_calls;
     assert(board_display_set_group_recommendation(&view,&item)==ESP_OK);
     assert(group_modal==GROUP_MODAL_RECOMMENDATION&&group_recommendation_voice);
     assert(group_recommendation_origin_revision==30&&group_voice_origin_revision==0);
+    assert(group_voice_review_text==review&&group_voice_review_origin_revision==30);
+    assert(lv_label_get_text(group_voice_review_label)==group_voice_review_text);
     assert(page_release==releases&&release_calls==force_releases&&recommendation_calls==1);
     assert(strstr(lv_label_get_text(group_recommendation_title),"请核对目标群，再确认进入（剩余 "));
     assert(lv_obj_has_state(group_recommendation_submit,LV_STATE_DISABLED));
@@ -810,6 +825,7 @@ static bool test_voice_proposals(void) {
     check_recommendation_cards();preview("voice-target-selected");
     tap_center(group_recommendation_submit);
     assert(recommendation_calls==2&&recommendation_action==GROUP_RECOMMENDATION_CONFIRM&&recommendation_revision==33);
+    assert(!group_voice_review_text&&!group_voice_review_attempted&&!group_voice_review_label);
     preview("voice-target-confirming");
     view.phase=GROUP_RECOMMENDATION_IDLE;view.revision=36;view.count=0;
     view.can_start=true;view.can_cancel=view.can_confirm=false;view.expires_remaining_ms=0;
@@ -878,6 +894,126 @@ static bool test_voice_proposals(void) {
     puts("Voice proposal UI: visible voice-to-chooser handoff, preserved admission token, explicit selection/confirm, cancel intent masks late choices and screen unload never reopens passed.");
     return true;
 }
+static void start_visible_voice_review(uint32_t origin) {
+    group_recommendation_view_t idle={.phase=GROUP_RECOMMENDATION_IDLE,.revision=origin,.can_start=true};
+    assert(board_display_set_group_recommendation(&idle,NULL)==ESP_OK);
+    assert(board_display_set_group_command_state(origin,false,false,false,"")==ESP_OK);
+    assert(board_display_set_group_state(NULL,"群语音已就绪",true,false)==ESP_OK);
+    tap_center(group_voice_button);tap_center(group_command_submit);
+    assert(group_modal==GROUP_MODAL_VOICE&&group_voice_submitted&&group_voice_origin_revision==origin);
+}
+static bool test_voice_review_results(void) {
+    assert(board_display_show_group(NULL,page_ptt,NULL,volume_action,38,&volume_calls)==ESP_OK);
+    group_stop_action=group_choices_valid=true;choices.known=choices.can_select=true;choices.switching=false;
+    assert(board_display_set_group_recommendation_action(recommendation_action_fixture,&recommendation_calls)==ESP_OK);
+    start_visible_voice_review(100);
+    char text[513]={0};
+    for(unsigned i=0;i<166;++i)memcpy(text+i*3,"验",3);
+    memcpy(text+498,"AB不要切群",14);
+    assert(strlen(text)==512);
+    const unsigned erased=review_erases;
+    gui_lock_ok=false;
+    assert(board_display_set_group_voice_review(100,text)==ESP_ERR_TIMEOUT);
+    gui_lock_ok=true;
+    assert(!group_voice_review_text&&review_erases==erased+1);
+    assert(board_display_set_group_voice_review(99,text)==ESP_ERR_INVALID_STATE);
+    assert(!group_voice_review_text&&review_erases==erased+2);
+    assert(board_display_set_group_voice_review(100,text)==ESP_OK);
+    char *snapshot=group_voice_review_text;
+    assert(snapshot!=text&&!strcmp(snapshot,text));
+    text[0]='X';assert(snapshot[0]!='X');text[0]=(char)0xe9;
+    assert(board_display_set_group_command_state(102,false,true,false,"已识别为不切群，当前群保持不变。")==ESP_OK);
+    group_recommendation_view_t view={.phase=GROUP_RECOMMENDATION_RECOVERING,.revision=102,.voice_mode=true};
+    strlcpy(view.detail,"已识别为不切群，当前群保持不变。",sizeof(view.detail));
+    assert(board_display_set_group_recommendation(&view,NULL)==ESP_OK);
+    assert(group_modal==GROUP_MODAL_RECOMMENDATION&&group_recommendation_voice);
+    assert(group_voice_review_text==snapshot&&group_voice_review_origin_revision==100);
+    assert(lv_label_get_text(group_voice_review_label)==snapshot&&!strcmp(snapshot,text));
+    assert(strlen(lv_label_get_text(group_voice_review_label))==512);
+    assert(!strcmp(lv_label_get_text(group_voice_review_label)+500,"不要切群"));
+    assert(lv_label_get_long_mode(group_voice_review_label)==LV_LABEL_LONG_MODE_WRAP);
+    assert(!lv_obj_has_flag(group_voice_review_card,LV_OBJ_FLAG_CLICKABLE));
+    assert(!group_recommendation_cards[0]&&lv_obj_has_flag(group_recommendation_submit,LV_OBJ_FLAG_HIDDEN));
+    assert(lv_obj_has_state(group_recommendation_cancel,LV_STATE_DISABLED));
+    check_recommendation_cards();
+    assert(lv_obj_get_height(group_voice_review_label)>shenglu_group_20_gb2312.line_height*4);
+    assert(lv_obj_get_scroll_bottom(group_recommendation_list)>0);
+    lv_obj_scroll_to_y(group_recommendation_list,10000,LV_ANIM_OFF);
+    lv_obj_update_layout(lv_screen_active());
+    assert(!strcmp(lv_label_get_text(group_voice_review_label)+500,"不要切群"));
+    preview("voice-review-negated");
+    view.phase=GROUP_RECOMMENDATION_IDLE;view.revision=103;view.voice_mode=false;view.can_start=true;
+    assert(board_display_set_group_command_state(103,false,false,false,view.detail)==ESP_OK);
+    assert(board_display_set_group_recommendation(&view,NULL)==ESP_OK);
+    assert(group_voice_review_text==snapshot&&!lv_obj_has_state(group_recommendation_cancel,LV_STATE_DISABLED));
+    tap_center(group_recommendation_cancel);
+    assert(group_modal==GROUP_MODAL_NONE&&!group_voice_review_text&&!group_voice_review_attempted&&review_erases==erased+3);
+
+    start_visible_voice_review(105);
+    assert(board_display_set_group_voice_review(105,"先查一下没有匹配名称的群")==ESP_OK);
+    view=(group_recommendation_view_t){.phase=GROUP_RECOMMENDATION_RECOVERING,.revision=107,.voice_mode=true};
+    strlcpy(view.detail,"未取得有效目标群，未切群，请重试或手动选择",sizeof(view.detail));
+    assert(board_display_set_group_command_state(107,false,true,false,view.detail)==ESP_OK);
+    assert(board_display_set_group_recommendation(&view,NULL)==ESP_OK);
+    assert(group_modal==GROUP_MODAL_RECOMMENDATION&&!group_recommendation_cards[0]);
+    assert(!strcmp(lv_label_get_text(group_voice_review_label),"先查一下没有匹配名称的群"));
+    preview("voice-review-empty");
+    view.phase=GROUP_RECOMMENDATION_IDLE;view.revision=108;view.voice_mode=false;view.can_start=true;
+    assert(board_display_set_group_command_state(108,false,false,false,view.detail)==ESP_OK);
+    assert(board_display_set_group_recommendation(&view,NULL)==ESP_OK);
+    tap_center(group_recommendation_cancel);assert(!group_voice_review_text&&group_modal==GROUP_MODAL_NONE);
+
+    /* Invalid text never creates a snapshot. GUI PSRAM failure is explicit and
+     * still permits a terminal, cancellable result page after recovery. */
+    start_visible_voice_review(110);
+    char wide[514];memset(wide,'a',sizeof(wide));wide[513]=0;
+    assert(board_display_set_group_voice_review(110,wide)==ESP_ERR_INVALID_ARG);
+    wide[257]=0;assert(board_display_set_group_voice_review(110,wide)==ESP_ERR_INVALID_ARG);
+    assert(board_display_set_group_voice_review(110,"\xff")==ESP_ERR_INVALID_ARG);
+    assert(board_display_set_group_voice_review(110,"不切群\n")==ESP_ERR_INVALID_ARG);
+    assert(!group_voice_review_attempted);
+    psram_fail=true;assert(board_display_set_group_voice_review(110,"没有可确认的目标群")==ESP_ERR_NO_MEM);psram_fail=false;
+    assert(group_voice_review_attempted&&!group_voice_review_text);
+    view=(group_recommendation_view_t){.phase=GROUP_RECOMMENDATION_RECOVERING,.revision=112,.voice_mode=true};
+    strlcpy(view.detail,"未取得有效目标群，未切群，请重试或手动选择",sizeof(view.detail));
+    assert(board_display_set_group_command_state(112,false,true,false,view.detail)==ESP_OK);
+    assert(board_display_set_group_recommendation(&view,NULL)==ESP_OK);
+    assert(group_modal==GROUP_MODAL_RECOMMENDATION&&group_voice_review_label);
+    assert(!strcmp(lv_label_get_text(group_voice_review_label),"本次识别文本暂不可显示"));
+    preview("voice-review-unavailable");
+    view.phase=GROUP_RECOMMENDATION_IDLE;view.revision=113;view.voice_mode=false;view.can_start=true;
+    assert(board_display_set_group_command_state(113,false,false,false,view.detail)==ESP_OK);
+    assert(board_display_set_group_recommendation(&view,NULL)==ESP_OK);
+    tap_center(group_recommendation_cancel);assert(!group_voice_review_attempted&&group_modal==GROUP_MODAL_NONE);
+
+    start_visible_voice_review(120);
+    assert(board_display_set_group_voice_review(120,"不要切到后勤组")==ESP_OK);
+    assert(board_display_set_group_command_state(121,false,true,true,"等待目标群结果")==ESP_OK);
+    tap_center(group_command_cancel);
+    assert(group_voice_cancelled&&!group_voice_review_text&&!group_voice_review_attempted);
+    assert(board_display_set_group_voice_review(120,"迟到文本")==ESP_ERR_INVALID_STATE);
+    view=(group_recommendation_view_t){.phase=GROUP_RECOMMENDATION_RECOVERING,.revision=123,.voice_mode=true};
+    assert(board_display_set_group_recommendation(&view,NULL)==ESP_OK);
+    assert(group_modal==GROUP_MODAL_VOICE&&!group_voice_review_text);
+    assert(board_display_set_group_active(false)==ESP_OK);
+    assert(group_modal==GROUP_MODAL_NONE&&!group_voice_review_text);
+    assert(board_display_set_group_voice_review(120,"退出后的迟到文本")==ESP_ERR_INVALID_STATE);
+    assert(board_display_set_group_recommendation(&view,NULL)==ESP_OK&&group_modal==GROUP_MODAL_NONE);
+
+    group_stop_action=true;start_visible_voice_review(130);
+    assert(board_display_set_group_voice_review(130,"取消前的本次文本")==ESP_OK);
+    lv_obj_send_event(lv_screen_active(),LV_EVENT_SCREEN_UNLOAD_START,NULL);
+    assert(group_modal==GROUP_MODAL_NONE&&!group_voice_review_text&&!group_voice_review_attempted);
+    assert(board_display_set_group_voice_review(130,"离开后的迟到文本")==ESP_ERR_INVALID_STATE);
+    start_visible_voice_review(140);
+    assert(board_display_set_group_voice_review(140,"停止连接前的本次文本")==ESP_OK);
+    const unsigned before_stop=review_erases;
+    assert(board_display_set_group_active(false)==ESP_OK);
+    assert(!group_voice_review_text&&!group_voice_review_attempted&&review_erases==before_stop+1);
+    assert(board_display_set_group_voice_review(140,"停止后的迟到文本")==ESP_ERR_INVALID_STATE);
+    puts("Voice text review: exact 512-byte PSRAM copy with final negation, full wrapped/scrollable read-only text, empty/guard results, allocation failure and erase-on-confirm/cancel/return/STOP/unload passed.");
+    return true;
+}
 int main(int argc, char **argv) {
     lv_init();
     lv_display_t *display = lv_display_create(800, 480);
@@ -898,6 +1034,7 @@ int main(int argc, char **argv) {
     if(!only && !test_group_page()) return EXIT_FAILURE;
     if(!only && !test_recommendation()) return EXIT_FAILURE;
     if(!only && !test_voice_proposals()) return EXIT_FAILURE;
+    if(!only && !test_voice_review_results()) return EXIT_FAILURE;
     lv_deinit();
     return EXIT_SUCCESS;
 }

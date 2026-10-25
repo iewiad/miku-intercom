@@ -31,6 +31,7 @@ type caseReport struct {
 	Category           string                `json:"category"`
 	Intent             string                `json:"intent,omitempty"`
 	Source             string                `json:"source,omitempty"`
+	Guard              string                `json:"guard,omitempty"`
 	PromptVersion      string                `json:"prompt_version,omitempty"`
 	PromptSHA256       string                `json:"prompt_sha256,omitempty"`
 	ReasonPolicy       string                `json:"reason_policy,omitempty"`
@@ -52,6 +53,7 @@ type caseReport struct {
 }
 type metrics struct {
 	Cases              int `json:"cases"`
+	GuardAbstentions   int `json:"guard_abstentions"`
 	ProtocolValid      int `json:"protocol_valid"`
 	ProtocolErrors     int `json:"protocol_errors"`
 	TransportErrors    int `json:"transport_errors"`
@@ -278,6 +280,24 @@ func runCase(ctx context.Context, c evalCase, p profile, model reportingModel, n
 		result.ReasonCode = "cleanup_unconfirmed"
 		return
 	}
+	// A deliberate, read-only intent rejection is an abstention, not a
+	// provider result. Keep the real 422 status and do not invent a source,
+	// recommendation token or cleanup evidence for a turn that never started.
+	if c.Intent == "voice_target" && trace.calls == 0 && response.Code == http.StatusUnprocessableEntity {
+		var body struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(response.Body.Bytes(), &body) == nil && body.Error.Code == "voice_intent_negated" {
+			result.Guard, result.Protocol, result.ReasonCode = "explicit-negation-v1", "valid", "voice_intent_negated"
+			result.Semantic = "miss"
+			if semanticPass(c, result.Suggestions) {
+				result.Semantic = "pass"
+			}
+			return
+		}
+	}
 	// Exact voice proposals intentionally make no provider call. They still
 	// traverse the production HTTP/control review path and must remain read-only.
 	exact := false
@@ -405,6 +425,9 @@ func runEvaluation(ctx context.Context, data dataset, cases []evalCase, model re
 		current := runCase(ctx, c, data.Profiles[c.Profile], model, options.now, options.cleanupPending)
 		result.Cases = append(result.Cases, current)
 		result.Metrics.Cases++
+		if current.Guard != "" {
+			result.Metrics.GuardAbstentions++
+		}
 		switch current.Protocol {
 		case "valid":
 			result.Metrics.ProtocolValid++

@@ -61,6 +61,7 @@ static bool lock_ok=true;
 static bool bsp_display_lock(int ms) { (void)ms; return lock_ok; }
 static void bsp_display_unlock(void) {}
 static void group_render_command(void) {}
+static void group_clear_voice_review(void) {}
 static void group_render_controls(void);
 typedef enum { GROUP_MODAL_NONE,GROUP_MODAL_JOIN,GROUP_MODAL_VOICE } group_modal_t;
 static group_modal_t group_modal;

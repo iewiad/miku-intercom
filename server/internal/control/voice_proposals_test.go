@@ -179,7 +179,7 @@ func TestVoiceProposalAmbiguityAndAbstentionDoNotAutoSelect(t *testing.T) {
 	// The scripted empty result tests protocol abstention, not model semantics.
 	f.clock.Advance(6 * time.Second)
 	f.s.opts.Recommender = recommendationModelFunc(func(context.Context, RecommendationInput) (string, error) { return `{"suggestions":[]}`, nil })
-	rec, err = f.s.ProposeVoiceTarget(context.Background(), f.a.ID, voiceProposal(t, f, f.a.ID, "voice_abstain_001", "不要切到后勤"))
+	rec, err = f.s.ProposeVoiceTarget(context.Background(), f.a.ID, voiceProposal(t, f, f.a.ID, "voice_abstain_001", "今天聊点别的"))
 	must(t, err)
 	op, _, err := f.s.ConfirmRecommendation(f.a.ID, RecommendationConfirmation{RecommendationID: rec.RecommendationID,
 		OperationID: "voice_empty_001", GroupID: f.g2.ID, ExpectedVersion: rec.CurrentVersion, ServerEpoch: rec.ServerEpoch})

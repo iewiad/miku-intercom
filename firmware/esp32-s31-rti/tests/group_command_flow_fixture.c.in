@@ -65,6 +65,11 @@ static unsigned notifications,disconnects,release_calls,create_calls,start_calls
 static unsigned stop_failures;
 static unsigned retained_stops,recommend_posts,proposal_posts;
 static const char *proposal_source="exact";
+static bool proposal_empty;
+static unsigned review_calls;
+static char reviewed_text[513];
+static uint32_t reviewed_origin;
+static esp_err_t review_result;
 static bool cancel_in_recommend,cancel_before_recommend_post,change_candidates_on_poll,fail_recommend_alloc,capability_available;
 static unsigned capability_gets;
 static bool confirm_during_poll,expire_during_poll;
@@ -124,17 +129,21 @@ static esp_err_t request(const char *path,int method,const cJSON *body,cJSON **o
  } else if(!strcmp(path,"/voice/proposals")) {
   assert(!command_peer_live&&!command_session_live);++proposal_posts;
   last_http_status=request_result==ESP_OK?200:injected_voice_http_status;
+  last_voice_api_error=request_result==ESP_OK?GROUP_VOICE_API_NONE:injected_voice_api_error;
   const cJSON *text=cJSON_GetObjectItemCaseSensitive(body,"transcript");assert(cJSON_IsString(text));
   assert(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(body,"request_id")));
   assert(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(body,"server_epoch")));
   assert(cJSON_GetObjectItemCaseSensitive(body,"expected_version")->valuedouble==7);
   strlcpy(seen_transcript,text->valuestring,sizeof(seen_transcript));
+  assert(review_calls==1&&reviewed_origin==command.origin_revision);
+  if(review_result==ESP_OK)assert(!strcmp(reviewed_text,seen_transcript));
   if(cancel_in_resolve)assert(group_controller_voice_action(true,NULL)==ESP_OK);
   if(request_result==ESP_OK&&out) {
    *out=cJSON_Parse("{\"recommendation\":{\"recommendation_id\":\"voice_fixture\",\"request_id\":\"fixture_operation\",\"server_epoch\":\"epoch_fixture\",\"current_version\":7,\"candidate_digest\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"expires_at\":\"test-clock-expiry\",\"suggestions\":[{\"group_id\":\"grp_bbbb\",\"name\":\"fixture beta\",\"purpose\":\"fixture purpose\",\"reason\":\"请核对识别出的目标群，确认后才会切换。\"}]}}");
    cJSON *record=cJSON_GetObjectItemCaseSensitive(*out,"recommendation");
    if(proposal_source)cJSON_AddStringToObject(record,"source",proposal_source);
    cJSON_SetValuestring(cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(record,"suggestions"),0),"group_id"),resolved_target);
+   if(proposal_empty)cJSON_DeleteItemFromArray(cJSON_GetObjectItemCaseSensitive(record,"suggestions"),0);
   }
  } else if(!strcmp(path,"/voice/resolve")) {
   last_http_status=request_result==ESP_OK?200:injected_voice_http_status;
@@ -213,6 +222,12 @@ static esp_err_t board_display_set_group_commands(esp_err_t (*join)(const char *
 }
 static esp_err_t board_display_set_group_recommendation_action(group_recommendation_action_cb_t callback,void *context) {
  assert(callback==group_controller_recommendation_action&&!context);return ESP_OK;
+}
+static esp_err_t board_display_set_group_voice_review(uint32_t origin,const char *text) {
+ assert(!guard_depth&&group_voice_proposal_text_valid(text));
+ ++review_calls;reviewed_origin=origin;
+ if(review_result==ESP_OK)strlcpy(reviewed_text,text,sizeof(reviewed_text));
+ return review_result;
 }
 static bool saved_config_present=true, refresh_during_load, refresh_during_check;
 static unsigned config_checks,config_loads,config_writes,status_allocations;
@@ -387,7 +402,8 @@ static void verify_config_status(void) {
  worker=NULL;
 }
 static void reset(void) {
- proposal_posts=0;proposal_source="exact";
+ proposal_posts=0;proposal_source="exact";proposal_empty=false;
+ review_calls=0;reviewed_text[0]=0;reviewed_origin=0;review_result=ESP_OK;
  memset(&intent,0,sizeof(intent));memset(&command,0,sizeof(command));memset(&config,0,sizeof(config));
  memset(&command_session,0,sizeof(command_session));command_session_live=command_peer_live=false;
  command_deadline_us=command_cleanup_retry_us=0;now_us=1000000;command_target[0]=command_result[0]=0;
@@ -464,6 +480,7 @@ int main(void) {
  assert(process_command()&&stop_calls==3&&command.phase==GROUP_COMMAND_REQUESTING&&!proposal_posts);
  assert(process_command()&&command.phase==GROUP_COMMAND_CHOOSING&&proposal_posts==1);
  assert(!strcmp(seen_transcript,"切到乙群")&&!command.transcript[0]&&!command_target[0]);
+ assert(review_calls==1&&!strcmp(reviewed_text,seen_transcript)&&reviewed_origin==command.origin_revision);
  assert(recommendation->source==GROUP_RECOMMENDATION_SOURCE_EXACT&&!command.submitted&&!journal_saves&&!selection_queued);
  assert(strstr(last_resolve_log,"accepted=1 source=exact candidates=1"));
  assert(!strstr(last_resolve_log,"乙群")&&!strstr(last_resolve_log,"grp_bbbb"));
@@ -487,6 +504,35 @@ int main(void) {
  assert(!journal_saves&&!command.submitted&&!command_target[0]);
  assert(group_controller_recommendation_action(GROUP_RECOMMENDATION_CANCEL,0,command.revision,NULL)==ESP_OK);
  assert(!process_command()&&!journal_saves&&!selection_queued);
+ // Empty and explicit-negation results preserve the exact submitted first
+ // final for the visible result page without creating any operation/token.
+ reset();proposal_source="model";proposal_empty=true;begin_voice();
+ final_event(command.ticket,"先看看后勤组，但是不要切群");
+ assert(process_command()&&process_command()&&process_command());
+ assert(command.phase==GROUP_COMMAND_RECOVERING&&!command.submitted&&!journal_saves&&!command_target[0]);
+ assert(!strcmp(reviewed_text,seen_transcript)&&!command.transcript[0]);
+ assert(strstr(last_resolve_log,"candidates=0 intent_negated=0")&&!strstr(last_resolve_log,"不要"));
+ for(unsigned guard_case=0;guard_case<3;++guard_case) {
+  reset();begin_voice();final_event(command.ticket,"不要切到后勤组");
+  assert(process_command()&&process_command());request_result=ESP_FAIL;
+  injected_voice_api_error=GROUP_VOICE_API_INTENT_NEGATED;
+  if(guard_case==1)injected_voice_http_status=503;
+  if(guard_case==2)cancel_in_resolve=true;
+  assert(process_command()&&command.phase==GROUP_COMMAND_RECOVERING&&!command.submitted&&!journal_saves);
+  assert(!strcmp(reviewed_text,seen_transcript)&&!command.transcript[0]);
+  if(guard_case==0) {
+   assert(!strcmp(command_result,"已识别为不切群，当前群保持不变。"));
+   assert(strstr(last_resolve_log,"intent_negated=1"));
+  } else {
+   assert(strcmp(command_result,"已识别为不切群，当前群保持不变。"));
+   assert(strstr(last_resolve_log,"intent_negated=0"));
+  }
+ }
+ // A GUI PSRAM allocation failure cannot prevent normal resource cleanup or
+ // turn a proposal into an executed switch.
+ reset();review_result=ESP_ERR_NO_MEM;begin_voice();final_event(command.ticket,"切到乙群");
+ assert(process_command()&&process_command()&&process_command());
+ assert(command.phase==GROUP_COMMAND_CHOOSING&&review_calls==1&&!reviewed_text[0]&&!journal_saves);
  // Cancel during model HTTP or immediately before admission discards late candidates.
  reset();begin_voice();final_event(command.ticket,"切到乙群");assert(process_command()&&process_command());cancel_in_resolve=true;
  assert(process_command()&&command.phase==GROUP_COMMAND_RECOVERING&&command.cancelled&&!journal_saves);

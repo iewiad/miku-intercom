@@ -15,6 +15,7 @@ typedef enum {
     GROUP_VOICE_API_INVALID_JSON,
     GROUP_VOICE_API_BODY_TOO_LARGE,
     GROUP_VOICE_API_UNSUPPORTED_MEDIA_TYPE,
+    GROUP_VOICE_API_INTENT_NEGATED,
     GROUP_VOICE_API_OTHER,
 } group_voice_api_error_t;
 
@@ -30,6 +31,7 @@ static inline const char *group_voice_api_error_name(group_voice_api_error_t cod
     case GROUP_VOICE_API_INVALID_JSON: return "invalid_json";
     case GROUP_VOICE_API_BODY_TOO_LARGE: return "body_too_large";
     case GROUP_VOICE_API_UNSUPPORTED_MEDIA_TYPE: return "unsupported_media_type";
+    case GROUP_VOICE_API_INTENT_NEGATED: return "voice_intent_negated";
     default: return "other";
     }
 }

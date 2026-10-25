@@ -729,8 +729,12 @@ static esp_err_t request(const char *path, esp_http_client_method_t method,
 done:
     if (err != ESP_OK && complete && !response.overflow &&
         (last_http_status < 200 || last_http_status >= 300) &&
-        strcmp(path, "/voice/resolve") == 0) {
+        (!strcmp(path, "/voice/resolve") || (!strcmp(path, "/voice/proposals") && last_http_status == 422))) {
         last_voice_api_error = read_voice_api_error(response.data, response.used);
+        if (!strcmp(path, "/voice/proposals") && last_voice_api_error != GROUP_VOICE_API_INTENT_NEGATED)
+            last_voice_api_error = GROUP_VOICE_API_OTHER;
+        if (!strcmp(path, "/voice/resolve") && last_voice_api_error == GROUP_VOICE_API_INTENT_NEGATED)
+            last_voice_api_error = GROUP_VOICE_API_OTHER;
     }
     if (control_client) {
         const esp_err_t detach_body = set_request_body(control_client, NULL, 0);
@@ -1649,6 +1653,8 @@ static void request_recommendation(group_command_state_t *current)
     const size_t input_bytes = text ? strlen(text) : 0;
     bool requested = false;
     int status = 0;
+    if (voice && group_voice_proposal_text_valid(text))
+        (void)board_display_set_group_voice_review(current->origin_revision, text);
     (void)update_ui(voice ? "正在识别目标群，等待您确认后才切换" : "正在按需求查找已加入群，尚未切群");
     if (!recommendation) recommendation = heap_caps_calloc(1, sizeof(*recommendation), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     cJSON *body = cJSON_CreateObject(), *out = NULL;
@@ -1699,12 +1705,15 @@ static void request_recommendation(group_command_state_t *current)
         }
     }
     cJSON_Delete(out);
-    if (voice) ESP_LOGI(TAG, "GROUP_VOICE_PROPOSAL ticket=%" PRIu32 " input_bytes=%u requested=%d http=%d err=%d accepted=%d source=%s candidates=%u",
+    const bool intent_negated = voice && requested && active && err != ESP_OK && status == 422 &&
+                                last_voice_api_error == GROUP_VOICE_API_INTENT_NEGATED;
+    if (voice) ESP_LOGI(TAG, "GROUP_VOICE_PROPOSAL ticket=%" PRIu32 " input_bytes=%u requested=%d http=%d err=%d accepted=%d source=%s candidates=%u intent_negated=%d",
         current->ticket, (unsigned)input_bytes, requested, status, (int)err, valid,
         valid ? (recommendation->source == GROUP_RECOMMENDATION_SOURCE_EXACT ? "exact" : "model") : "none",
-        valid ? recommendation->count : 0);
+        valid ? recommendation->count : 0, intent_negated);
     if (!valid || !recommendation->count) {
-        recommendation_recover(active ? (voice ? "未取得有效目标群，未切群，请重试或手动选择" : "推荐未完成或没有有效建议，未切群") :
+        recommendation_recover(intent_negated ? "已识别为不切群，当前群保持不变。" :
+                               active ? (voice ? "未取得有效目标群，未切群，请重试或手动选择" : "推荐未完成或没有有效建议，未切群") :
                                       (voice ? "语音切群已取消，正在恢复当前群" : "需求找组已取消，正在恢复当前群"));
         return;
     }
