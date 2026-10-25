@@ -5,7 +5,9 @@
 #include <stdarg.h>
 #include <inttypes.h>
 #include <string.h>
+#include <stdlib.h>
 #include "cJSON.h"
+#include "group_voice_diagnostics.h"
 #include "group_command_state.h"
 #include "group_switch_journal.h"
 #include "rti_session.h"
@@ -43,6 +45,9 @@ static switch_phase_t switch_phase;
 static char switch_operation_id[81],switch_target_id[81];
 static group_switch_journal_t pending_operation,saved_record;
 static int last_http_status;
+static group_voice_api_error_t last_voice_api_error, injected_voice_api_error;
+static int injected_voice_http_status;
+static char last_resolve_log[600];
 static cJSON *floor_request;
 static unsigned notifications,disconnects,release_calls,create_calls,start_calls,peer_stops,stop_calls,gate_calls,requests,join_posts,resolve_posts,journal_saves;
 static unsigned stop_failures;
@@ -67,12 +72,15 @@ static esp_err_t reject_state(esp_err_t err) {intent.ready=false;catalog_known=f
 static esp_err_t apply_state(const cJSON *state,int64_t started,int64_t ended) {(void)started;(void)ended;return cJSON_IsObject(state)?ESP_OK:ESP_ERR_INVALID_RESPONSE;}
 static esp_err_t request(const char *path,int method,const cJSON *body,cJSON **out) {
  assert(method==HTTP_METHOD_POST);++requests;
+ last_voice_api_error=GROUP_VOICE_API_NONE;
  if(!strcmp(path,"/memberships")) {
   ++join_posts;const cJSON *code=cJSON_GetObjectItemCaseSensitive(body,"code");assert(cJSON_IsString(code)&&strlen(code->valuestring)==8);
   if(stop_after_submit)intent.desired=false;
   last_http_status=request_result==ESP_OK?200:429;
   if(request_result==ESP_OK&&out)*out=cJSON_Parse("{\"state\":{}}");
  } else if(!strcmp(path,"/voice/resolve")) {
+  last_http_status=request_result==ESP_OK?200:injected_voice_http_status;
+  last_voice_api_error=request_result==ESP_OK?GROUP_VOICE_API_NONE:injected_voice_api_error;
   ++resolve_posts;const cJSON *text=cJSON_GetObjectItemCaseSensitive(body,"transcript");assert(cJSON_IsString(text));
   strlcpy(seen_transcript,text->valuestring,sizeof(seen_transcript));
   if(cancel_in_resolve)assert(group_controller_voice_action(true,NULL)==ESP_OK);
@@ -150,6 +158,16 @@ static size_t heap_caps_get_free_size(unsigned capability) {assert(capability==M
 static int status_printf(const char *format,...) {
  va_list args;va_start(args,format);const int count=vsnprintf(status_output,sizeof(status_output),format,args);va_end(args);return count;
 }
+static const char *TAG="fixture";
+static void quiet_log(const char *tag,const char *format,...) {
+ (void)tag;
+ if(!strncmp(format,"GROUP_VOICE_RESOLVE ",20)) {
+  va_list args;va_start(args,format);vsnprintf(last_resolve_log,sizeof(last_resolve_log),format,args);va_end(args);
+ }
+}
+#define ESP_LOGI(...) quiet_log(__VA_ARGS__)
+#define ESP_LOGW(...) quiet_log(__VA_ARGS__)
+#define ESP_LOGE(...) quiet_log(__VA_ARGS__)
 #define printf status_printf
 /* @production-functions */
 #undef printf
@@ -163,16 +181,11 @@ static int status_printf(const char *format,...) {
 #define ESP_ERR_NVS_NEW_VERSION_FOUND 8
 #define ESP_ERROR_CHECK(call) assert((call)==ESP_OK)
 typedef struct {int cores;} esp_chip_info_t;
-static const char *TAG="fixture";
 static board_audio_t board_audio;
 static uint8_t loaded_volume;
 static bool saved_wifi;
 static esp_err_t (*wifi_setup_callback)(void *);
 static void *wifi_setup_context;
-static void quiet_log(const char *tag,const char *format,...) {(void)tag;(void)format;}
-#define ESP_LOGI(...) quiet_log(__VA_ARGS__)
-#define ESP_LOGW(...) quiet_log(__VA_ARGS__)
-#define ESP_LOGE(...) quiet_log(__VA_ARGS__)
 static void esp_chip_info(esp_chip_info_t *info) {info->cores=2;}
 static esp_err_t nvs_flash_init(void) {return ESP_OK;}
 static esp_err_t board_display_init(void) {return ESP_OK;}
@@ -228,6 +241,8 @@ static void reset(void) {
  create_result=start_result=request_result=ESP_OK;
  create_error_with_id=cancel_in_create=cancel_in_resolve=stop_during_release=stop_after_submit=false;
  strlcpy(resolved_target,"grp_bbbb",81);seen_transcript[0]=last_detail[0]=0;
+ last_resolve_log[0]=0;last_http_status=0;last_voice_api_error=GROUP_VOICE_API_NONE;
+ injected_voice_api_error=GROUP_VOICE_API_OTHER;injected_voice_http_status=422;
 }
 static void begin_voice(void) {
  assert(group_controller_voice_action(false,NULL)==ESP_OK);
@@ -238,12 +253,15 @@ static void begin_voice(void) {
 static void final_event(uint32_t ticket,const char *text) {
  webrtc_command_event_t event={.type=WEBRTC_COMMAND_FINAL,.generation=ticket};strlcpy(event.text,text,sizeof(event.text));command_event(&event,NULL);
 }
+static void *no_cjson_memory(size_t size) {(void)size;return NULL;}
 int main(void) {
  verify_initial_volume();
  reset();begin_voice();const uint32_t first_ticket=command.ticket;
  final_event(first_ticket,"切到乙群");final_event(first_ticket,"切到甲群");
  assert(command.phase==GROUP_COMMAND_RESOLVING&&strcmp(command.transcript,"切到乙群")==0);
  assert(process_command());assert(resolve_posts==1&&strcmp(seen_transcript,"切到乙群")==0);
+ assert(strstr(last_resolve_log,"outcome=matched") && strstr(last_resolve_log,"selected=1"));
+ assert(!strstr(last_resolve_log,"乙群") && !strstr(last_resolve_log,"grp_bbbb"));
  assert(command.phase==GROUP_COMMAND_CLEANUP&&strcmp(command_target,"grp_bbbb")==0);
  // Local capture stops once. The owner waits for a successful remote stop ACK.
  stop_failures=2;assert(process_command());assert(peer_stops==1&&stop_calls==1&&!selection_queued);
@@ -270,7 +288,35 @@ int main(void) {
  assert(!process_command());assert(stop_calls==1&&!selection_queued);
  reset();begin_voice();cancel_in_resolve=true;final_event(command.ticket,"切到乙群");
  assert(process_command());assert(command.cancelled&&command_target[0]==0);
+ assert(strstr(last_resolve_log,"outcome=cancelled") && strstr(last_resolve_log,"selected=0"));
  assert(!process_command());assert(!selection_queued&&stop_calls==1);
+ // Actual resolve failures must have distinct fixed metadata/reasons and never
+ // select a target. No transcript, returned identity or raw API string is logged.
+ const struct {int status;group_voice_api_error_t api;const char *outcome;} failures[]={
+  {400,GROUP_VOICE_API_INVALID_COMMAND,"invalid_command"},
+  {422,GROUP_VOICE_API_UNKNOWN_TARGET,"unknown_target"},
+  {422,GROUP_VOICE_API_AMBIGUOUS_TARGET,"ambiguous_target"},
+  {401,GROUP_VOICE_API_OTHER,"permission_error"},
+  {503,GROUP_VOICE_API_OTHER,"service_error"},
+  {0,GROUP_VOICE_API_NONE,"transport_error"}
+ };
+ for(size_t i=0;i<sizeof(failures)/sizeof(failures[0]);++i) {
+  reset();begin_voice();request_result=ESP_FAIL;
+  injected_voice_http_status=failures[i].status;injected_voice_api_error=failures[i].api;
+  final_event(command.ticket,"private utterance with newline\ncredential");assert(process_command());
+  char expected[80];snprintf(expected,sizeof(expected),"outcome=%s",failures[i].outcome);
+  assert(strstr(last_resolve_log,expected)&&strstr(last_resolve_log,"selected=0"));
+  assert(!strstr(last_resolve_log,"private")&&!strstr(last_resolve_log,"credential")&&!strstr(last_resolve_log,"grp_"));
+  assert(command_target[0]==0&&command.failed&&command_result[0]&&!strstr(command_result,"已恢复"));
+  assert(!process_command()&&!selection_queued);
+ }
+ // If local JSON allocation fails before request(), HTTP metadata must remain
+ // zero/none rather than reusing a previous request's error or HTTP 200.
+ reset();begin_voice();last_http_status=200;last_voice_api_error=GROUP_VOICE_API_UNKNOWN_TARGET;
+ final_event(command.ticket,"切到乙群");cJSON_Hooks hooks={.malloc_fn=no_cjson_memory,.free_fn=free};
+ cJSON_InitHooks(&hooks);assert(process_command());cJSON_InitHooks(NULL);
+ assert(resolve_posts==0&&strstr(last_resolve_log,"requested=0 http=0")&&strstr(last_resolve_log,"api=none outcome=local_error"));
+ assert(!process_command()&&!selection_queued);
  reset();begin_voice();final_event(command.ticket,"切到乙群");assert(process_command());
  intent.desired=false;assert(!process_command());assert(!selection_queued&&!command_session_live);
  assert(!process_command()&&command.kind==GROUP_COMMAND_NONE);
@@ -292,6 +338,7 @@ int main(void) {
  assert(command.cancelled&&!selection_queued&&peer_stops==1&&stop_calls==1);
  reset();begin_voice();strlcpy(resolved_target,"grp_unknown",81);final_event(command.ticket,"切到未知群");
  assert(process_command());assert(command.failed&&command_target[0]==0);
+ assert(strstr(last_resolve_log,"outcome=outside_catalog") && strstr(last_resolve_log,"selected=0"));
  assert(!process_command());assert(!selection_queued&&stop_calls==1);
  // A previous command's final cannot satisfy a later command's listener.
  reset();begin_voice();uint32_t old_ticket=command.ticket;

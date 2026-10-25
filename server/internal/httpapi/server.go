@@ -28,6 +28,7 @@ type Server struct {
 	deviceHost      string
 	voice           *rta.Proxy
 	voiceAdmissions sync.Map
+	voiceLogf       func(string, ...any)
 }
 
 func New(service *control.Service, hubs ...*media.Hub) http.Handler {

@@ -1,6 +1,6 @@
 {
   "date": "2026-10-25",
-  "status": "manual_flows_and_six_direction_listening_completed_with_recorded_retries",
+  "status": "manual_listening_passed_final_stop_machine_unverified",
   "merged_main_commit": "e1f825ce0f303148e3fcb2203224d9a338cfc40f",
   "merged_pull_requests": [
     13,
@@ -68,7 +68,8 @@
   "pending": [
     "voice recognition usability and metadata-only diagnostics for distinguishing rejected exact commands",
     "reduce or characterize intermittent media channel-wait timeouts and internal/DMA headroom",
-    "full all-theme/narrow-screen/assistive browser observations, long-run quality and exact latency remain separate"
+    "full all-theme/narrow-screen/assistive browser observations, long-run quality and exact latency remain separate",
+    "capture actual final stop through cleanup in next controlled device run; older checkpoint did not cover end of retained stream"
   ],
   "fix": {
     "description": "reserve unchanged 20480-byte internal peer worker before peer_open; EventGroup startup barrier; stop wakes parked worker and retains original ownership/retirement protocol",
@@ -139,7 +140,6 @@
   "fixed_image_recovery_observations": {
     "peer_start_cycles": 26,
     "peer_stop_complete_cycles": 26,
-    "all_observed_cycles_completed": true,
     "observed_start_failures": [
       {
         "mode": "group",
@@ -156,10 +156,30 @@
     "deferred_cleanup_scope": "retained context was later safely retired; these are four log observations, not four independent faults",
     "peer_worker_min_free_stack_bytes_observed": 13080,
     "fatal_observed": false,
-    "scope": "no recurring NO_MEM in this observation; two channel-wait timeouts recovered; not zero-error, long-run, or ASR-accuracy proof"
+    "scope": "earlier checkpoint, not the full retained UART stream",
+    "checkpoint_at_local": "2026-10-25T02:47:59.706080+08:00",
+    "checkpoint_all_cycles_completed": true,
+    "full_trace": {
+      "source_sha256": "7261bc5f54f56fe1adc3be51309ffd8b80bbca39d63f971a70c8c5ae53e37a16",
+      "retained_event_count": 1947,
+      "start_cycles": 29,
+      "stop_complete_cycles": 28,
+      "cycles_without_stop_complete_at_cutoff": [
+        29
+      ],
+      "last_logged_state": "group media ready and unpressed; cycle29 still active at observation cutoff",
+      "last_status_at_local": "2026-10-25T02:48:41.659000+08:00",
+      "observer_closed_at_local": "2026-10-25T02:48:43.237000+08:00",
+      "scope": "uncompleted active cycle at cutoff is not proof of leaked resources"
+    }
   },
   "final_closeout": {
-    "board": {
+    "last_confirmed_version": 28,
+    "catalog_scope": "earlier stopped checkpoint forgot live catalog; later full log ended ready, so final stop is not machine-verified",
+    "serial_closed": true,
+    "serial_unowned": true,
+    "local_product_server_kept_running": true,
+    "checkpoint_board": {
       "desired": false,
       "connected": false,
       "pressed": false,
@@ -168,11 +188,25 @@
       "command_phase": 0,
       "output_volume": 38
     },
-    "last_confirmed_group_before_stop": "新版验收群",
-    "last_confirmed_version": 28,
-    "catalog_scope": "stopped mode forgets live catalog; retained current group was confirmed before final stop",
-    "serial_closed": true,
-    "serial_unowned": true,
-    "local_product_server_kept_running": true
+    "checkpoint_at_local": "2026-10-25T02:47:59.706080+08:00",
+    "user_reported_final_stop": true,
+    "final_stop_machine_verified": false,
+    "last_logged_board": {
+      "desired": true,
+      "connected": true,
+      "pressed": false,
+      "held": false,
+      "command_kind": 0,
+      "command_phase": 0,
+      "output_volume": 38
+    },
+    "last_confirmed_current_group": "新版验收群",
+    "current_device_probe": {
+      "serial_device_present": false,
+      "observed_at_local": "2026-10-25T03:34:47.451868+08:00",
+      "enumeration_only": true,
+      "serial_opened": false,
+      "commands_sent": false
+    }
   }
 }

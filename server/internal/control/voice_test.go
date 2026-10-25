@@ -3,6 +3,8 @@ package control
 import (
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 )
 
 func TestVoiceResolveIsExactAuthorizedAndReadOnly(t *testing.T) {
@@ -26,6 +28,85 @@ func TestVoiceResolveIsExactAuthorizedAndReadOnly(t *testing.T) {
 	after := state(t, f.s, f.a.ID)
 	if before.CurrentGroupID != after.CurrentGroupID || before.CurrentVersion != after.CurrentVersion || f.save.saves != saves {
 		t.Fatal("resolve changed state")
+	}
+}
+
+func TestVoiceResolutionDiagnosticOutcomes(t *testing.T) {
+	cases := []struct {
+		name, text, prefix, outcome, code string
+		invalidIdentity, ambiguous        bool
+		candidates, matches               int
+	}{
+		{name: "long prefix", text: " 切换到 后勤。 ", prefix: "switch_to", outcome: "success", code: "none", candidates: 2, matches: 1},
+		{name: "short prefix", text: "切到后勤", prefix: "switch_short", outcome: "success", code: "none", candidates: 2, matches: 1},
+		{name: "enter prefix", text: "进入后勤！", prefix: "enter", outcome: "success", code: "none", candidates: 2, matches: 1},
+		{name: "bare target", text: "后勤", prefix: "none", outcome: "invalid_command", code: "invalid_voice_command", candidates: 2},
+		{name: "empty target", text: "切到", prefix: "none", outcome: "invalid_command", code: "invalid_voice_command", candidates: 2},
+		{name: "negated command", text: "不要切到后勤", prefix: "none", outcome: "invalid_command", code: "invalid_voice_command", candidates: 2},
+		{name: "literal unknown", text: "切到后勤然后进入协作一组", prefix: "switch_short", outcome: "unknown_target", code: "voice_target_unknown", candidates: 2},
+		{name: "punctuation ambiguity", text: "进入后勤！！", prefix: "enter", outcome: "ambiguous_target", code: "voice_target_ambiguous", candidates: 3, matches: 2, ambiguous: true},
+		{name: "invalid UTF8", text: string([]byte{0xff}), prefix: "none", outcome: "invalid_command", code: "invalid_voice_command"},
+		{name: "rune limit", text: strings.Repeat("切", 257), prefix: "none", outcome: "invalid_command", code: "invalid_voice_command"},
+		{name: "service failure", text: "切到后勤", prefix: "none", outcome: "service_error", code: "unauthorized", invalidIdentity: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t)
+			if tc.ambiguous {
+				_, _, _, err := f.s.CreateGroup(f.a.ID, "后勤！")
+				must(t, err)
+			}
+			id := f.a.ID
+			if tc.invalidIdentity {
+				id = "unrecognized-private-identity"
+			}
+			group, diagnostic, err := f.s.ResolveVoiceWithDiagnostics(id, tc.text)
+			if tc.code == "none" {
+				must(t, err)
+				if group.ID != f.g2.ID {
+					t.Fatal("diagnostic resolver selected wrong group")
+				}
+			} else {
+				wantCode(t, err, tc.code)
+				if group.ID != "" {
+					t.Fatal("failed resolution returned a target")
+				}
+			}
+			want := VoiceResolutionDiagnostics{
+				InputEvaluated: true, UTF8Valid: utf8.ValidString(tc.text), InputRunes: utf8.RuneCountInString(tc.text), InputBytes: len(tc.text),
+				AcceptedPrefix: tc.prefix, CandidateCount: tc.candidates, ExactMatchCount: tc.matches, Outcome: tc.outcome, ErrorCode: tc.code,
+			}
+			if diagnostic != want {
+				t.Fatalf("diagnostics = %+v, want %+v", diagnostic, want)
+			}
+		})
+	}
+}
+
+func TestVoiceDiagnosticsUseOneAuthorizedSnapshot(t *testing.T) {
+	f := setup(t)
+	snapshots := 0
+	f.s.opts.Now = func() time.Time {
+		snapshots++
+		return f.clock.Now()
+	}
+	// Another device's joined groups and global groups must not be counted.
+	_, diagnostic, err := f.s.ResolveVoiceWithDiagnostics(f.b.ID, "切到后勤")
+	wantCode(t, err, "voice_target_unknown")
+	if snapshots != 1 || diagnostic.CandidateCount != 1 || diagnostic.ExactMatchCount != 0 {
+		t.Fatalf("resolution did not use one authorized snapshot: calls=%d diagnostic=%+v", snapshots, diagnostic)
+	}
+	snapshots = 0
+	_, err = f.s.ResolveVoice(f.a.ID, "切到后勤")
+	must(t, err)
+	if snapshots != 1 {
+		t.Fatalf("compatibility resolver took %d snapshots", snapshots)
+	}
+	snapshots = 0
+	_, _, err = f.s.ResolveVoiceWithDiagnostics(f.a.ID, string([]byte{0xff}))
+	wantCode(t, err, "invalid_voice_command")
+	if snapshots != 0 {
+		t.Fatal("invalid input accessed service state")
 	}
 }
 

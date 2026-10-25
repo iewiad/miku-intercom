@@ -11,6 +11,7 @@
 #include "app_brand.h"
 #include "board_display.h"
 #include "group_audio_level.h"
+#include "rtc_alloc_diagnostics.h"
 #include "cJSON.h"
 #include "esp_aec.h"
 #include "esp_attr.h"
@@ -167,6 +168,7 @@ typedef struct {
     webrtc_command_event_cb_t command_callback;
     void *command_context;
     EventBits_t retired_workers;
+    int last_peer_state;
     char *local_sdp;
     uint16_t data_stream_id;
     char user_text[RTC_TRANSCRIPT_MAX];
@@ -199,6 +201,7 @@ typedef struct {
 } rtc_peer_ctx_t;
 
 static rtc_peer_ctx_t rtc;
+static uint32_t peer_cycle;
 // Short critical sections protect only gate values and aggregate counters, never
 // codec, I/O, allocation, or esp_peer calls. A packet admitted before a release
 // may already be in transport; every subsequent packet is checked again.
@@ -213,6 +216,19 @@ static uint32_t group_send_epoch;
 static webrtc_group_stats_t group_stats;
 static rta_command_state_t command_state;
 static webrtc_command_stats_t command_stats;
+
+static const char *peer_mode(void)
+{
+    return rtc.command_mode ? "command" : rtc.group_mode ? "group" : "conversation";
+}
+
+static int peer_last_state(void)
+{
+    portENTER_CRITICAL(&group_state_lock);
+    const int state = rtc.last_peer_state;
+    portEXIT_CRITICAL(&group_state_lock);
+    return state;
+}
 
 void webrtc_peer_command_get_stats(webrtc_command_stats_t *stats)
 {
@@ -273,12 +289,11 @@ static void command_send_bootstrap(uint32_t *next_pts)
 
 static esp_err_t fail_peer_start(const char *stage, esp_err_t error)
 {
+    ESP_LOGW(TAG, "RTC start_failure cycle=%" PRIu32 " mode=%s stage=%s err=%s last_state=%d",
+             peer_cycle, peer_mode(), stage, esp_err_to_name(error), peer_last_state());
     if (rtc.command_mode) {
         ESP_LOGW(TAG, "RTA_COMMAND start_failure stage=%s err=%s", stage, esp_err_to_name(error));
         command_log_stats("start_failure");
-    } else {
-        ESP_LOGW(TAG, "RTC start_failure mode=%s stage=%s err=%s",
-                 rtc.group_mode ? "group" : "conversation", stage, esp_err_to_name(error));
     }
     webrtc_peer_stop();
     return error;
@@ -336,17 +351,38 @@ static void command_fail(esp_err_t error)
     command_accept_input(rtc.command_generation, &input);
 }
 
-static EventBits_t wait_peer_bits(EventBits_t bits, TickType_t timeout)
+static EventBits_t wait_peer_bits(EventBits_t bits, TickType_t timeout, bool *cancelled)
 {
+    *cancelled = false;
     if (!rtc.command_mode) return xEventGroupWaitBits(rtc.events, bits, pdFALSE, pdFALSE, timeout);
     const TickType_t started = xTaskGetTickCount();
     for (;;) {
         EventBits_t observed = xEventGroupWaitBits(rtc.events, bits, pdFALSE, pdFALSE, 0);
         if ((observed & bits) != 0) return observed;
-        if (!command_active()) return RTC_EVENT_FAILED;
+        if (!command_active()) {
+            *cancelled = true;
+            return observed;
+        }
         observed = xEventGroupWaitBits(rtc.events, bits, pdFALSE, pdFALSE, pdMS_TO_TICKS(100));
         if ((observed & bits) != 0 || xTaskGetTickCount() - started >= timeout) return observed;
     }
+}
+
+static esp_err_t wait_peer_ready(const char *stage, EventBits_t expected, TickType_t timeout)
+{
+    const int64_t started_us = esp_timer_get_time();
+    bool cancelled;
+    const EventBits_t returned = wait_peer_bits(expected | RTC_EVENT_FAILED, timeout, &cancelled);
+    const bool failed = (returned & RTC_EVENT_FAILED) != 0;
+    const bool ready = (returned & expected) == expected;
+    const esp_err_t error = failed ? ESP_FAIL : cancelled ? ESP_ERR_INVALID_STATE :
+                            ready ? ESP_OK : ESP_ERR_TIMEOUT;
+    ESP_LOGI(TAG, "RTC wait cycle=%" PRIu32 " mode=%s stage=%s expected=0x%03x returned=0x%03x"
+                 " failed_bit=%u result=%s elapsed_ms=%" PRIi64 " last_state=%d",
+             peer_cycle, peer_mode(), stage, (unsigned)expected, (unsigned)returned,
+             failed ? 1U : 0U, failed ? "failed" : cancelled ? "cancelled" : ready ? "ready" : "timeout",
+             (esp_timer_get_time() - started_us) / 1000, peer_last_state());
+    return error;
 }
 
 
@@ -546,7 +582,6 @@ static void *alloc_audio_workspace(size_t bytes)
 
 static aec_handle_t *persistent_aec;
 static int persistent_aec_frame_samples;
-static uint32_t peer_cycle;
 static DMA_ATTR int16_t aec_dma_mic[RTC_AEC_MAX_FRAME_SAMPLES]
     __attribute__((aligned(16)));
 static DMA_ATTR int16_t aec_dma_reference[RTC_AEC_MAX_FRAME_SAMPLES]
@@ -711,8 +746,58 @@ static void official_capture_aec_stop(void)
 }
 #endif
 
+static const char *alloc_diag_mode(rtc_alloc_diag_mode_t mode)
+{
+    return mode == RTC_ALLOC_DIAG_COMMAND ? "command" : mode == RTC_ALLOC_DIAG_GROUP ? "group" : "conversation";
+}
+
+static void drain_alloc_failures(const char *phase)
+{
+    rtc_alloc_diag_snapshot_t snapshot;
+    rtc_alloc_diag_take(&snapshot);
+    static unsigned reported_drops;
+    if (snapshot.count == 0 && snapshot.dropped_total == reported_drops) return;
+    ESP_LOGI(TAG, "RTC alloc_sampling phase=%s scope=process_active_rtc policy=first_pending"
+                 " pending_limit=%u sampled=%u dropped_total=%u drop_scope=boot_active_windows",
+             phase, RTC_ALLOC_DIAG_PENDING_LIMIT, snapshot.count, snapshot.dropped_total);
+    reported_drops = snapshot.dropped_total;
+    for (unsigned i = 0; i < snapshot.count; ++i) {
+        const rtc_alloc_diag_sample_t *sample = &snapshot.samples[i];
+        /* These heap values are measured at drain/log time, never in the heap
+         * callback. They do not reconstruct memory at allocation-failure time.
+         */
+        ESP_LOGW(TAG, "RTC alloc_failure cycle=%" PRIu32 " mode=%s phase=%s size_bytes=%u caps=0x%08" PRIx32
+                     " memory_time=drain free_caps=%u largest_caps=%u internal=%u largest_internal=%u"
+                     " dma=%u largest_dma=%u psram=%u largest_psram=%u",
+                 sample->cycle, alloc_diag_mode(sample->mode), phase, (unsigned)sample->size, sample->caps,
+                 (unsigned)heap_caps_get_free_size(sample->caps),
+                 (unsigned)heap_caps_get_largest_free_block(sample->caps),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    }
+}
+
+static void prepare_alloc_diagnostics(void)
+{
+    static bool attempted;
+    if (attempted) return;
+    attempted = true;
+    /* IDF 6.2 owns a single callback slot and offers no getter/unregister.
+     * No other firmware/component registration exists in this project. Register
+     * once before RTC allocation, never swap callbacks around active workers.
+     */
+    const esp_err_t error = heap_caps_register_failed_alloc_callback(rtc_alloc_diag_failed);
+    ESP_LOGI(TAG, "RTC alloc_hook status=%s err=%s pending_limit=%u",
+             error == ESP_OK ? "registered" : "unavailable", esp_err_to_name(error), RTC_ALLOC_DIAG_PENDING_LIMIT);
+}
+
 static void log_heap_state(const char *phase, uint32_t cycle)
 {
+    drain_alloc_failures(phase);
     ESP_LOGI(TAG,
              "RTC heap cycle=%" PRIu32 " phase=%s internal=%u largest_internal=%u "
              "dma=%u largest_dma=%u psram=%u largest_psram=%u",
@@ -727,6 +812,7 @@ static void log_heap_state(const char *phase, uint32_t cycle)
 
 esp_err_t webrtc_peer_prepare(void)
 {
+    prepare_alloc_diagnostics();
     const int ret = esp_peer_pre_generate_cert();
     if (ret != ESP_PEER_ERR_NONE) {
         ESP_LOGE(TAG, "DTLS certificate pre-generation failed: %d", ret);
@@ -935,7 +1021,10 @@ static void handle_realtime_event(const uint8_t *data, size_t size, uint32_t com
 static int peer_state_handler(esp_peer_state_t state, void *ctx)
 {
     (void)ctx;
-    ESP_LOGI(TAG, "peer state=%d", state);
+    portENTER_CRITICAL(&group_state_lock);
+    rtc.last_peer_state = (int)state;
+    portEXIT_CRITICAL(&group_state_lock);
+    ESP_LOGI(TAG, "RTC state cycle=%" PRIu32 " mode=%s state=%d", peer_cycle, peer_mode(), (int)state);
     if (rtc.group_mode) {
         if (state == ESP_PEER_STATE_CONNECTED) {
             portENTER_CRITICAL(&group_state_lock);
@@ -2570,6 +2659,19 @@ static void data_event_task(void *arg)
     finish_worker(RTC_EVENT_DATA_DONE);
 }
 
+static void log_stop_wait(const char *stage, EventBits_t expected, EventBits_t observed,
+                          int64_t started_us, const char *result)
+{
+    portENTER_CRITICAL(&group_state_lock);
+    const EventBits_t retired = rtc.retired_workers;
+    const int last_state = rtc.last_peer_state;
+    portEXIT_CRITICAL(&group_state_lock);
+    ESP_LOGI(TAG, "RTC stop_wait cycle=%" PRIu32 " mode=%s stage=%s expected=0x%03x observed=0x%03x"
+                 " retired=0x%03x result=%s elapsed_ms=%" PRIi64 " last_state=%d",
+             peer_cycle, peer_mode(), stage, (unsigned)expected, (unsigned)observed, (unsigned)retired,
+             result, (esp_timer_get_time() - started_us) / 1000, last_state);
+}
+
 void webrtc_peer_stop(void)
 {
     webrtc_peer_command_cancel();
@@ -2580,9 +2682,12 @@ void webrtc_peer_stop(void)
         portENTER_CRITICAL(&group_state_lock);
         group_mode_active = false;
         portEXIT_CRITICAL(&group_state_lock);
+        rtc_alloc_diag_end();
+        drain_alloc_failures("stop_empty");
         return;
     }
     const uint32_t cycle = peer_cycle;
+    const int64_t stop_started_us = esp_timer_get_time();
     log_heap_state("stop_entry", cycle);
     bool shutdown_complete = true;
     EventBits_t expected_retired = 0;
@@ -2597,11 +2702,11 @@ void webrtc_peer_stop(void)
         }
         expected_retired |= wait_for;
         if (wait_for != 0) {
+            const int64_t wait_started_us = esp_timer_get_time();
             const EventBits_t stopped = xEventGroupWaitBits(
                 rtc.events, wait_for, pdFALSE, pdTRUE, pdMS_TO_TICKS(3000));
-            ESP_LOGI(TAG,
-                     "RTC stop cycle=%" PRIu32 " audio task bits expected=0x%02x observed=0x%02x",
-                     cycle, (unsigned)wait_for, (unsigned)(stopped & wait_for));
+            log_stop_wait("audio", wait_for, stopped, wait_started_us,
+                          (stopped & wait_for) == wait_for ? "observed" : "timeout");
             if ((stopped & wait_for) != wait_for) {
                 ESP_LOGE(TAG, "RTC stop cycle=%" PRIu32 " audio task shutdown timed out", cycle);
                 shutdown_complete = false;
@@ -2623,12 +2728,11 @@ void webrtc_peer_stop(void)
             wait_for |= RTC_EVENT_DATA_DONE;
         }
         expected_retired |= wait_for;
+        const int64_t wait_started_us = esp_timer_get_time();
         const EventBits_t stopped = xEventGroupWaitBits(
             rtc.events, wait_for, pdFALSE, pdTRUE, pdMS_TO_TICKS(3000));
-        ESP_LOGI(TAG,
-                 "RTC stop cycle=%" PRIu32
-                 " worker bits expected=0x%02x observed=0x%02x",
-                 cycle, (unsigned)wait_for, (unsigned)(stopped & wait_for));
+        log_stop_wait("peer_data", wait_for, stopped, wait_started_us,
+                      (stopped & wait_for) == wait_for ? "observed" : "timeout");
         if ((stopped & wait_for) != wait_for) {
             ESP_LOGE(TAG, "RTC stop cycle=%" PRIu32 " worker shutdown timed out", cycle);
             shutdown_complete = false;
@@ -2648,10 +2752,15 @@ void webrtc_peer_stop(void)
         }
         vTaskDelay(1);
     }
+    const EventBits_t observed = rtc.events == NULL || expected_retired == 0 ? 0 :
+        xEventGroupWaitBits(rtc.events, expected_retired, pdFALSE, pdFALSE, 0);
+    log_stop_wait("cleanup", expected_retired, observed, stop_started_us,
+                  shutdown_complete ? "safe_to_release" : "retained");
     if (!shutdown_complete) {
         // Keep the peer, events, locks, queues, and codecs alive until every
         // owner has acknowledged shutdown. start rejects this retained context.
         ESP_LOGE(TAG, "RTC cleanup deferred: tasks are still using the retained context");
+        log_heap_state("cleanup_deferred", cycle);
         return;
     }
 #if CONFIG_MIKU_RTI_OFFICIAL_CAPTURE_AEC
@@ -2696,6 +2805,8 @@ void webrtc_peer_stop(void)
     group_mode_active = false;
     portEXIT_CRITICAL(&group_state_lock);
     log_heap_state("stop_complete", cycle);
+    rtc_alloc_diag_end();
+    drain_alloc_failures("scope_end");
     ESP_LOGI(TAG, "PeerConnection closed");
 }
 
@@ -2738,9 +2849,13 @@ static esp_err_t start_peer(const rti_session_t *session, const board_audio_t *a
         return ESP_ERR_INVALID_STATE;
     }
     const uint32_t cycle = ++peer_cycle;
-    log_heap_state("start_entry", cycle);
+    prepare_alloc_diagnostics();
     rtc.group_mode = exchange != NULL;
     rtc.command_mode = callback != NULL;
+    rtc.last_peer_state = -1;
+    rtc_alloc_diag_begin(cycle, rtc.command_mode ? RTC_ALLOC_DIAG_COMMAND :
+                                rtc.group_mode ? RTC_ALLOC_DIAG_GROUP : RTC_ALLOC_DIAG_CONVERSATION);
+    log_heap_state("start_entry", cycle);
     rtc.command_generation = command_generation;
     rtc.command_callback = callback;
     rtc.command_context = command_context;
@@ -2825,12 +2940,9 @@ static esp_err_t start_peer(const rti_session_t *session, const board_audio_t *a
         return fail_peer_start("new_connection", ESP_FAIL);
     }
 
-    EventBits_t bits = wait_peer_bits(RTC_EVENT_LOCAL_SDP | RTC_EVENT_FAILED,
-                                      pdMS_TO_TICKS(RTC_SIGNAL_TIMEOUT_MS));
-    if ((bits & RTC_EVENT_LOCAL_SDP) == 0 || (bits & RTC_EVENT_FAILED) != 0) {
-        ESP_LOGE(TAG, "timed out gathering local SDP");
-        return fail_peer_start("local_sdp_wait", ESP_ERR_TIMEOUT);
-    }
+    esp_err_t wait_error = wait_peer_ready("local_sdp_wait", RTC_EVENT_LOCAL_SDP,
+                                          pdMS_TO_TICKS(RTC_SIGNAL_TIMEOUT_MS));
+    if (wait_error != ESP_OK) return fail_peer_start("local_sdp_wait", wait_error);
 
     xSemaphoreTake(rtc.lock, portMAX_DELAY);
     char *offer = rtc.local_sdp == NULL ? NULL : strdup(rtc.local_sdp);
@@ -2883,11 +2995,8 @@ static esp_err_t start_peer(const rti_session_t *session, const board_audio_t *a
     }
 
     const EventBits_t ready_event = rtc.group_mode ? RTC_EVENT_CONNECTED : RTC_EVENT_DATA_OPEN;
-    bits = wait_peer_bits(ready_event | RTC_EVENT_FAILED, pdMS_TO_TICKS(RTC_SIGNAL_TIMEOUT_MS));
-    if ((bits & ready_event) == 0 || (bits & RTC_EVENT_FAILED) != 0) {
-        ESP_LOGE(TAG, "timed out waiting for %s", rtc.group_mode ? "group peer" : "oai-events DataChannel");
-        return fail_peer_start("channel_wait", ESP_ERR_TIMEOUT);
-    }
+    wait_error = wait_peer_ready("channel_wait", ready_event, pdMS_TO_TICKS(RTC_SIGNAL_TIMEOUT_MS));
+    if (wait_error != ESP_OK) return fail_peer_start("channel_wait", wait_error);
     if (rtc.command_mode && !command_active()) {
         return fail_peer_start("cancelled_after_channel", ESP_ERR_INVALID_STATE);
     }
@@ -2913,11 +3022,9 @@ static esp_err_t start_peer(const rti_session_t *session, const board_audio_t *a
         const bool deliver = rta_command_audio_available(&command_state, &event);
         portEXIT_CRITICAL(&group_state_lock);
         if (deliver) command_deliver(&event);
-        bits = wait_peer_bits(RTC_EVENT_COMMAND_READY | RTC_EVENT_FAILED,
-                               pdMS_TO_TICKS(RTC_SIGNAL_TIMEOUT_MS));
-        if ((bits & RTC_EVENT_COMMAND_READY) == 0 || (bits & RTC_EVENT_FAILED) != 0) {
-            return fail_peer_start("session_updated_wait", ESP_ERR_TIMEOUT);
-        }
+        wait_error = wait_peer_ready("session_updated_wait", RTC_EVENT_COMMAND_READY,
+                                     pdMS_TO_TICKS(RTC_SIGNAL_TIMEOUT_MS));
+        if (wait_error != ESP_OK) return fail_peer_start("session_updated_wait", wait_error);
         command_log_stats("ready");
         ESP_LOGI(TAG, "RTA command transcription active; remote playback disabled");
         return ESP_OK;

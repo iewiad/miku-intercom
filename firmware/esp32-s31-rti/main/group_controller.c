@@ -4,6 +4,7 @@
 #include <string.h>
 #include <time.h>
 #include "group_switch_journal.h"
+#include "group_voice_diagnostics.h"
 
 /* These transitions run under guard in firmware. The host entry below exercises
  * the same transitions without networking, an RTOS, or a copy of the model. */
@@ -352,6 +353,7 @@ static int64_t next_renew_us, next_poll_us;
 static uint32_t request_generation;
 static cJSON *floor_request;
 static int last_http_status;
+static group_voice_api_error_t last_voice_api_error;
 /* Compatibility auto-join is worker-owned and tried once per loaded session. */
 static bool legacy_join_attempted;
 static char ui_detail[160];
@@ -399,6 +401,7 @@ typedef struct {
     char *data;
     size_t used;
     bool overflow;
+    bool observed;
 } response_t;
 
 static bool string_field(const cJSON *o, const char *key, char *out, size_t cap)
@@ -439,6 +442,10 @@ static esp_err_t http_event(esp_http_client_event_t *e)
         portEXIT_CRITICAL(&guard);
     }
     response_t *r = e->user_data;
+    if (r && (e->event_id == HTTP_EVENT_ON_HEADER || e->event_id == HTTP_EVENT_ON_DATA ||
+              e->event_id == HTTP_EVENT_ON_FINISH)) {
+        r->observed = true;
+    }
     if (e->event_id != HTTP_EVENT_ON_DATA || !r || e->data_len <= 0) {
         return ESP_OK;
     }
@@ -489,6 +496,85 @@ static esp_err_t set_request_body(esp_http_client_handle_t client, const char *p
     return payload == NULL && size == 0 && err == ESP_ERR_NOT_FOUND ? ESP_OK : err;
 }
 
+static bool voice_error_envelope_valid(const char *data, size_t used)
+{
+    bool string = false;
+    unsigned depth = 0;
+    unsigned structural_tokens = 0;
+    for (size_t i = 0; i < used; ++i) {
+        const unsigned char c = (unsigned char)data[i];
+        if (c >= 0x80) {
+            unsigned remaining;
+            uint32_t value, minimum;
+            if (c >= 0xc2 && c <= 0xdf) { remaining = 1; value = c & 0x1f; minimum = 0x80; }
+            else if (c >= 0xe0 && c <= 0xef) { remaining = 2; value = c & 0x0f; minimum = 0x800; }
+            else if (c >= 0xf0 && c <= 0xf4) { remaining = 3; value = c & 0x07; minimum = 0x10000; }
+            else return false;
+            if (remaining > used - i - 1) return false;
+            while (remaining--) {
+                const unsigned char next = (unsigned char)data[++i];
+                if ((next & 0xc0) != 0x80) return false;
+                value = (value << 6) | (next & 0x3f);
+            }
+            if (value < minimum || value > 0x10ffff || (value >= 0xd800 && value <= 0xdfff)) return false;
+            continue;
+        }
+        if (string) {
+            if (c < 0x20) return false;
+            if (c == '"') string = false;
+            else if (c == '\\') {
+                if (++i >= used) return false;
+                const char escape = data[i];
+                if ((unsigned char)escape < 0x20) return false;
+                if (escape == 'u') {
+                    if (used - i - 1 < 4) return false;
+                    unsigned value = 0;
+                    for (unsigned n = 0; n < 4; ++n) {
+                        const char digit = data[++i];
+                        value <<= 4;
+                        if (digit >= '0' && digit <= '9') value |= (unsigned)(digit - '0');
+                        else if (digit >= 'a' && digit <= 'f') value |= (unsigned)(digit - 'a' + 10);
+                        else if (digit >= 'A' && digit <= 'F') value |= (unsigned)(digit - 'A' + 10);
+                        else return false;
+                    }
+                    if (!value) return false; /* cJSON strings are NUL-terminated. */
+                } else if (!strchr("\"\\/bfnrt", escape)) return false;
+            }
+        } else {
+            if ((c == '{' || c == '[' || c == ',' || c == ':') && ++structural_tokens > 64) return false;
+            if (c == '"') string = true;
+            else if (c == '{' || c == '[') { if (++depth > 8) return false; }
+            else if (c == '}' || c == ']') { if (!depth) return false; --depth; }
+            else if (c < 0x20 && c != '\r' && c != '\n' && c != '\t') return false;
+        }
+    }
+    return !string && depth == 0;
+}
+
+static group_voice_api_error_t read_voice_api_error(const char *data, size_t used)
+{
+    /* Bound bytes, depth and structure before cJSON's allocation/recursion.
+     * Error/code keys must be unique after unescaping; decoded NUL is rejected.
+     * None of this secondary envelope or its message is retained or logged. */
+    if (!data || !used || used > 2048 || !voice_error_envelope_valid(data, used)) return GROUP_VOICE_API_OTHER;
+    cJSON *json = cJSON_ParseWithLengthOpts(data, used + 1, NULL, true);
+    unsigned errors = 0, codes = 0;
+    const cJSON *child;
+    cJSON_ArrayForEach(child, json) {
+        if (child->string && !strcmp(child->string, "error")) ++errors;
+    }
+    const cJSON *error = cJSON_GetObjectItemCaseSensitive(json, "error");
+    cJSON_ArrayForEach(child, error) {
+        if (child->string && !strcmp(child->string, "code")) ++codes;
+    }
+    const cJSON *code = cJSON_GetObjectItemCaseSensitive(error, "code");
+    const group_voice_api_error_t result = group_voice_api_error_code(
+        cJSON_IsObject(json) && cJSON_IsObject(error) && errors == 1 && codes == 1 &&
+        cJSON_IsString(code) ? code->valuestring : NULL);
+    cJSON_Delete(json);
+    return result;
+}
+
 static esp_err_t request(const char *path, esp_http_client_method_t method,
                          const cJSON *body, cJSON **result)
 {
@@ -496,6 +582,7 @@ static esp_err_t request(const char *path, esp_http_client_method_t method,
     ++http_requests;
     portEXIT_CRITICAL(&guard);
     last_http_status = 0;
+    last_voice_api_error = GROUP_VOICE_API_NONE;
     if (result) {
         *result = NULL;
     }
@@ -574,7 +661,10 @@ static esp_err_t request(const char *path, esp_http_client_method_t method,
     if (err == ESP_OK) {
         performed = true;
         err = esp_http_client_perform(control_client);
-        last_http_status = esp_http_client_get_status_code(control_client);
+        /* IDF can retain the previous response status when connect/send fails
+         * before current response headers arrive on a reused handle. */
+        const int status = err == ESP_OK || response.observed ? esp_http_client_get_status_code(control_client) : 0;
+        last_http_status = status > 0 ? status : 0;
         if (err == ESP_OK) {
             complete = esp_http_client_is_complete_data_received(control_client);
             persistent = esp_http_client_is_persistent_connection(control_client);
@@ -594,6 +684,11 @@ static esp_err_t request(const char *path, esp_http_client_method_t method,
         }
     }
 done:
+    if (err != ESP_OK && complete && !response.overflow &&
+        (last_http_status < 200 || last_http_status >= 300) &&
+        strcmp(path, "/voice/resolve") == 0) {
+        last_voice_api_error = read_voice_api_error(response.data, response.used);
+    }
     if (control_client) {
         const esp_err_t detach_body = set_request_body(control_client, NULL, 0);
         const esp_err_t detach_response = esp_http_client_set_user_data(control_client, NULL);
@@ -1499,10 +1594,18 @@ static bool process_command(void)
     }
     if (current.phase == GROUP_COMMAND_RESOLVING) {
         (void)update_ui("已收到语音，正在核对已加入群");
+        const int64_t resolve_started = esp_timer_get_time();
+        const size_t input_bytes = strlen(current.transcript);
+        bool requested = false;
+        int resolve_status = 0;
+        group_voice_api_error_t api_error = GROUP_VOICE_API_NONE;
         cJSON *body = cJSON_CreateObject(), *out = NULL;
         esp_err_t err = ESP_ERR_NO_MEM;
         if (body && cJSON_AddStringToObject(body, "transcript", current.transcript)) {
+            requested = true;
             err = request("/voice/resolve", HTTP_METHOD_POST, body, &out);
+            resolve_status = last_http_status;
+            api_error = last_voice_api_error;
             cJSON *text = cJSON_GetObjectItemCaseSensitive(body, "transcript");
             mbedtls_platform_zeroize(text->valuestring, strlen(text->valuestring));
         }
@@ -1510,11 +1613,15 @@ static bool process_command(void)
         cJSON_Delete(body);
         char target[81] = {0};
         bool member = false;
-        if (err == ESP_OK && string_field(out, "group_id", target, sizeof(target)) && group_switch_identifier(target)) {
+        const bool target_valid = err == ESP_OK && string_field(out, "group_id", target, sizeof(target)) &&
+                                  group_switch_identifier(target);
+        if (target_valid) {
             for (size_t i = 0; i < catalog_count; ++i) if (!strcmp(catalog_items[i].id, target)) member = true;
         }
         cJSON_Delete(out);
         portENTER_CRITICAL(&guard);
+        const bool cancelled = command.cancelled || !intent.desired;
+        const bool selected = !command.cancelled && !command.failed && intent.desired && member;
         if (!command.cancelled && !command.failed && intent.desired && member) strlcpy(command_target, target, sizeof(command_target));
         else {
             command_target[0] = 0;
@@ -1523,7 +1630,14 @@ static bool process_command(void)
         memset(command.transcript, 0, sizeof(command.transcript));
         group_command_phase(&command, GROUP_COMMAND_CLEANUP);
         portEXIT_CRITICAL(&guard);
-        if (!member) strlcpy(command_result, "没有识别到明确的已加入群，已恢复当前群", sizeof(command_result));
+        const group_voice_outcome_t outcome = group_voice_classify(requested, err == ESP_OK,
+            resolve_status, api_error, target_valid, member, cancelled);
+        ESP_LOGI(TAG, "GROUP_VOICE_RESOLVE ticket=%" PRIu32 " input_bytes=%u requested=%d http=%d err=%d api=%s outcome=%s target_valid=%d member=%d selected=%d elapsed_ms=%" PRId64,
+                 current.ticket, (unsigned)input_bytes, requested, resolve_status, (int)err,
+                 group_voice_api_error_name(api_error), group_voice_outcome_name(outcome),
+                 target_valid, member, selected, (esp_timer_get_time() - resolve_started) / 1000);
+        const char *detail = group_voice_outcome_detail(outcome);
+        if (detail) strlcpy(command_result, detail, sizeof(command_result));
         return true;
     }
     if (current.phase == GROUP_COMMAND_CLEANUP) {
