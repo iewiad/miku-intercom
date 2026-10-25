@@ -1,4 +1,4 @@
-import {validNeed} from './recommendation.js';
+import {validNeed, validVoiceTarget} from './recommendation.js';
 
 const finalTypes = new Set(['conversation.item.input_audio_transcription.completed', 'conversation.item.input_audio_transcription.done']);
 const sourceFactory = () => navigator.mediaDevices.getUserMedia({audio:{channelCount:{ideal:1},echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
@@ -21,7 +21,7 @@ export class VoiceCommandClient {
     this.initializing=null;
   }
   get blocking() { return !!this.current || this.phase==='checking'; }
-  get canCancel() { return !!this.current && !this.current.submitted && !this.current.finishing; }
+  get canCancel() { return !!this.current && !this.current.finishing; }
   emit(){this.onChange(this);}
   async initialize() {
     if(this.initializing) return this.initializing;
@@ -33,10 +33,10 @@ export class VoiceCommandClient {
         const status=await request('/voice');
         this.available=!!status.available;
         if(status.command_id){
-          const session={id:status.command_id,request,generation:++this.generation,createRequested:true,submitted:false};
+          const session={id:status.command_id,request,generation:++this.generation,createRequested:true};
           this.current=session;await this.finish(session,'已结束上次语音操作。');return;
         }
-        this.phase=this.available?'idle':'unavailable';this.message=this.available?'点击后说“切到”加完整群名；期间暂时无法收听群聊。':'服务尚未启用语音切群。';
+        this.phase=this.available?'idle':'unavailable';this.message=this.available?'说“切到”加完整群名，识别后核对确认；期间暂时无法收听群聊。':'服务尚未启用语音切群。';
       } catch {this.phase='checking';this.message='语音会话状态未确认，请重试检查。';}
       finally {this.emit();if(!this.blocking)void this.audio.sync();}
     })();
@@ -45,16 +45,16 @@ export class VoiceCommandClient {
   currentSession(s){
     if(this.current!==s||s.generation!==this.generation||s.finishing)return false;
     if(!this.isVisible()||!this.control.allowed()||s.identityToken!==this.control.identity?.token||
-       (s.mode==='need'&&this.control.recommendation?.voiceReservation!==s.reservation)){
+       this.control.recommendation?.voiceReservation!==s.reservation){
       this.interrupt('页面或身份状态已变化，语音采集已停止。');return false;
     }
     return true;
   }
   async start({mode='command'}={}){
     if(!['command','need'].includes(mode) || !this.isVisible() || this.blocking || !this.available || !this.control.allowed() || !this.control.connected || this.control.uiBlocked || this.control.recommendation?.blocking || this.control.pendingSwitch || this.control.mutationBusy || !this.control.state?.current_group_id)return;
-    const reservation=mode==='need'?this.control.recommendation?.reserveVoiceNeed():null;
-    if(mode==='need'&&!reservation)return;
-    const s={id:this.random(),request:this.scopeRequest(),generation:++this.generation,mode,reservation,identityToken:this.control.identity?.token,createRequested:false,submitted:false,accepted:false,cancelled:false};
+    const reservation=this.control.recommendation?.reserveVoice(mode==='need'?'need':'target');
+    if(!reservation)return;
+    const s={id:this.random(),request:this.scopeRequest(),generation:++this.generation,mode,reservation,identityToken:this.control.identity?.token,createRequested:false,accepted:false,cancelled:false};
     this.current=s;this.phase='preparing';this.message='正在关闭群音频，准备语音指令。';
     this.control.cancelFloor();this.audio.suspend('语音指令期间群音频暂停，结束后恢复。');this.emit();
     s.timer=this.schedule(()=>{if(this.currentSession(s))void this.finish(s,'语音指令超时，已停止采集。');},30000);
@@ -122,45 +122,31 @@ export class VoiceCommandClient {
     if(event.type==='session.created'){
       this.ensureSession(s);
     }else if(event.type==='session.updated'&&s.updated){
-      this.phase='listening';this.message=s.mode==='need'?'请描述需要的帮助，结束后会生成建议，由你确认进入。':'请说“切到”加完整群名。';for(const track of s.stream?.getAudioTracks()||[])track.enabled=true;this.emit();
+      this.phase='listening';this.message=s.mode==='need'?'请描述需要的帮助，结束后会生成建议，由你确认进入。':'请说“切到”加完整群名，识别后核对确认。';for(const track of s.stream?.getAudioTracks()||[])track.enabled=true;this.emit();
     }else if(finalTypes.has(event.type)&&this.phase==='listening'){
-      if(s.mode==='need'?!validNeed(event.transcript):typeof event.transcript!=='string'||!event.transcript.trim()||[...event.transcript].length>256){void this.finish(s,s.mode==='need'?'需求内容无效，请重新说出 1–512 个字符的需求。':'没有识别到明确群名，正在恢复。');return;}
+      if(s.mode==='need'?!validNeed(event.transcript):!validVoiceTarget(event.transcript)){void this.finish(s,s.mode==='need'?'需求内容无效，请重新说出 1–512 个字符的需求。':'没有识别到有效群名指令，正在恢复。');return;}
       s.accepted=true;for(const track of s.stream?.getAudioTracks()||[])track.enabled=false;
-      if(s.mode==='need'){
-        s.need=event.transcript;this.control.recommendation.awaitVoiceCleanup(s.reservation);
-        void this.finish(s,'已停止采集，正在结束语音会话后获取建议。');
-      }else void this.resolve(s,event.transcript);
+      s.need=event.transcript;this.control.recommendation.awaitVoiceCleanup(s.reservation);
+      void this.finish(s,s.mode==='need'?'已停止采集，正在结束语音会话后获取建议。':'已停止采集，正在结束语音会话后核对目标群。');
     }else if(event.type==='session.closed'||event.type==='error'||event.type==='rtid.error'||event.type==='conversation.item.input_audio_transcription.failed')void this.finish(s,'语音会话未完成，正在恢复。');
-  }
-  async resolve(s,transcript){
-    this.phase='resolving';this.message='正在确认目标群。';this.emit();
-    try{
-      const target=await s.request('/voice/resolve','POST',{transcript});
-      if(!this.currentSession(s))return;
-      if(typeof target.group_id!=='string'||!this.control.state?.groups?.some(g=>g.id===target.group_id))throw new Error('invalid voice target');
-      s.submitted=true;this.phase='confirming';this.message=`正在确认切换到${target.name}。`;this.emit();
-      const started=await this.control.switchGroup(target.group_id);
-      if(started===false){s.submitted=false;if(this.current===s)await this.finish(s,'切群请求未提交，请检查本地存储和当前群状态后重试。');return;}
-      if(this.current===s)await this.finish(s,this.control.pendingSwitch?'切群结果仍在确认，群音频保持暂停。':'当前群已确认，正在恢复音频。');
-    }catch(error){if(this.current===s)await this.finish(s,voiceErrorText(error));}
   }
   interrupt(message='已取消语音指令。'){
     const s=this.current;if(!s)return;
     s.cancelled=true;s.need=null;s.cancelMessage=message;
-    if(s.mode==='need'&&this.control.recommendation?.voiceReservation===s.reservation)this.control.recommendation.interrupt(message);
-    // Submitted group operations are durable and cannot be revoked. Only stop the RTA session.
-    void this.finish(s,s.submitted?'正在确认已提交的切群结果。':message);
+    if(this.control.recommendation?.voiceReservation===s.reservation)this.control.recommendation.interrupt(message);
+    // This owner only captures a proposal; confirmation belongs to the control client.
+    void this.finish(s,message);
   }
-  interruptNeed(reservation,message){if(this.current?.reservation===reservation)this.interrupt(message);}
-  needActive(s){
+  interruptReservation(reservation,message){if(this.current?.reservation===reservation)this.interrupt(message);}
+  reservationActive(s){
     const c=this.control;
-    return this.current===s&&!s.cancelled&&s.mode==='need'&&this.isVisible()&&c.allowed()&&
+    return this.current===s&&!s.cancelled&&this.isVisible()&&c.allowed()&&
       s.identityToken===c.identity?.token&&!c.uiBlocked&&!c.pendingSwitch&&!c.mutationBusy&&
       c.recommendation?.voiceReservation===s.reservation;
   }
-  canHandoffNeed(reservation){
+  canHandoffVoice(reservation){
     const s=this.current;
-    return s?.reservation===reservation&&s.cleanConfirmed===true&&s.authorizedStateRefreshed===true&&this.needActive(s);
+    return s?.reservation===reservation&&s.cleanConfirmed===true&&s.authorizedStateRefreshed===true&&this.reservationActive(s);
   }
   async finish(s,message){
     if(s.finishTask)return s.finishTask;
@@ -174,34 +160,35 @@ export class VoiceCommandClient {
         if(s.createRequested&&!s.stopConfirmed){const stopped=await s.request(`/voice/sessions/${encodeURIComponent(s.id)}/stop`,'POST',undefined,{keepalive:true});if(stopped.stopped!==true||stopped.command_id!==s.id)throw new Error('stop unconfirmed');s.stopConfirmed=true;}
         if(!closed)throw new Error('local Peer close unconfirmed');
       }catch{
-        this.phase='cleanup_pending';this.message=s.submitted?'切群请求已提交；语音会话结束尚未确认，正在重试。对讲保持暂停。':'语音会话结束尚未确认，正在重试；对讲暂时暂停。';this.emit();
+        this.phase='cleanup_pending';this.message='语音会话结束尚未确认，正在重试；对讲暂时暂停。';this.emit();
         s.finishTask=null;s.retry=this.schedule(()=>{void this.finish(s,message);},2000);return;
       }
       if(this.current!==s)return;
       let finalMessage=message;
-      if(s.mode==='need'&&s.need&&this.needActive(s)){
-        s.cleanConfirmed=true;this.phase='refreshing_need';this.message='语音会话已结束，正在核对最新群组后获取建议。';this.emit();
+      if(s.need&&this.reservationActive(s)){
+        s.cleanConfirmed=true;this.phase=s.mode==='need'?'refreshing_need':'refreshing_target';this.message=s.mode==='need'?'语音会话已结束，正在核对最新群组后获取建议。':'语音会话已结束，正在核对最新群组和语音目标。';this.emit();
         try{
           const epoch=this.control.epoch,next=await s.request('/state');
-          if(this.needActive(s)){
+          if(this.reservationActive(s)){
             if(!this.control.applyState(next,epoch))throw new Error('state unconfirmed');
             s.authorizedStateRefreshed=true;
             const need=s.need;s.need=null;
             // request() admits the verified reservation synchronously before its
             // first await, so there is no gap that re-enables PTT or another task.
-            void this.control.recommendation.request(need,s.reservation);
-            finalMessage='语音会话已结束。请核对需求建议，并明确确认要进入的群。';
+            if(s.mode==='need')void this.control.recommendation.request(need,s.reservation);
+            else void this.control.recommendation.requestVoiceTarget(need,s.reservation);
+            finalMessage=s.mode==='need'?'语音会话已结束。请核对需求建议，并明确确认要进入的群。':'语音会话已结束。请核对识别目标群，确认后才会切换。';
           }
         }catch{
-          if(this.needActive(s)){
+          if(this.reservationActive(s)){
             this.control.connected=false;
             finalMessage='群状态尚未确认，未请求推荐；请恢复连接后重试。';
           }
         }
       }
       s.need=null;
-      if(s.mode==='need'&&this.control.recommendation?.voiceReservation===s.reservation)this.control.recommendation.interrupt(s.cancelled?'已取消语音需求，当前群保持不变。':finalMessage);
-      if(s.mode==='need'&&s.cancelled&&s.cancelMessage)finalMessage=s.cancelMessage;
+      if(this.control.recommendation?.voiceReservation===s.reservation)this.control.recommendation.interrupt(s.cancelled?'已取消本次语音操作，当前群保持不变。':finalMessage);
+      if(s.cancelled&&s.cancelMessage)finalMessage=s.cancelMessage;
       this.current=null;++this.generation;this.phase=this.available?'idle':'unavailable';this.message=finalMessage;this.emit();
       // Latest control state (or its durable pending operation) decides which group may resume.
       if(this.control.allowed()){if(!this.control.pendingSwitch&&!s.authorizedStateRefreshed)await this.control.refresh();void this.audio.sync();}

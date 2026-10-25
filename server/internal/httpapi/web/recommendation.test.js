@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {ControlClient, APIError} from './app.js';
-import {RecommendationClient, validNeed} from './recommendation.js';
+import {RecommendationClient, validNeed, validVoiceTarget, voiceTargetReason} from './recommendation.js';
 
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return {promise, resolve}; };
 const baseTime = Date.parse('2026-10-25T03:00:00Z');
@@ -131,4 +131,86 @@ test('cancelled or forged voice handoff cannot become an ordinary text request a
   assert.equal(await r.request('迟到的语音需求', reservation), false);
   assert.equal(await r.request('伪造的语音需求', {...reservation}), false);
   assert.deepEqual(requests, []); assert.equal(r.result, null);
+});
+
+function targetSetup(source = 'exact') {
+  const f = setup(), original = f.c.request;
+  f.r.available = false; f.r.phase = 'unavailable';
+  f.c.voice = {available: true, blocking: false, canHandoffVoice: () => true};
+  const reservation = f.r.reserveVoice('target');
+  f.c.voice.blocking = true;
+  f.c.request = async (path, method, body, options) => {
+    if (path !== '/voice/proposals') return original(path, method, body, options);
+    f.requests.push({path, method, body, options});
+    const result = f.result(body.request_id); result.source = source;
+    result.suggestions[0].reason = voiceTargetReason;
+    return {recommendation: result};
+  };
+  return {...f, reservation};
+}
+
+test('target bounds reject control characters and invalid Unicode without changing S5 need rules', () => {
+  assert.equal(validVoiceTarget('切到维修组'), true);
+  assert.equal(validVoiceTarget('😀'.repeat(256)), true);
+  for (const text of ['', ' ', '切到\n维修组', '\u0000维修组', '\ud800', '😀'.repeat(257)]) assert.equal(validVoiceTarget(text), false);
+  assert.equal(validNeed('中'.repeat(512)), true);
+});
+
+for (const source of ['exact', 'model']) test(`${source} voice target works without S5 model capability and still needs explicit confirmation`, async () => {
+  const f = targetSetup(source);
+  assert.ok(f.reservation); assert.equal(f.reservation.mode, 'target');
+  assert.equal(await f.r.requestVoiceTarget('切到维修组', f.reservation), true);
+  assert.equal(f.r.result.source, source); assert.equal(f.r.phase, 'review');
+  assert.equal(f.c.state.current_group_id, 'group_one'); assert.equal(f.c.pendingSwitch, null);
+  assert.deepEqual(f.requests[0].body, {request_id: 'synthetic_1', transcript: '切到维修组', expected_version: 2, server_epoch: 'epoch_one'});
+  assert.equal(await f.r.confirm('group_two'), false); // Cleanup handoff has not released the voice owner yet.
+  f.c.voice.blocking = false;
+  assert.equal(await f.r.confirm('group_two'), true);
+  assert.equal(f.requests.filter(x => x.path === '/recommendations/confirm').length, 1);
+  assert.equal(f.requests.some(x => x.path === '/current-group' || x.path === '/voice/resolve'), false);
+});
+
+test('voice target source and fixed reason are verified before review, including exact fast path', async () => {
+  for (const change of ['missing_source', 'foreign_source', 'reason', 'exact_empty', 'exact_multiple']) {
+    const f = targetSetup(), original = f.c.request;
+    f.c.request = async (...args) => {
+      const out = await original(...args);
+      if (change === 'missing_source') delete out.recommendation.source;
+      if (change === 'foreign_source') out.recommendation.source = 'other';
+      if (change === 'reason') out.recommendation.suggestions[0].reason = '模型声称已经切换';
+      if (change === 'exact_empty') out.recommendation.suggestions = [];
+      if (change === 'exact_multiple') out.recommendation.suggestions.push({group_id: 'group_one', name: '全员组', purpose: '', reason: voiceTargetReason});
+      return out;
+    };
+    assert.equal(await f.r.requestVoiceTarget('切到维修组', f.reservation), false, change);
+    assert.equal(f.r.result, null); assert.equal(f.c.pendingSwitch, null);
+  }
+});
+
+test('a target reservation cannot survive version, epoch, identity or authorized directory changes during capture', async () => {
+  for (const change of ['version', 'epoch', 'identity', 'name', 'purpose', 'membership']) {
+    const f = targetSetup();
+    if (change === 'version') f.c.state.current_version++;
+    if (change === 'epoch') f.c.state.server_epoch = 'new_epoch';
+    if (change === 'identity') f.c.identity.token = 'new_identity';
+    if (change === 'name') f.c.state.groups[1].name = '改名';
+    if (change === 'purpose') f.c.state.groups[1].purpose = '改职责';
+    if (change === 'membership') f.c.state.groups.pop();
+    f.r.observeState();
+    assert.equal(await f.r.requestVoiceTarget('切到维修组', f.reservation), false, change);
+    assert.equal(f.requests.length, 0); assert.equal(f.r.result, null);
+  }
+});
+
+test('cancel, ownership loss and expiry discard target tokens; late or forged handoffs never reopen review', async () => {
+  const f = targetSetup(), late = deferred(), original = f.c.request;
+  f.c.request = async (...args) => { await late.promise; return original(...args); };
+  const request = f.r.requestVoiceTarget('切到维修组', f.reservation);
+  f.r.interrupt('已取消核对'); late.resolve();
+  assert.equal(await request, false); assert.equal(f.r.result, null);
+  assert.equal(await f.r.requestVoiceTarget('切到维修组', {...f.reservation}), false);
+  const expired = targetSetup(); await expired.r.requestVoiceTarget('切到维修组', expired.reservation);
+  expired.c.voice.blocking = false; expired.advance(60001);
+  assert.equal(await expired.r.confirm('group_two'), false); assert.equal(expired.r.result, null);
+  assert.equal(expired.requests.some(x => x.path === '/recommendations/confirm'), false);
 });

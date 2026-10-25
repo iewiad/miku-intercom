@@ -54,6 +54,13 @@
         <div class="voice-controls">
           <div class="audio-actions"><button id="voice-cancel" class="button secondary" type="button" hidden>取消语音切群</button><button id="voice-check" class="button secondary" type="button" hidden>继续恢复</button></div>
           <p id="voice-status" role="status" aria-live="polite">正在准备语音切群。</p>
+          <section id="voice-proposal-panel" aria-labelledby="voice-proposal-title" hidden>
+            <h3 id="voice-proposal-title">语音目标核对</h3>
+            <p id="voice-proposal-status" role="status" aria-live="polite">识别后请核对目标群，确认后才会切换。</p>
+            <p id="voice-proposal-source" class="field-help"></p>
+            <ul id="voice-proposal-results" class="recommendation-results" aria-label="识别目标群"></ul>
+            <button id="voice-proposal-cancel" class="button quiet" type="button" hidden>取消核对，保持当前群</button>
+          </section>
         </div>
         <button type="button" class="button secondary retry-switch" id="retry-switch" hidden>继续连接</button>
         <div class="channel-bottom"><span><i class="sync-dot" aria-hidden="true"></i><span id="sync-label">正在获取群组</span></span><span>松开、切走页面即停止发言</span></div>
